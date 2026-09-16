@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench — the agent's workbench</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --panel: #ffffff; --ink: #16181d; --muted: #5f6672; --line: #e2e5ea;
+    --accent: #2f5fd0; --ok: #1a7f4b; --warn: #b06a00; --bad: #b3261e; --code: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1c1f25; --ink: #e8eaee; --muted: #9aa2af; --line: #2b3038;
+      --accent: #7aa2f7; --ok: #5cc98a; --warn: #e0a44a; --bad: #f07178; --code: #22262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  #banner {
+    display: none; margin: 14px 16px 0; padding: 10px 14px; border: 1px solid var(--accent);
+    border-radius: 10px; background: var(--panel); align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  #config-warning {
+    display: none; margin: 14px 16px 0; padding: 10px 14px; border: 1px solid var(--warn);
+    border-radius: 10px; background: var(--panel); color: var(--warn);
+  }
+  main { display: grid; grid-template-columns: minmax(380px, 1.05fr) 1.35fr; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .card > h2 {
+    margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; font-weight: 600; gap: 8px;
+  }
+  .card > .body { padding: 12px 14px; }
+  .scroll { max-height: 44vh; overflow: auto; }
+  .tall { max-height: 70vh; }
+  /* Decisions are the point of the page; give them the room. */
+  #pending { max-height: 58vh; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  tr.clickable:hover { background: var(--code); cursor: pointer; }
+  .pill.clickable { cursor: pointer; }
+  .pill.clickable:hover { color: var(--ink); border-color: var(--accent); }
+  tr.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  button {
+    padding: 7px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font: inherit; font-weight: 550;
+  }
+  button.ghost { background: transparent; color: var(--ink); }
+  button.danger { background: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text] {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  .pill.accent { color: var(--accent); border-color: var(--accent); }
+  code, pre { background: var(--code); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { padding: 1px 5px; font-size: 12px; }
+  /* Identifiers in table cells (run ids, ticket keys) read as one token or not at all.
+     Prose code — the JSON on an approval card — is not in a td and still wraps. */
+  td > code { white-space: nowrap; }
+  pre { padding: 10px; overflow-x: auto; font-size: 12px; margin: 8px 0 0; white-space: pre-wrap; }
+  .pending-card { border: 1px solid var(--warn); border-radius: 9px; padding: 11px; margin-bottom: 10px; }
+  .pending-card.question { border-color: var(--accent); }
+  .pending-card h3 { margin: 0 0 6px; font-size: 14px; }
+  .pending-card dl { display: grid; grid-template-columns: 92px 1fr; gap: 3px 10px; margin: 8px 0; font-size: 13px; }
+  .pending-card dt { color: var(--muted); }
+  .pending-card dd { margin: 0; overflow-wrap: anywhere; }
+  /* The proposed arguments are the model's text and have no length limit — a drafted
+     comment runs to a paragraph. Left unbounded it pushed Approve and Reject out of the
+     panel's scroll area, which is the one part of this card that must always be
+     reachable. It scrolls within itself instead; the whole value is still there. */
+  .pending-card dd code { display: block; max-height: 9em; overflow: auto; padding: 4px 6px; }
+  .pending-card ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .row input[type=text] { flex: 1; min-width: 200px; }
+  .feed { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .feed div { padding: 2px 0; border-bottom: 1px solid var(--line); }
+  .feed .t { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tabs button { background: transparent; color: var(--muted); border: none; padding: 4px 8px; font-size: 12px; }
+  .tabs button[aria-selected=true] { color: var(--ink); border-bottom: 2px solid var(--accent); border-radius: 0; }
+  .spinner { display: inline-block; color: var(--muted); font-size: 12px; }
+  .plan { border-left: 3px solid var(--accent); padding: 8px 12px; margin: 8px 0; background: var(--code); border-radius: 0 8px 8px 0; }
+  .md { background: var(--code); border-radius: 6px; padding: 10px 12px; font-size: 13px; overflow-x: auto; margin: 8px 0 0; }
+  .md .md-h { font-weight: 650; margin: 10px 0 4px; }
+  .md .md-h:first-child { margin-top: 0; }
+  .md ul { margin: 4px 0; padding-left: 18px; }
+  .md hr { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
+  .md .md-gap { height: 6px; }
+  /* The operator's own hands. Bordered like an approval card because it is the other
+     half of the same idea: work that happens here rather than in the ALM's own UI. */
+  .byhand { border: 1px solid var(--line); border-radius: 9px; padding: 11px; margin: 12px 0; }
+  .byhand textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit; resize: vertical;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Workbench</h1>
+  <span class="sub">the agent's workbench</span>
+  <span class="sub" id="conn"></span>
+  <span class="sub" id="modelinfo"></span>
+</header>
+
+<div id="config-warning"></div>
+
+<div id="banner">
+  <strong id="banner-text"></strong>
+  <button id="triage-btn" class="ghost" onclick="runTriage()">Triage inbox</button>
+  <button id="bulk-btn" onclick="runAllHandleable()" style="display:none">Run all the agent can handle</button>
+  <span class="spinner" id="banner-state"></span>
+</div>
+
+<main>
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <section class="card">
+      <h2>Inbox <span class="muted" id="inbox-state"></span></h2>
+      <div class="body scroll tall" id="inbox"><p class="muted">Loading…</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Waiting on you <span class="muted" id="pending-count"></span></h2>
+      <div class="body scroll" id="pending"><p class="muted">Nothing waiting.</p></div>
+    </section>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <section class="card">
+      <h2>Ticket <span class="spinner" id="work-state"></span></h2>
+      <div class="body scroll tall" id="detail"><p class="muted">Select a ticket from the inbox.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>
+        <span class="tabs">
+          <button onclick="showTab('runs')" id="tab-runs" aria-selected="true">Runs</button>
+          <button onclick="showTab('rules')" id="tab-rules">Automation</button>
+          <button onclick="showTab('learnings')" id="tab-learnings">Learnings</button>
+          <button onclick="showTab('gaps')" id="tab-gaps">Capability requests</button>
+          <button onclick="showTab('tools')" id="tab-tools">Tools</button>
+        </span>
+      </h2>
+      <div class="body scroll" id="panel"></div>
+    </section>
+
+    <section class="card">
+      <h2>Live activity</h2>
+      <div class="body scroll feed" id="feed"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+// Escapes for an HTML text node *and* for a quoted attribute value; quotes are in the
+// alphabet because an attribute is where an unescaped quote becomes a delimiter. Nothing
+// here renders into unquoted attributes, URLs, script bodies or CSS.
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+const api = async (path, options) => {
+  const response = await fetch('/api' + path, options);
+  return response.json();
+};
+
+// Renders the model's markdown-ish output. The text is escaped FIRST — through the same
+// `esc` everything else uses — and only then does this emit its own tags, so the only
+// HTML in the result is what this function wrote. Requester-authored text (ticket
+// descriptions, comments) deliberately does NOT come through here: it renders verbatim
+// in a <pre>, because showing what was filed matters more than making it pretty.
+const mdInline = (s) => esc(String(s ?? ''))
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+// A run summary on one table row: stored summaries are flattened to one line, so heading
+// markers arrive mid-sentence ("# Analysis ## Plan") and a hard character slice cuts words
+// in half — the screenshot that motivated this read "Ass", which was "Assigned". Markers
+// become separators, and truncation backs up to a word boundary before adding the mark.
+const summaryLine = (s, n) => {
+  let t = String(s ?? '').replace(/^#{1,4} /, '').replace(/ #{1,4} /g, ' · ');
+  if (t.length > n) t = t.slice(0, n).replace(/\s+\S*$/, '') + '…';
+  return mdInline(t);
+};
+function md(text) {
+  const lines = String(text ?? '').split('\n');
+  let html = '', inList = false;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const line of lines) {
+    const t = line.trim();
+    if (/^#{1,4} /.test(t)) {
+      closeList();
+      html += '<div class="md-h">' + mdInline(t.replace(/^#{1,4} /, '')) + '</div>';
+    } else if (/^[-*] /.test(t)) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += '<li>' + mdInline(t.slice(2)) + '</li>';
+    } else if (/^(---+|\*\*\*+)$/.test(t)) {
+      closeList();
+      html += '<hr>';
+    } else if (t === '') {
+      closeList();
+      html += '<div class="md-gap"></div>';
+    } else {
+      closeList();
+      html += '<div>' + mdInline(line) + '</div>';
+    }
+  }
+  closeList();
+  return html;
+}
+const post = (path, body) => api(path, {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify(body || {})
+});
+
+let tab = 'runs';
+let selectedKey = null;
+let tickets = [];
+// Where the ALM lives, so the console can hand an operator a link to the ticket itself —
+// the comments the agent writes are in Jira, and "where can I see them?" should have an
+// answer one click away. Set from /api/overview; empty until then, and the link is
+// simply absent rather than broken.
+let almBaseUrl = '';
+const browseUrl = (key) => almBaseUrl
+    ? almBaseUrl.replace(/\/+$/, '') + '/browse/' + encodeURIComponent(key) : null;
+
+function statusPill(status) {
+  const cls = status === 'COMPLETED' ? 'ok'
+            : status === 'WAITING_FOR_HUMAN' || status === 'RUNNING' ? 'warn'
+            : (status === 'FAILED' || status === 'CANCELLED') ? 'bad' : '';
+  return `<span class="pill ${cls}">${esc(status)}</span>`;
+}
+
+function riskPill(risk) {
+  const cls = risk === 'DESTRUCTIVE' || risk === 'HIGH' ? 'bad'
+            : risk === 'MEDIUM' ? 'warn' : 'ok';
+  return `<span class="pill ${cls}">${esc(risk)}</span>`;
+}
+
+function triageBadge(t) {
+  if (!t.triage) return '<span class="muted">—</span>';
+  // "stale" on its own told an operator nothing and offered them nothing. It means the
+  // verdict was formed before the ticket last changed — often by their own comment — or
+  // before the agent learned something since. So it says which, and clicking it is the fix.
+  const stale = t.triageStale
+      ? ` <span class="pill warn clickable" data-retriage="${esc(t.key)}"
+          title="This verdict was formed before the ticket last changed, or before the agent learned something since. Click to judge it again.">re-triage ↻</span>`
+      : '';
+  if (t.triage.canHandle) {
+    const auto = t.automated ? ' <span class="pill accent">auto</span>' : '';
+    return `<span class="pill ok">The agent can handle</span> <span class="pill">${esc(t.triage.category)}</span>${auto}${stale}`;
+  }
+  return `<span class="pill">needs a person</span>${stale}`;
+}
+
+// --- overview / config ----------------------------------------------------------
+async function loadOverview() {
+  const o = await api('/overview');
+  const alm = o.alm || {};
+  almBaseUrl = alm.baseUrl || '';
+  $('conn').textContent = alm.configured
+      ? `${alm.provider} · ${alm.baseUrl || ''}${alm.signedInAs ? ' · ' + alm.signedInAs : ''}`
+      : '';
+  $('modelinfo').textContent = o.model ? 'model: ' + o.model : '';
+  const problems = [];
+  if (!alm.configured) problems.push('Jira is not connected — set JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN, then restart.');
+  else if (alm.error) problems.push('Jira answered with an error: ' + alm.error);
+  if (!o.ready && alm.configured) problems.push('No model is configured — set WORKBENCH_LLM (anthropic or openrouter) and its key, then restart.');
+  const warning = $('config-warning');
+  warning.style.display = problems.length ? 'block' : 'none';
+  warning.textContent = problems.join(' ');
+  return o;
+}
+
+// --- inbox ----------------------------------------------------------------------
+async function loadInbox() {
+  const result = await api('/tickets');
+  if (result.error) {
+    $('inbox').innerHTML = `<p class="muted">${esc(result.error)}</p>`;
+    return;
+  }
+  tickets = result;
+  const open = tickets.filter(t => t.statusCategory !== 'DONE');
+  const handleable = open.filter(t => t.triage && t.triage.canHandle && !t.triageStale);
+  const banner = $('banner');
+  banner.style.display = 'flex';
+  $('banner-text').textContent = handleable.length
+      ? `The agent can handle ${handleable.length} of your ${open.length} open tickets.`
+      : (open.length ? `${open.length} open tickets. Triage to see what the agent can take on.` : 'Inbox is clear.');
+  $('bulk-btn').style.display = handleable.length ? 'inline-block' : 'none';
+
+  $('inbox').innerHTML = `<table><tr><th>Ticket</th><th>Summary</th><th>Status</th><th>Triage</th><th>Last run</th></tr>
+    ${tickets.map(t => `<tr class="clickable ${t.key === selectedKey ? 'selected' : ''}" data-ticket="${esc(t.key)}">
+      <td><code>${esc(t.key)}</code></td>
+      <td>${esc(t.summary)}</td>
+      <td><span class="pill">${esc(t.status)}</span></td>
+      <td>${triageBadge(t)}</td>
+      <td>${t.lastRunStatus ? statusPill(t.lastRunStatus) : '<span class="muted">—</span>'}</td>
+    </tr>`).join('')}</table>`;
+}
+
+// Re-triage one ticket. Checked before the row handler, so clicking the badge judges the
+// ticket rather than merely opening it.
+async function retriage(key, el) {
+  if (el) { el.textContent = 're-triaging…'; el.dataset.retriage = ''; }
+  const result = await api('/tickets/' + encodeURIComponent(key) + '/triage',
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  feedNote(result && result.error ? 'Re-triage failed: ' + result.error
+      : `Re-triaged ${key}: ${result && result.canHandle ? 'The agent can handle it' : 'needs a person'}`
+        + (result && result.category ? ' (' + result.category + ')' : ''));
+  loadInbox();
+  if (selectedKey === key) openTicket(key);
+}
+
+$('inbox').addEventListener('click', (event) => {
+  const badge = event.target.closest('[data-retriage]');
+  if (badge && badge.dataset.retriage) { retriage(badge.dataset.retriage, badge); return; }
+  const row = event.target.closest('[data-ticket]');
+  if (!row) return;
+  openTicket(row.dataset.ticket);
+});
+
+// --- ticket detail ---------------------------------------------------------------
+async function openTicket(key) {
+  selectedKey = key;
+  const t = await api('/tickets/' + encodeURIComponent(key));
+  if (t.error) { $('detail').innerHTML = `<p class="muted">${esc(t.error)}</p>`; return; }
+  const triage = t.triage;
+  const rules = await api('/rules');
+  const automated = triage && !triage.error && (rules.some ? rules.some(r => r.enabled && r.category === triage.category) : false);
+  const hasSupervisedSuccess = (t.runs || []).some(r => r.mode !== 'PREVIEW' && r.status === 'COMPLETED');
+  // A run already in flight on this ticket — the runtime refuses a second one, so the
+  // pane says what is happening instead of offering to start it again.
+  const active = (t.runs || []).find(r => r.status === 'RUNNING' || r.status === 'WAITING_FOR_HUMAN');
+  $('detail').innerHTML = `
+    <h3 style="margin:0 0 4px">${esc(t.key)} — ${esc(t.summary)}
+      ${browseUrl(t.key) ? `<a href="${esc(browseUrl(t.key))}" target="_blank" rel="noopener"
+         class="muted" style="font-size:12px;font-weight:400">open in ${esc(t.provider)} ↗</a>` : ''}</h3>
+    <div><span class="pill">${esc(t.status)}</span>
+      ${t.priority ? `<span class="pill">${esc(t.priority)}</span>` : ''}
+      <span class="pill">${esc(t.assignee || 'unassigned')}</span>
+      <span class="pill">by ${esc(t.reporter || 'unknown')}</span></div>
+    <div class="row">
+      ${t.statusCategory === 'DONE'
+        ? '<span class="muted">This ticket is done — there is nothing for the agent to do. Reopen it in Jira if it needs more work.</span>'
+        : active
+          ? `<span class="muted">The agent is working this ticket — <code>${esc(active.id)}</code>,
+             ${active.status === 'WAITING_FOR_HUMAN' ? 'waiting on you below' : 'running'}.</span>`
+          : `<button data-action="preview">What would the agent do?</button>
+             <button data-action="execute">Let the agent handle it</button>`}
+      ${triage && triage.canHandle && !automated ? `<button class="ghost" data-action="automate" data-category="${esc(triage.category)}"
+          title="${hasSupervisedSuccess ? '' : 'Tip: supervise a run or two first.'}">Automate ‘${esc(triage.category)}’ tickets</button>` : ''}
+    </div>
+    ${triage ? `<div class="plan"><strong>${triage.canHandle ? 'The agent believes it can handle this.' : 'The agent does not think it can handle this yet.'}</strong>
+      <span class="pill">${esc(triage.category)}</span> <span class="muted">confidence ${(triage.confidence * 100).toFixed(0)}%</span>
+      <div>${mdInline(triage.plan || '')}</div>
+      ${triage.missing ? `<div class="muted">Missing: ${mdInline(triage.missing)}</div>` : ''}
+      ${t.triageStale ? `<div class="muted" style="margin-top:6px">This judgement predates the
+        ticket's last change, or something the agent has learned since.
+        <button class="ghost" data-action="retriage" style="padding:3px 9px">Judge it again</button></div>` : ''}</div>` : ''}
+    <p class="muted" style="margin:10px 0 4px">Description as filed — the agent reads this as evidence, not instruction:</p>
+    <pre>${esc(t.description || '(none)')}</pre>
+    <p class="muted" style="margin:10px 0 4px">Comments — these are on the ticket in
+      ${esc(t.provider)}, written as ${esc(t.assignee || 'the signed-in identity')}${
+      browseUrl(t.key) ? `; <a href="${esc(browseUrl(t.key))}" target="_blank" rel="noopener">see them there ↗</a>` : ''}</p>
+    ${(t.comments || []).map(c => `<div style="border-left:2px solid var(--line);padding-left:8px;margin-bottom:6px">
+      <div class="muted" style="font-size:12px">${esc(c.author)} · ${esc(c.at)}</div>${esc(c.body)}</div>`).join('')
+      || '<p class="muted">None.</p>'}
+    <div class="byhand">
+      <div style="font-weight:600;margin-bottom:2px">Handle it yourself</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Writes to ${esc(t.provider)} as
+        ${esc(t.assignee || 'the signed-in identity')} — no approval needed; it is your own action.</div>
+      <textarea id="operator-comment" rows="3" placeholder="Reply to the requester…"></textarea>
+      <div class="row">
+        <button data-operator="comment">Comment</button>
+        ${(t.transitions || []).map(name =>
+          `<button class="ghost" data-operator="transition" data-transition="${esc(name)}"
+                   title="Move this ticket to ${esc(name)}${''}">${esc(name)}</button>`).join('')}
+      </div>
+      ${(t.operatorActions || []).length ? `<div class="muted" style="font-size:12px;margin-top:8px">
+        You have already: ${(t.operatorActions || []).map(a =>
+          esc(a.kind === 'COMMENT' ? 'commented' : 'moved it to ' + a.detail)).join(', ')}.</div>` : ''}
+    </div>
+    <p class="muted" style="margin:10px 0 4px">Runs on this ticket</p>
+    ${(t.runs || []).map(r => `<div style="margin-bottom:4px"><code data-run="${esc(r.id)}" class="clickable" style="cursor:pointer">${esc(r.id)}</code>
+      <span class="pill">${esc(r.mode)}</span> ${statusPill(r.status)}
+      <span class="muted" style="font-size:12px">${summaryLine(r.summary, 160)}</span></div>`).join('')
+      || '<p class="muted">None yet.</p>'}`;
+  loadInbox();
+}
+
+$('detail').addEventListener('click', async (event) => {
+  const runLink = event.target.closest('[data-run]');
+  if (runLink) { openRun(runLink.dataset.run); return; }
+  // The operator acting themselves: their own authority, so no approval and no run — the
+  // write goes straight to the ALM and is recorded as theirs.
+  const byHand = event.target.closest('[data-operator]');
+  if (byHand && selectedKey) {
+    const box = $('operator-comment');
+    const isComment = byHand.dataset.operator === 'comment';
+    const body = (box && box.value || '').trim();
+    if (isComment && !body) { box.focus(); return; }
+    if (!isComment && !confirm(`Move ${selectedKey} to “${byHand.dataset.transition}”?`
+        + (body ? '\n\nYour comment will be posted first.' : ''))) return;
+    byHand.disabled = true;
+    $('work-state').textContent = 'writing to jira…';
+    try {
+      // A comment typed alongside a transition is posted first, so the ticket never moves
+      // with the explanation still sitting in the box.
+      if (body) {
+        const c = await post('/tickets/' + encodeURIComponent(selectedKey) + '/comment',
+            {by: 'operator', body});
+        if (c.error) { feedNote('Comment failed: ' + c.error); return; }
+      }
+      if (!isComment) {
+        const r = await post('/tickets/' + encodeURIComponent(selectedKey) + '/transition',
+            {by: 'operator', transition: byHand.dataset.transition});
+        if (r.error) { feedNote('Transition failed: ' + r.error); return; }
+      }
+      feedNote(`You ${isComment ? 'commented on' : 'moved'} ${selectedKey}`
+          + (isComment ? '' : ' to ' + byHand.dataset.transition) + '.');
+    } finally {
+      $('work-state').textContent = '';
+      openTicket(selectedKey);
+      loadInbox();
+    }
+    return;
+  }
+
+  const button = event.target.closest('[data-action]');
+  if (!button || !selectedKey) return;
+  if (button.dataset.action === 'retriage') {
+    button.disabled = true;
+    await retriage(selectedKey);
+    return;
+  }
+  if (button.dataset.action === 'automate') {
+    await post('/rules', {category: button.dataset.category, by: 'operator'});
+    feedNote('Automation enabled for category ' + button.dataset.category);
+    openTicket(selectedKey);
+    if (tab === 'rules') refreshPanel();
+    return;
+  }
+  const verb = button.dataset.action;
+  $('work-state').textContent = verb === 'preview' ? 'rehearsing…' : 'working…';
+  document.querySelectorAll('#detail button').forEach(b => b.disabled = true);
+  try {
+    const result = await post('/tickets/' + encodeURIComponent(selectedKey) + '/' + verb);
+    showOutcome(result);
+  } finally {
+    $('work-state').textContent = '';
+    loadPending();
+    loadInbox();
+    if (tab === 'runs') refreshPanel();
+  }
+});
+
+function showOutcome(result) {
+  if (result.error) { feedNote('Error: ' + result.error); openTicket(selectedKey); return; }
+  const detail = $('detail');
+  const box = document.createElement('div');
+  box.className = 'plan';
+  if (result.parked) {
+    box.innerHTML = `<strong>The agent stopped and is waiting on you.</strong>
+      <div class="muted">${mdInline(result.summary)}</div>
+      <div>See the “Waiting on you” panel to decide.</div>`;
+  } else {
+    box.innerHTML = `<strong>Run ${esc(result.runId)} · ${esc(result.status)}</strong>
+      <div class="md">${md(result.output || result.summary || '(no output)')}</div>`;
+  }
+  detail.prepend(box);
+}
+
+// --- pending items ---------------------------------------------------------------
+// Approvals a decision is in flight for. Deciding one runs the resumed ticket, which
+// takes as long as the model does, and during that window the card is still on screen:
+// without this its buttons stayed live, so Reject was clickable on something already
+// approved. Held as a set rather than a flag on the button because loadPending() repaints
+// the panel from the event stream mid-decision, which would restore a fresh, enabled card.
+const deciding = new Set();
+
+async function loadPending() {
+  const rows = (await api('/approvals')).filter(a => a.state === 'PENDING');
+  $('pending-count').textContent = rows.length ? String(rows.length) : '';
+  $('pending').innerHTML = rows.length ? rows.map(a => {
+    // A card whose decision is running renders inert and says so. The agent works the ticket
+    // synchronously, so the card outlives the click by however long the model takes.
+    const off = deciding.has(a.id) ? ' disabled' : '';
+    const working = deciding.has(a.id)
+        ? '<div class="muted" style="font-size:12px">Working — the agent is carrying on with this ticket…</div>'
+        : '';
+    return a.kind === 'QUESTION' ? `
+    <div class="pending-card question">
+      <h3>The agent asks — <code>${esc(a.ticketKey)}</code></h3>
+      <dl><dt>Question</dt><dd>${esc(a.question)}</dd></dl>
+      <div class="muted" style="font-size:12px">Your answer is remembered for future tickets.</div>
+      <div class="row">
+        <input type="text" id="answer-${esc(a.id)}" placeholder="Answer in one sentence…"${off}>
+        <button data-approval="${esc(a.id)}" data-decision="answer"${off}>Answer &amp; continue</button>
+      </div>
+      ${working}
+    </div>` : `
+    <div class="pending-card">
+      <h3>${esc(a.tool)} ${riskPill(a.risk)} — <code>${esc(a.ticketKey)}</code></h3>
+      <dl>
+        <dt>Action</dt><dd><code>${esc(JSON.stringify(a.arguments))}</code></dd>
+        <dt>Reason</dt><dd>${esc(a.reason)}</dd>
+        <dt>Effect</dt><dd>${esc(a.effect)}</dd>
+        <dt>Reversible</dt><dd>${a.reversible ? 'yes' : '<strong>no</strong>'}</dd>
+        <dt>Run</dt><dd><code>${esc(a.runId)}</code></dd>
+      </dl>
+      <div class="muted" style="font-size:12px">Evidence established from systems of record:</div>
+      <ul>${(a.evidence || []).map(e => `<li>${esc(e)}</li>`).join('') || '<li>none recorded</li>'}</ul>
+      <div class="row">
+        <input type="text" id="note-${esc(a.id)}"
+               placeholder="Why (optional) — a rejection's reason teaches future runs"${off}>
+      </div>
+      <div class="row">
+        <button data-approval="${esc(a.id)}" data-decision="approve"${off}>Approve</button>
+        <button class="danger" data-approval="${esc(a.id)}" data-decision="reject"${off}>Reject</button>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <label class="muted" style="font-size:12px">
+          <input type="checkbox" id="standing-${esc(a.id)}"${off}>
+          if rejecting, keep refusing <code>${esc(a.capability)}</code> until lifted
+        </label>
+      </div>
+      ${a.risk === 'HIGH' || a.risk === 'DESTRUCTIVE' ? '' : `
+      <div class="row" style="margin-top:2px">
+        <label class="muted" style="font-size:12px">
+          <input type="checkbox" id="trust-${esc(a.id)}"${off}>
+          if approving, stop asking me about <code>${esc(a.capability)}</code> — anything
+          higher-risk in it still stops for you
+        </label>
+      </div>`}
+      ${working}
+    </div>`;
+  }).join('') : '<p class="muted">Nothing waiting.</p>';
+}
+
+$('pending').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-approval]');
+  if (!button) return;
+  const id = button.dataset.approval;
+  const decision = button.dataset.decision;
+  // Two clicks on one decision are one decision. The guard is here as well as on the
+  // rendered card because a click can land between the request and the repaint.
+  if (deciding.has(id)) return;
+  let result;
+  $('work-state').textContent = 'continuing…';
+  // Read what the operator typed before anything repaints; a rendered card is replaced,
+  // and with it whatever is in its fields.
+  const answerInput = $('answer-' + id);
+  const answer = (answerInput && answerInput.value || '').trim();
+  if (decision === 'answer' && !answer) { $('work-state').textContent = ''; return; }
+  const noteInput = $('note-' + id);
+  const standingInput = $('standing-' + id);
+  const trustInput = $('trust-' + id);
+  const note = (noteInput && noteInput.value.trim())
+      || (decision === 'approve' ? 'Confirmed.' : 'Not now.');
+  // One flag, opposite meanings by decision: refusing binds the refusal, approving stops
+  // the asking. Both are the operator saying "this is settled", and both are liftable.
+  const standing = decision === 'approve'
+      ? !!(trustInput && trustInput.checked)
+      : !!(standingInput && standingInput.checked);
+
+  deciding.add(id);
+  await loadPending();          // the card, now inert and saying so
+  try {
+    result = decision === 'answer'
+        ? await post('/approvals/' + encodeURIComponent(id) + '/answer',
+            {by: 'operator', answer})
+        : await post('/approvals/' + encodeURIComponent(id) + '/' + decision,
+            {by: 'operator', note, standing});
+    if (result && result.ticketKey) {
+      selectedKey = result.ticketKey;
+      showOutcome(result);
+    }
+  } finally {
+    deciding.delete(id);
+    $('work-state').textContent = '';
+    loadPending();
+    loadInbox();
+    if (selectedKey) openTicket(selectedKey);
+  }
+});
+
+// --- triage / bulk ---------------------------------------------------------------
+async function runTriage() {
+  $('banner-state').textContent = 'triaging…';
+  $('triage-btn').disabled = true;
+  try {
+    const result = await post('/triage/run');
+    if (result.error) feedNote('Triage: ' + result.error);
+  } finally {
+    $('banner-state').textContent = '';
+    $('triage-btn').disabled = false;
+    loadInbox();
+  }
+}
+
+async function runAllHandleable() {
+  const keys = tickets.filter(t => t.statusCategory !== 'DONE' && t.triage && t.triage.canHandle && !t.triageStale)
+      .map(t => t.key);
+  if (!keys.length) return;
+  if (!confirm('Let the agent work ' + keys.length + ' ticket(s)? Anything consequential still stops for your approval.')) return;
+  $('banner-state').textContent = 'working ' + keys.length + ' ticket(s)…';
+  $('bulk-btn').disabled = true;
+  try {
+    const outcomes = await post('/bulk/execute', {keys});
+    const parked = (outcomes.filter ? outcomes.filter(o => o.parked).length : 0);
+    feedNote('Bulk run finished: ' + (outcomes.length || 0) + ' ticket(s), ' + parked + ' waiting on you.');
+  } finally {
+    $('banner-state').textContent = '';
+    $('bulk-btn').disabled = false;
+    loadPending();
+    loadInbox();
+  }
+}
+
+// --- tabs ------------------------------------------------------------------------
+function showTab(name) {
+  tab = name;
+  for (const id of ['runs','rules','learnings','gaps','tools']) {
+    $('tab-' + id).setAttribute('aria-selected', String(id === name));
+  }
+  refreshPanel();
+}
+
+async function refreshPanel() {
+  const panel = $('panel');
+  if (tab === 'runs') {
+    const rows = await api('/runs');
+    panel.innerHTML = rows.length ? `<table><tr><th>Run</th><th>Ticket</th><th>Mode</th><th>Trigger</th><th>Status</th><th>Summary</th></tr>
+      ${rows.map(r => `<tr class="clickable" data-run="${esc(r.id)}">
+        <td><code>${esc(r.id)}</code></td><td><code>${esc(r.ticketKey)}</code></td>
+        <td><span class="pill">${esc(r.mode)}</span></td>
+        <td><span class="pill">${esc(r.trigger)}</span></td>
+        <td>${statusPill(r.status)}</td>
+        <td class="muted">${summaryLine(r.summary, 90)}</td>
+      </tr>`).join('')}</table>` : '<p class="muted">No runs yet.</p>';
+  } else if (tab === 'rules') {
+    const rows = await api('/rules');
+    const refusals = await api('/corrections');
+    const cleared = await api('/trusted');
+    panel.innerHTML = (rows.length ? `<table><tr><th>Category</th><th>State</th><th>Covers</th><th>Record</th><th>Enabled by</th><th></th></tr>
+      ${rows.map(r => `<tr>
+        <td><span class="pill accent">${esc(r.category)}</span></td>
+        <td>${r.enabled ? '<span class="pill ok">automating</span>' : '<span class="pill">paused</span>'}
+          <div class="muted" style="font-size:11px">writes up to MEDIUM;<br>anything higher still asks</div></td>
+        <td>${(r.covers || []).length
+              ? `${(r.covers || []).length} ticket(s) it would work<div class="muted" style="font-size:11px">${
+                  r.covers.slice(0, 6).map(k => esc(k)).join(', ')}${r.covers.length > 6 ? ', …' : ''}</div>`
+              : '<span class="muted">nothing it can handle yet</span>'}
+          ${r.notYetHandleable ? `<div class="muted" style="font-size:11px">+ ${r.notYetHandleable} of this kind the agent cannot yet handle — those still wait for you</div>` : ''}</td>
+        <td>${r.runs
+              ? `${r.handled} handled${r.waiting ? `, ${r.waiting} waiting on you` : ''}
+                 <div class="muted" style="font-size:11px">last acted ${esc((r.lastActedAt || '').replace('T', ' ').slice(0, 16))}</div>`
+              : '<span class="muted">has not acted yet</span>'}</td>
+        <td class="muted">${esc(r.createdBy)}</td>
+        <td><button class="ghost" data-rule="${esc(r.id)}"
+                    data-category="${esc(r.category)}" data-covers="${(r.covers || []).length}"
+                    data-enabled="${r.enabled}">${r.enabled ? 'Pause' : 'Resume'}</button></td>
+      </tr>`).join('')}</table>` : '<p class="muted">No automation yet. Supervise a category of ticket until you trust it, then automate it from the ticket pane.</p>')
+      + '<p class="muted" style="margin-top:8px">While a rule is enabled, the agent sweeps the inbox and works matching tickets on its own; anything consequential still stops for approval.</p>'
+      + (cleared.length ? `<p class="muted" style="margin-top:14px">No longer asked about — capabilities this tenant has cleared.
+          Consequential calls in them still stop for you:</p>
+        <table><tr><th>Capability</th><th>Cleared by</th><th>When</th><th></th></tr>
+        ${cleared.map(c => `<tr>
+          <td><code>${esc(c.capability)}</code></td>
+          <td class="muted">${esc(c.by)}</td>
+          <td class="muted">${esc((c.at || '').replace('T', ' ').slice(0, 16))}</td>
+          <td><button class="ghost" data-untrust="${esc(c.capability)}">Ask me again</button></td>
+        </tr>`).join('')}</table>` : '')
+      + (refusals.length ? `<p class="muted" style="margin-top:14px">Standing refusals — capabilities a person refused and meant it:</p>
+        <table><tr><th>Capability</th><th>Who</th><th>Why</th><th></th></tr>
+        ${refusals.map(c => `<tr>
+          <td><code>${esc(c.capability)}</code></td>
+          <td class="muted">${esc(c.by)}</td>
+          <td>${esc(c.note)}</td>
+          <td><button class="ghost" data-lift="${esc(c.capability)}">Lift</button></td>
+        </tr>`).join('')}</table>` : '');
+  } else if (tab === 'learnings') {
+    const rows = await api('/learnings');
+    panel.innerHTML = rows.length ? '<ul>' + rows.map(l => `<li>${esc(l)}</li>`).join('') + '</ul>'
+      : '<p class="muted">Nothing learned yet. When you answer the agent’s questions, the answers appear here and future runs stop asking.</p>';
+  } else if (tab === 'gaps') {
+    const rows = await api('/gaps');
+    panel.innerHTML = rows.length ? `<table><tr><th>Capability</th><th>Ticket</th><th>What it was needed for</th><th>When</th></tr>
+      ${rows.map(g => `<tr><td><code>${esc(g.capability)}</code></td><td><code>${esc(g.ticketKey)}</code></td>
+        <td>${esc(g.description)}</td><td class="muted">${esc(g.reportedAt)}</td></tr>`).join('')}</table>`
+      : '<p class="muted">None reported. When a ticket needs a connection or action the agent does not have, the request lands here with the ticket attached.</p>';
+  } else {
+    const rows = await api('/tools');
+    panel.innerHTML = `<table><tr><th>Tool</th><th>Capability</th><th>Risk</th><th>Properties</th></tr>
+      ${rows.map(t => `<tr><td><code>${esc(t.name)}</code></td><td class="muted">${esc(t.capability)}</td>
+        <td>${riskPill(t.risk)}</td>
+        <td class="muted">${t.reversible ? 'reversible' : 'irreversible'}${t.idempotent ? ', idempotent' : ''}</td>
+      </tr>`).join('')}</table>`;
+  }
+}
+
+$('panel').addEventListener('click', async (event) => {
+  const rule = event.target.closest('[data-rule]');
+  if (rule) {
+    // Say what the switch does before throwing it: pausing sends a category of ticket
+    // back to waiting for a person, and resuming lets the agent work them unwatched.
+    const category = rule.dataset.category, covers = Number(rule.dataset.covers || 0);
+    const pausing = rule.dataset.enabled === 'true';
+    const scope = covers ? `${covers} triaged ticket(s)` : 'tickets of this kind';
+    if (!confirm(pausing
+        ? `Pause automation for “${category}”?\n\nThe agent will stop working ${scope} on its own; they will wait for you instead.`
+        : `Resume automation for “${category}”?\n\nThe agent will work ${scope} unwatched, up to MEDIUM-risk writes; anything higher still stops for your approval.`)) return;
+    await post('/rules/' + encodeURIComponent(rule.dataset.rule) + '/toggle');
+    feedNote((pausing ? 'Paused' : 'Resumed') + ' automation for ' + category + '.');
+    refreshPanel();
+    loadInbox();
+    return;
+  }
+  const untrust = event.target.closest('[data-untrust]');
+  if (untrust) {
+    const capability = untrust.dataset.untrust;
+    if (!confirm(`Be asked about “${capability}” again?\n\nThe agent will stop performing these `
+        + `on its own and wait for your approval, as it did before.`)) return;
+    const result = await post('/trusted/revoke', {capability});
+    feedNote(result.error ? 'Failed: ' + result.error
+        : 'The agent will ask about ' + capability + ' again.');
+    refreshPanel();
+    return;
+  }
+  const lift = event.target.closest('[data-lift]');
+  if (lift) {
+    const result = await post('/corrections/lift', {capability: lift.dataset.lift});
+    feedNote(result.error ? 'Lift failed: ' + result.error
+        : 'Lifted ' + result.lifted + ' standing refusal(s) on ' + result.capability
+            + '; they remain as advice.');
+    refreshPanel();
+    return;
+  }
+  const run = event.target.closest('[data-run]');
+  if (run) openRun(run.dataset.run);
+});
+
+async function openRun(id) {
+  const r = await api('/runs/' + encodeURIComponent(id));
+  if (!r || r.error) return;
+  $('detail').innerHTML = `<h3 style="margin:0 0 4px">${esc(r.id)} ${statusPill(r.status)}</h3>
+    <div class="muted"><span class="pill">${esc(r.mode)}</span> <span class="pill">${esc(r.trigger)}</span>
+      · ticket <code>${esc(r.ticketKey)}</code> · ${esc(r.createdAt)}</div>
+    ${r.summary ? `<p style="margin-bottom:0"><strong>Outcome</strong></p><div class="md">${md(r.summary)}</div>` : ''}
+    <div class="row">
+      <button class="ghost" data-back-to="${esc(r.ticketKey)}">Back to ticket</button>
+      <button class="ghost" data-capture-run="${esc(r.id)}"
+              title="Snapshot this run — ticket, knowledge, and how it ended — as a replayable eval case.">Save as eval</button>
+    </div>
+    <p class="muted" style="margin:10px 0 4px">Timeline</p>
+    <div class="feed">${(r.events || []).map(ev => `<div><span class="t">${esc(ev.sequence)}</span>
+      ${esc(ev.type)} <span class="muted">${esc(JSON.stringify(ev.detail).slice(0, 220))}</span></div>`).join('')}</div>`;
+  const back = $('detail').querySelector('[data-back-to]');
+  if (back) back.addEventListener('click', () => openTicket(back.dataset.backTo));
+  const capture = $('detail').querySelector('[data-capture-run]');
+  if (capture) capture.addEventListener('click', async () => {
+    capture.disabled = true;
+    const result = await post('/runs/' + encodeURIComponent(capture.dataset.captureRun) + '/capture');
+    feedNote(result.captured ? 'Captured as eval case: ' + result.captured
+        : 'Capture failed: ' + (result.error || 'unknown'));
+    capture.disabled = false;
+  });
+}
+
+// --- live feed -------------------------------------------------------------------
+function feedNote(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  $('feed').prepend(div);
+}
+
+// Run-lifecycle events repaint what they change: the inbox (statuses, last-run pills)
+// and whichever bottom tab is showing. Debounced, because a run finishing emits a burst
+// and the page should repaint once, after it. The open ticket pane is deliberately NOT
+// reloaded from here — it can hold an outcome box or a half-typed answer, and yanking
+// either out from under the operator costs more than a stale run list they can re-click.
+let refreshTimer = null;
+const scheduleRefresh = () => {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => { loadInbox(); refreshPanel(); }, 400);
+};
+
+new EventSource('/api/events').onmessage = (message) => {
+  const event = JSON.parse(message.data);
+  const div = document.createElement('div');
+  div.innerHTML = `<span class="t">${esc(event.runId)}</span> ${esc(event.type)}`;
+  $('feed').prepend(div);
+  while ($('feed').childElementCount > 200) $('feed').lastElementChild.remove();
+  if (['HUMAN_APPROVAL_REQUESTED','HUMAN_QUESTION_ASKED','RUN_PARKED','RUN_COMPLETED','RUN_FAILED'].includes(event.type)) {
+    loadPending();
+  }
+  if (['RUN_STARTED','RUN_RESUMED','RUN_PARKED','RUN_COMPLETED','RUN_FAILED','RUN_CANCELLED'].includes(event.type)) {
+    scheduleRefresh();
+  }
+};
+
+loadOverview();
+loadInbox();
+loadPending();
+refreshPanel();
+setInterval(loadOverview, 30000);
+</script>
+</body>
+</html>

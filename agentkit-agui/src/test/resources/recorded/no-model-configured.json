@@ -1,0 +1,24 @@
+[ {
+  "runId" : "run-1",
+  "threadId" : "c2",
+  "timestamp" : 1,
+  "type" : "RUN_STARTED"
+}, {
+  "stepName" : "running",
+  "timestamp" : 1,
+  "type" : "STEP_STARTED"
+}, {
+  "stepName" : "running",
+  "timestamp" : 1,
+  "type" : "STEP_FINISHED"
+}, {
+  "result" : {
+    "answer" : "",
+    "detail" : "No model is configured. Set CHAT_LLM, then restart.",
+    "state" : "FAILED"
+  },
+  "runId" : "run-1",
+  "threadId" : "c2",
+  "timestamp" : 1,
+  "type" : "RUN_FINISHED"
+} ]

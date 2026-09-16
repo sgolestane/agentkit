@@ -1,0 +1,96 @@
+[ {
+  "runId" : "run-1",
+  "threadId" : "c1",
+  "timestamp" : 1,
+  "type" : "RUN_STARTED"
+}, {
+  "stepName" : "running",
+  "timestamp" : 1,
+  "type" : "STEP_STARTED"
+}, {
+  "stepName" : "model",
+  "timestamp" : 1,
+  "type" : "STEP_STARTED"
+}, {
+  "stepName" : "model",
+  "timestamp" : 1,
+  "type" : "STEP_FINISHED"
+}, {
+  "timestamp" : 1,
+  "toolCallId" : "run-1:stats.open",
+  "toolCallName" : "stats.open",
+  "type" : "TOOL_CALL_START"
+}, {
+  "delta" : "{\"limit\":5}",
+  "timestamp" : 1,
+  "toolCallId" : "run-1:stats.open",
+  "type" : "TOOL_CALL_ARGS"
+}, {
+  "timestamp" : 1,
+  "toolCallId" : "run-1:stats.open",
+  "type" : "TOOL_CALL_END"
+}, {
+  "content" : "12 are open.",
+  "messageId" : "run-1:run-1:stats.open",
+  "timestamp" : 1,
+  "toolCallId" : "run-1:stats.open",
+  "type" : "TOOL_CALL_RESULT"
+}, {
+  "name" : "agentkit.view",
+  "timestamp" : 1,
+  "type" : "CUSTOM",
+  "value" : {
+    "data" : {
+      "label" : "open",
+      "note" : "up 3",
+      "value" : 12
+    },
+    "kind" : "stat"
+  }
+}, {
+  "messageId" : "run-1",
+  "role" : "assistant",
+  "timestamp" : 1,
+  "type" : "TEXT_MESSAGE_START"
+}, {
+  "delta" : "Twelve ",
+  "messageId" : "run-1",
+  "timestamp" : 1,
+  "type" : "TEXT_MESSAGE_CONTENT"
+}, {
+  "delta" : "are ",
+  "messageId" : "run-1",
+  "timestamp" : 1,
+  "type" : "TEXT_MESSAGE_CONTENT"
+}, {
+  "delta" : "open.",
+  "messageId" : "run-1",
+  "timestamp" : 1,
+  "type" : "TEXT_MESSAGE_CONTENT"
+}, {
+  "stepName" : "model",
+  "timestamp" : 1,
+  "type" : "STEP_STARTED"
+}, {
+  "stepName" : "model",
+  "timestamp" : 1,
+  "type" : "STEP_FINISHED"
+}, {
+  "messageId" : "run-1",
+  "timestamp" : 1,
+  "type" : "TEXT_MESSAGE_END"
+}, {
+  "stepName" : "running",
+  "timestamp" : 1,
+  "type" : "STEP_FINISHED"
+}, {
+  "result" : {
+    "answer" : "Twelve are open.",
+    "detail" : "",
+    "state" : "COMPLETED"
+  },
+  "runId" : "run-1",
+  "threadId" : "c1",
+  "timestamp" : 1,
+  "type" : "RUN_FINISHED"
+} ]

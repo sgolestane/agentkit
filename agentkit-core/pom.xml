@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-core</artifactId>
+    <name>AgentKit :: Core</name>
+    <description>
+        Provider-agnostic core: agent loop, tools, skills, knowledge base, memory,
+        context engineering, verification, and supervisor/subagent orchestration.
+    </description>
+
+    <dependencies>
+        <!--
+          An in-memory filesystem, so the Windows half of the path pipeline has a runner
+          (#81). Every test in every module runs on POSIX, and the bug ResourcePaths exists
+          for (#78) was reachable only where a backslash separates. Test-scoped: nothing
+          in main knows this is here.
+        -->
+        <dependency>
+            <groupId>com.google.jimfs</groupId>
+            <artifactId>jimfs</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              A test-jar carrying the MemoryStore TCK and nothing else (#153).
+
+              MemoryStore is an SPI, so a store somebody else writes is a runner of its
+              rules that no audit here can enumerate — this repository's recurring defect,
+              in the one shape where grep cannot find the missing runner. The answer is an
+              abstract test they can run, and an abstract test they cannot obtain is prose
+              with a @Test annotation on it.
+
+              Filtered rather than whole. The default test-jar publishes every test class in
+              this module: fixtures, half-finished helpers and assertions about internals
+              that are nobody's contract, all of it becoming a compatibility surface by
+              accident the first time someone depends on it. The includes below are the two
+              abstract classes and nothing else, so what is published is exactly what is
+              promised. Adding a class here is a deliberate act.
+
+              Consumers bring their own JUnit and AssertJ; a test-jar declares no
+              dependencies, which is the usual and correct shape for a TCK.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${jar.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>memory-store-tck</id>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>dev/agentkit/core/memory/MemoryStoreContract.class</include>
+                                <include>dev/agentkit/core/memory/MediumBackedMemoryStoreContract*.class</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

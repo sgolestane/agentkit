@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-examples-itops</artifactId>
+    <name>AgentKit Example — Agentic IT Operations</name>
+    <description>An agentic-first IT operations platform built on AgentKit: chat, scheduled
+        autonomy, progressive tool disclosure, supervisor verification, human approval and audit.</description>
+
+    <properties>
+        <!-- A demo, not a published library. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <exec.mainClass>dev.agentkit.itops.ItOpsApp</exec.mainClass>
+        <exec.plugin.version>3.5.0</exec.plugin.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <!-- Optional: set ITOPS_LLM=anthropic plus ANTHROPIC_API_KEY to swap the scripted
+             stand-in model for a real one. The demo runs offline without it. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-anthropic</artifactId>
+        </dependency>
+        <!-- The same, through OpenRouter: ITOPS_LLM=openrouter plus OPENROUTER_API_KEY and
+             an explicit ITOPS_MODEL. Here so the evals can be run by somebody who has one
+             key and not the other; nothing in the module references it directly. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-openrouter</artifactId>
+        </dependency>
+        <!-- The HTTP layer is the JDK's com.sun.net.httpserver; Jackson is only used to
+             render the REST/SSE payloads the UI consumes. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- Test scope: the eval suite scores this agent against a real model when one is
+             configured, and skips when one is not. Not a runtime dependency of the demo — the
+             harness observes a run, it does not take part in one. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-eval</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec.plugin.version}</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>runtime</classpathScope>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${exec.mainClass}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

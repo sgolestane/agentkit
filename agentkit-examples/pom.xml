@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-examples</artifactId>
+    <name>AgentKit Examples</name>
+    <description>Runnable end-to-end examples wiring the AgentKit subsystems together.</description>
+
+    <properties>
+        <!-- Demos, not a published library. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <!-- Default main class for `mvn -pl agentkit-examples exec:java`; override with -Dexec.mainClass=... -->
+        <exec.mainClass>dev.agentkit.examples.EndToEndAgent</exec.mainClass>
+        <exec.plugin.version>3.5.0</exec.plugin.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-anthropic</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-bedrock</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-temporal</artifactId>
+        </dependency>
+        <!-- Parses the web-search provider's JSON response in the research demo
+             (JDK HttpClient does the HTTP; no vendor SDK needed). -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <!-- The main() demos are meant to be run; give them a real logging binding. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- On the classpath so an AWS SSO profile (AWS_PROFILE=...) resolves when
+             running the Bedrock demo; not needed for static keys or instance roles. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sso</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>ssooidc</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- `mvn -f agentkit-examples/pom.xml exec:exec` forks a JVM to run a demo
+                 main() over the full runtime classpath. exec:exec (fork) is used rather
+                 than exec:java (in-process) because the in-process plexus classloader
+                 mishandles the AWS SDK's classloading (NoClassDefFoundError / "sso module
+                 must be on the class path" even when the jars are present). -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec.plugin.version}</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>runtime</classpathScope>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${exec.mainClass}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

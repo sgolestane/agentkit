@@ -1,0 +1,21 @@
+# The agent's workbench.
+# Jira env (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN) and model env
+# (WORKBENCH_LLM + its key, WORKBENCH_MODEL for openrouter) come from your shell.
+
+# Build the module and everything it depends on.
+build:
+    cd .. && ./mvnw -q -DskipTests -pl agentkit-examples-workbench -am install
+
+# Run the web application on http://localhost:8082 (WORKBENCH_PORT to change).
+web: build
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench exec:exec
+
+# The offline behavioural tests.
+test:
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench test
+
+# A stand-in Jira on http://localhost:8090 (JIRASIM_PORT to change) — point
+# JIRA_BASE_URL at it, with any JIRA_EMAIL / JIRA_API_TOKEN.
+jira-sim: build
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench exec:exec \
+        -Dexec.mainClass=dev.agentkit.workbench.sim.JiraSimulator

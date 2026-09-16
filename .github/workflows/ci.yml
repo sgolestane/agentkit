@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    # sgolestane/** is here because the chat-console work branches that way and was invisible
+    # to CI without it: every one of those branches built green on a laptop and was never built
+    # on Linux at all, which is exactly where the platform-specific failures live (#360).
+    branches: [ main, "claude/**", "sgolestane/**" ]
+  pull_request:
+    # Including the integration branch. A long-lived branch that collects a project's PRs is a
+    # branch whose PRs need checking, and targeting only main meant none of them were.
+    branches: [ main, "sgolestane/chat-console-integration" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # The console's npm dependencies, and the Node that frontend-maven-plugin downloads.
+      #
+      # There is deliberately no separate npm step: `./mvnw verify` builds the console itself,
+      # so a clean clone needs one command and CI and a laptop cannot drift about what "build"
+      # means. What this does is stop that command paying for a Node download and a full
+      # dependency install on every run.
+      #
+      # Keyed on the lockfile, because that is what decides the contents. The node/ directory is
+      # keyed on it too rather than on the pinned version — a coarser key that misses is only
+      # slow, and one that hits when it should not is wrong.
+      - name: Cache the console's toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            agentkit-chat-ui/node
+            agentkit-chat-ui/node_modules
+          key: chat-ui-${{ runner.os }}-${{ hashFiles('agentkit-chat-ui/package-lock.json') }}
+          restore-keys: |
+            chat-ui-${{ runner.os }}-
+
+      # verify includes the javadoc check, bound to that phase in the parent pom so that a
+      # local run and this one give the same answer. Since #340 it also builds the console:
+      # install-node-and-npm, npm ci and npm run build all run in generate-resources, and the
+      # result is copied onto the classpath in process-classes.
+      - name: Build and test
+        run: ./mvnw -B -ntp verify

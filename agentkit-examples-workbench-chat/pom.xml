@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-examples-workbench-chat</artifactId>
+    <name>AgentKit Example — The Workbench, as a conversation</name>
+    <description>The workbench with a chat interface instead of a dashboard. It adds no
+        domain of its own: the tickets, runs, approvals, rules and learnings are
+        agentkit-examples-workbench's, reached through the same Workbench, so every gate, approval
+        and standing refusal that module enforces still applies. Both consoles ship, and both
+        can run at once against the same Jira and the same store.</description>
+
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <exec.mainClass>dev.agentkit.workbench.chat.WorkbenchChatApp</exec.mainClass>
+        <exec.plugin.version>3.5.0</exec.plugin.version>
+    </properties>
+
+    <dependencies>
+        <!--
+            The dashboard's module, as a dependency rather than a fork. Everything about a
+            ticket, a run, an approval or a rule is defined once, over there — this module
+            supplies a tool surface and a system prompt and nothing else. See #351: a source
+            change in that module is a separate, reviewed commit, not a side effect of this one.
+        -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-examples-workbench</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-chat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec.plugin.version}</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>runtime</classpathScope>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${exec.mainClass}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

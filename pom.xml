@@ -1,0 +1,447 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.agentkit</groupId>
+    <artifactId>agentkit-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>AgentKit</name>
+    <description>A Java framework for reliable, unsupervised, tool-using AI agents.</description>
+    <url>https://github.com/sgolestane/agentkit</url>
+
+    <modules>
+        <module>agentkit-core</module>
+        <module>agentkit-llm-anthropic</module>
+        <module>agentkit-llm-bedrock</module>
+        <module>agentkit-llm-openrouter</module>
+        <module>agentkit-temporal</module>
+        <module>agentkit-mcp</module>
+        <module>agentkit-json</module>
+        <module>agentkit-otel</module>
+        <module>agentkit-eval</module>
+        <module>agentkit-chat</module>
+        <module>agentkit-agui</module>
+        <module>agentkit-examples</module>
+        <module>agentkit-examples-itops</module>
+        <module>agentkit-examples-workbench</module>
+        <module>agentkit-examples-workbench-chat</module>
+        <module>agentkit-pentest</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- Fixed timestamp for reproducible builds; bump on release. -->
+        <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
+
+        <!-- Minimum toolchain versions (enforced) -->
+        <min.maven.version>3.9.0</min.maven.version>
+        <min.java.version>21</min.java.version>
+
+        <!-- Dependency versions -->
+        <anthropic.sdk.version>2.48.0</anthropic.sdk.version>
+        <aws.sdk.version>2.46.8</aws.sdk.version>
+        <temporal.sdk.version>1.27.0</temporal.sdk.version>
+        <!-- Aligned with the version temporal-sdk brings transitively. -->
+        <jackson.version>2.19.4</jackson.version>
+        <opentelemetry.version>1.64.0</opentelemetry.version>
+        <junit.version>5.11.4</junit.version>
+        <assertj.version>3.27.3</assertj.version>
+        <mockito.version>5.15.2</mockito.version>
+        <jimfs.version>1.3.0</jimfs.version>
+        <slf4j.version>2.0.16</slf4j.version>
+
+        <!-- Plugin versions -->
+        <surefire.version>3.5.2</surefire.version>
+        <compiler.plugin.version>3.13.0</compiler.plugin.version>
+        <javadoc.plugin.version>3.12.0</javadoc.plugin.version>
+        <jar.plugin.version>3.4.1</jar.plugin.version>
+        <enforcer.plugin.version>3.5.0</enforcer.plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-llm-anthropic</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-llm-bedrock</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-llm-openrouter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-temporal</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-json</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-otel</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-eval</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.agentkit</groupId>
+                <artifactId>agentkit-chat</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.anthropic</groupId>
+                <artifactId>anthropic-java</artifactId>
+                <version>${anthropic.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.anthropic</groupId>
+                <artifactId>anthropic-java-bedrock</artifactId>
+                <version>${anthropic.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bedrock</artifactId>
+                <version>${aws.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>url-connection-client</artifactId>
+                <version>${aws.sdk.version}</version>
+            </dependency>
+            <!-- Required on the classpath for AWS SSO profile credential resolution. -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>sso</artifactId>
+                <version>${aws.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>ssooidc</artifactId>
+                <version>${aws.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.temporal</groupId>
+                <artifactId>temporal-sdk</artifactId>
+                <version>${temporal.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.temporal</groupId>
+                <artifactId>temporal-testing</artifactId>
+                <version>${temporal.sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>${opentelemetry.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-junit-jupiter</artifactId>
+                <version>${mockito.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.jimfs</groupId>
+                <artifactId>jimfs</artifactId>
+                <version>${jimfs.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-simple</artifactId>
+                <version>${slf4j.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <!-- Test dependencies shared by all modules -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire.version}</version>
+                    <configuration>
+                        <!--
+                          #294: a test that hangs is worse than a test that fails, because
+                          what it leaves behind is not a result. The fork stops speaking,
+                          surefire waits, and whatever finally kills the JVM leaves
+
+                            The forked VM terminated without properly saying goodbye
+                            Process Exit Code: 143
+
+                          Reproduced deliberately, and the reactor summary that comes
+                          with it is worse than #294 records. It is not that there is no
+                          `Tests run:` line — surefire still prints
+
+                            [INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0
+
+                          It is that the per-class line is missing and the summary reads
+                          zero failures. A harness told to refuse anything with no
+                          `Tests run:` line therefore accepts this, and a harness scoring
+                          on the build's exit status records it as a kill. Either way a
+                          hang does not merely break a build — it manufactures false
+                          evidence in the one technique this repository uses to decide
+                          whether a test earns its place.
+
+                          A default deadline is the fix, because it applies to the 177 of
+                          188 test classes that carry no @Timeout of their own and to
+                          every test written after this line. An explicit @Timeout on a
+                          class or method still wins, so nothing already tuned — including
+                          MemoryRaceTest's deliberate 150s — is touched.
+
+                          Measured end to end on this JDK (21.0.10), agentkit-json, one
+                          module, a test parked in an uninterruptible socket read:
+
+                            origin/main   still hung at 421s when the run was killed,
+                                          no `Tests run:` line for the class at all
+                            with this     Tests run: 1, Errors: 1 at 300.1s, and the
+                                          report carries the stuck thread's own stack —
+                                          down through SocketInputStream.read to the
+                                          exact line of the test that parked there
+
+                          The second is a defect anybody can act on. The first is the
+                          thing #294 is about.
+
+                          Five minutes, and the number comes from the reactor rather than
+                          from taste. Across 2,267 test methods on a full `clean verify`,
+                          the slowest method that does NOT already carry its own @Timeout
+                          is the one in AgentGraphTest that shuts an executor down under a
+                          running graph, at 5.30s; next is 3.27s. Five minutes is 57x
+                          that. The
+                          headroom is not idle: MemoryRaceTest records that under a loaded
+                          machine its own slowest run reached 109.7s against a 150s bound,
+                          so this reactor is known to run twenty times slower under
+                          contention — which is exactly the condition #294's sightings
+                          were all seen under. It is a ceiling, not a budget: it costs
+                          nothing on a healthy run, and a hang now costs five minutes and
+                          a named failure instead of a build that never ends.
+
+                          SEPARATE_THREAD, not the JUnit default of SAME_THREAD. In
+                          SAME_THREAD mode JUnit can only interrupt the test thread, which
+                          releases a latch or a join but NOT an uninterruptible blocking
+                          read; measured against a test parked in Socket.read, SAME_THREAD
+                          left the build hung past 150s while SEPARATE_THREAD reported
+                          `Tests run: 1, Errors: 1` in 25s naming the stuck thread. That
+                          is the difference between a bounded failure and a wedge, and the
+                          shapes this repository actually blocks on — sockets in the
+                          openrouter and itops tests, the pipe to an MCP subprocess — are
+                          exactly the uninterruptible ones. It is also what the two test
+                          classes here that thought hardest about hangs already choose by
+                          hand: MemoryRaceTest and SkillRaceTest both spell
+                          threadMode = SEPARATE_THREAD on their own @Timeout.
+
+                          Rejected: <forkedProcessTimeoutInSeconds> as the primary guard.
+                          Measured twice, it did NOT release a fork parked in an
+                          uninterruptible read: with the timeout set to 25s the build was
+                          still hung at 100s on one attempt and at 401s on the other, and
+                          surefire printed no timeout message either time. It closes the
+                          command channel, the fork sees EOF and tries to exit, and
+                          cannot. It is left where agentkit-pentest already sets it, and
+                          left alone: the one shape it might still cover is a hang
+                          OUTSIDE a test method, where JUnit's deadline cannot see
+                          anything — and that was not measured either way here, so it is
+                          neither claimed nor removed.
+
+                          Rejected: a JUnit extension that fails a test leaving an
+                          HttpClient operation in flight, which is what #294 asks for.
+                          Measured on this JDK, an operation in flight is harmless — every
+                          thread an HttpClient starts is a daemon thread, and a surefire
+                          fork that left a stalled stream running still reported
+                          `Tests run: 1` and BUILD SUCCESS. See JdkHttpTransport's `http`
+                          field for the measurements and for the thing that does hang.
+                        -->
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.timeout.default = 300 s
+                                junit.jupiter.execution.timeout.thread.mode.default = SEPARATE_THREAD
+                            </configurationParameters>
+                        </properties>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>${enforcer.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${javadoc.plugin.version}</version>
+                    <configuration>
+                        <!--
+                          What makes `mvn javadoc:javadoc` a real check: a {@link} that
+                          no longer resolves, a block tag where it is not allowed, and
+                          malformed HTML all fail the build. Each verified by introducing
+                          one and watching it fail.
+
+                          The groups are listed out rather than written as `all,-missing`.
+                          That spelling — and -Xdoclint:all,-missing passed through
+                          additionalJOption — switches doclint off altogether, so the
+                          check silently checks nothing.
+
+                          `missing` is excluded on purpose: turning it on makes ~100
+                          absent @param/@return across the modules into build failures.
+                          That is a documentation backlog, not breakage. Add it if you
+                          ever want to work it down.
+
+                          One gap: a doc comment orphaned by a second comment below it
+                          (which silently un-documents the member) needs JDK 22+ to
+                          detect, so it slips through here. It has bitten this repo once.
+                        -->
+                        <doclint>reference,syntax,html,accessibility</doclint>
+                        <notimestamp>true</notimestamp>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <!--
+              Bound to the lifecycle rather than run as a separate `javadoc:javadoc`
+              invocation. Standalone, the goal resolves inter-module dependencies from the
+              local repository instead of the reactor, so it fails on a machine that has
+              not installed the modules — which is every clean CI runner, and was not my
+              machine, so this passed locally and failed in CI.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>check-javadoc</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>javadoc</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[${min.maven.version},)</version>
+                                </requireMavenVersion>
+                                <requireJavaVersion>
+                                    <version>[${min.java.version},)</version>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

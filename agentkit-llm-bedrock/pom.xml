@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-llm-bedrock</artifactId>
+    <name>AgentKit LLM Bedrock</name>
+    <description>Runs the AgentKit Anthropic adapter against Claude on Amazon Bedrock, with
+        application-inference-profile discovery.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-anthropic</artifactId>
+        </dependency>
+        <!-- Anthropic SDK's Bedrock (Mantle) backend for the Messages API data plane. -->
+        <dependency>
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java-bedrock</artifactId>
+        </dependency>
+        <!-- AWS Bedrock control-plane client, for discovering inference profiles. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>bedrock</artifactId>
+        </dependency>
+        <!-- A lightweight HTTP client so the control-plane client works out of the box.
+             Selected via ServiceLoader at runtime, so no compile-time dependency. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+</project>

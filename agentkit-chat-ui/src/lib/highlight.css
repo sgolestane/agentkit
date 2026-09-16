@@ -1,0 +1,46 @@
+/*
+ * Syntax colours, on the console's own tokens rather than a highlight.js theme.
+ *
+ * A theme stylesheet is another 3–8 kB and hard-codes a palette that fights the surrounding
+ * page in one of the two colour schemes — usually dark, which is where an operator lives. These
+ * are the same variables everything else here uses, so code sits inside a bubble rather than on
+ * top of it, and dark mode needs no second set.
+ */
+.md .hljs-comment,
+.md .hljs-quote {
+  color: var(--color-muted);
+  font-style: italic;
+}
+.md .hljs-keyword,
+.md .hljs-selector-tag,
+.md .hljs-literal,
+.md .hljs-section,
+.md .hljs-doctag,
+.md .hljs-type,
+.md .hljs-name,
+.md .hljs-strong {
+  color: var(--color-accent);
+}
+.md .hljs-string,
+.md .hljs-title,
+.md .hljs-attr,
+.md .hljs-attribute,
+.md .hljs-symbol,
+.md .hljs-bullet,
+.md .hljs-addition {
+  color: var(--color-good);
+}
+.md .hljs-number,
+.md .hljs-variable,
+.md .hljs-template-variable,
+.md .hljs-built_in,
+.md .hljs-params {
+  color: var(--color-warn);
+}
+.md .hljs-deletion,
+.md .hljs-meta {
+  color: var(--color-bad);
+}
+.md .hljs-emphasis {
+  font-style: italic;
+}

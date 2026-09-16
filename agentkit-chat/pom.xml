@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-chat</artifactId>
+    <name>AgentKit — Chat</name>
+    <description>A conversation an agent and a person hold: the transcript, what happened
+        inside each turn, the files handed over, and a store that survives a restart. The
+        examples supply tools and a system prompt; everything a chat console needs to exist
+        lives here.</description>
+
+    <properties>
+        <frontend.dir>${project.basedir}/../agentkit-chat-ui</frontend.dir>
+        <!--
+            Pinned, so CI and a laptop build the same bytes. At or above what the toolchain
+            actually requires: Vite 7 and @vitejs/plugin-react 5 both declare
+            `^20.19.0 || >=22.12.0`, and v22.11.0 built anyway while printing an EBADENGINE
+            warning on every run — which is the shape of a thing that works until it does not.
+        -->
+        <node.version>v22.20.0</node.version>
+        <frontend.plugin.version>1.15.1</frontend.plugin.version>
+        <frontend.skip>false</frontend.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <!-- The transcript is JSON on disk. The core carries no serializer by design, so the
+             dependency lives at the layer that has a wire. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                The console's own build, run by Maven so that `./mvnw verify` on a clean clone
+                produces a runnable jar with no separate npm step to remember. It downloads a
+                pinned Node into agentkit-chat-ui/node/ (gitignored) rather than using whatever
+                the machine happens to have, so CI and a laptop build the same bytes.
+
+                `-Dfrontend.skip=true` turns the whole thing off for a Java-only build — on a
+                machine with no network, or when iterating on the runtime and not the page. The
+                jar it produces has no console in it, which is why it is opt-in rather than
+                the default.
+            -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>${frontend.plugin.version}</version>
+                <configuration>
+                    <workingDirectory>${frontend.dir}</workingDirectory>
+                    <installDirectory>${frontend.dir}</installDirectory>
+                    <skip>${frontend.skip}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals>
+                            <goal>install-node-and-npm</goal>
+                        </goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <!-- ci, not install: it installs exactly the lockfile and fails if
+                                 package.json and the lock have drifted, which is the whole
+                                 point of committing the lock. -->
+                            <arguments>ci --no-audit --no-fund</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>generate-resources</phase>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                    <!--
+                        The console's own tests, in the phase Maven already means by "test", so
+                        `./mvnw verify` is one command that runs both sides. Declaring vitest and
+                        never invoking it is how a frontend ends up with a test script nobody has
+                        run in a year — and #357 is going to lean on this being wired.
+
+                        Skipped by -DskipTests along with the Java ones, because a person asking
+                        for a build without tests means all of them.
+                    -->
+                    <execution>
+                        <id>npm-test</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>test</phase>
+                        <configuration>
+                            <arguments>run test</arguments>
+                            <skip>${skipTests}</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                Surefire is told whether the console was supposed to be built, so a test can
+                tell "nobody asked for it" from "it was asked for and is not there". Without
+                this the only signal available is whether the file exists, and a test that
+                skipped on a missing file turned a broken copy into a green run — measured, by
+                pointing the copy below at a directory nobody reads.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <frontend.skip>${frontend.skip}</frontend.skip>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+
+            <!--
+                The console's directory is emptied before it is filled.
+                
+                maven-resources-plugin copies and never deletes, and Vite's filenames carry a
+                content hash — so an incremental `mvn verify` left every asset every previous
+                build had produced sitting in target/classes/ui/assets, and the jar shipped all
+                of them. Measured at three builds: 616 kB where the console is 204 kB, with two
+                dead JavaScript bundles nothing references.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>empty-console</id>
+                        <goals>
+                            <goal>clean</goal>
+                        </goals>
+                        <phase>process-classes</phase>
+                        <configuration>
+                            <skip>${frontend.skip}</skip>
+                            <!-- This execution deletes ONE directory. Without it, binding the
+                                 clean goal to a mid-build phase would wipe target/ and take
+                                 the compiled classes with it. -->
+                            <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                            <filesets>
+                                <fileset>
+                                    <directory>${project.build.outputDirectory}/dev/agentkit/chat/ui</directory>
+                                </fileset>
+                            </filesets>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                dist/ onto the classpath under dev/agentkit/chat/ui/, which is where ChatServer
+                looks. Copied rather than built there directly: pointing Vite at target/classes
+                would couple its config to Maven's layout and make `npm run build` on its own
+                produce nothing a person could open.
+
+                UNDER THE PACKAGE, not at the root as `ui/`, and that is not tidiness. A
+                classpath is flat and last-wins: agentkit-examples-workbench ships its dashboard as
+                `ui/index.html`, agentkit-examples-workbench-chat depends on both modules, and
+                `getResourceAsStream("/ui/index.html")` there returned whichever jar the loader
+                reached first. It returned the dashboard — so the chat console served the
+                dashboard's page, on the chat's port, and every test in this repository passed,
+                because each module's tests run on a classpath where only one `ui/` exists. It
+                was found by opening the console in a browser (#357).
+
+                Bound to process-classes so the page is on the TEST classpath too — the Java
+                test that asserts the console is servable would otherwise be asserting against
+                an empty directory and passing for the wrong reason.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-console</id>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <phase>process-classes</phase>
+                        <configuration>
+                            <skip>${frontend.skip}</skip>
+                            <outputDirectory>${project.build.outputDirectory}/dev/agentkit/chat/ui</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${frontend.dir}/dist</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

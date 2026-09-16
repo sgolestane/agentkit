@@ -1,0 +1,34 @@
+# The workbench, as a conversation. The dashboard is next door in agentkit-examples-workbench
+# and is untouched: `just web` and `just jira-sim` still live there and still work.
+#
+# Both consoles read the same shell: Jira (JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN)
+# and a model (WORKBENCH_LLM + its key, WORKBENCH_MODEL for openrouter). They share your Jira
+# and everything under WORKBENCH_DATA_DIR; they do not share runs and approvals.
+
+# Build this module and everything it depends on, console page included.
+build:
+    cd .. && ./mvnw -q -DskipTests -pl agentkit-examples-workbench-chat -am install
+
+# Both consoles over one workbench: the chat on 8083, the dashboard on 8082.
+# WORKBENCH_DASHBOARD=off for only the chat; WORKBENCH_CHAT_PORT / WORKBENCH_PORT to move them.
+chat: build
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench-chat exec:exec
+
+# The offline behavioural tests.
+test:
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench-chat test
+
+# Start the console for the by-hand smoke run. See SMOKE.md for the checklist —
+# it is short, and it is the only thing that has caught a classpath collision.
+smoke: build
+    @echo "Open http://localhost:8083 and work through SMOKE.md."
+    cd .. && ./mvnw -q -pl agentkit-examples-workbench-chat exec:exec
+
+# The dashboard on its own, from its own module — for a deployment that wants
+# only that. `just chat` already starts it beside the conversation.
+web:
+    cd ../agentkit-examples-workbench && just web
+
+# A stand-in Jira on http://localhost:8090 — point JIRA_BASE_URL at it.
+jira-sim:
+    cd ../agentkit-examples-workbench && just jira-sim

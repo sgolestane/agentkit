@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IT Operations</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --panel: #ffffff; --ink: #16181d; --muted: #5f6672; --line: #e2e5ea;
+    --accent: #2f5fd0; --ok: #1a7f4b; --warn: #b06a00; --bad: #b3261e; --code: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1c1f25; --ink: #e8eaee; --muted: #9aa2af; --line: #2b3038;
+      --accent: #7aa2f7; --ok: #5cc98a; --warn: #e0a44a; --bad: #f07178; --code: #22262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 16px; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(340px, 1.1fr) 1.4fr; gap: 16px; padding: 16px; align-items: start; }
+  @media (max-width: 950px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .card > h2 {
+    margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; font-weight: 600;
+  }
+  .card > .body { padding: 12px 14px; }
+  .scroll { max-height: 340px; overflow: auto; }
+  #chatlog { display: flex; flex-direction: column; gap: 10px; min-height: 260px; max-height: 46vh; overflow: auto; }
+  .msg { padding: 9px 12px; border-radius: 9px; max-width: 92%; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+  .msg.bot { align-self: flex-start; background: var(--code); }
+  .msg.sys { align-self: center; color: var(--muted); font-size: 12px; background: none; }
+  form.ask { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  input[type=text] {
+    flex: 1; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  button {
+    padding: 8px 13px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font: inherit; font-weight: 550;
+  }
+  button.ghost { background: transparent; color: var(--ink); }
+  button.danger { background: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  tr.clickable:hover { background: var(--code); cursor: pointer; }
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  code, pre { background: var(--code); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { padding: 1px 5px; font-size: 12px; }
+  pre { padding: 10px; overflow-x: auto; font-size: 12px; margin: 8px 0 0; }
+  .approval { border: 1px solid var(--warn); border-radius: 9px; padding: 11px; margin-bottom: 10px; }
+  .approval h3 { margin: 0 0 6px; font-size: 14px; }
+  .approval dl { display: grid; grid-template-columns: 90px 1fr; gap: 3px 10px; margin: 8px 0; font-size: 13px; }
+  .approval dt { color: var(--muted); }
+  .approval dd { margin: 0; }
+  .approval ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .feed { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .feed div { padding: 2px 0; border-bottom: 1px solid var(--line); }
+  .feed .t { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { background: transparent; color: var(--muted); border: none; padding: 4px 8px; font-size: 12px; }
+  .tabs button[aria-selected=true] { color: var(--ink); border-bottom: 2px solid var(--accent); border-radius: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>IT Operations</h1>
+  <span class="sub">agentic runtime &middot; ServiceNow &middot; scheduled autonomy &middot; supervised actions</span>
+</header>
+
+<main>
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <section class="card">
+      <h2>Chat <span class="muted" id="chatstate"></span></h2>
+      <div class="body" id="chatlog"></div>
+      <form class="ask" id="ask">
+        <input type="text" id="q" autocomplete="off"
+               placeholder='e.g. "fix INC0012345" or "show me recent tickets"'>
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Approvals <button class="ghost" onclick="loadApprovals()">Refresh</button></h2>
+      <div class="body scroll" id="approvals"><p class="muted">Nothing waiting.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Live activity</h2>
+      <div class="body scroll feed" id="feed"></div>
+    </section>
+  </div>
+
+  <div style="display:flex; flex-direction:column; gap:16px;">
+    <section class="card">
+      <h2>
+        <span class="tabs">
+          <button onclick="showTab('tickets')" id="tab-tickets" aria-selected="true">Tickets</button>
+          <button onclick="showTab('executions')" id="tab-executions">Executions</button>
+          <button onclick="showTab('workflows')" id="tab-workflows">Workflows</button>
+          <button onclick="showTab('artifacts')" id="tab-artifacts">Artifacts</button>
+          <button onclick="showTab('tools')" id="tab-tools">Tools</button>
+          <button onclick="showTab('schedules')" id="tab-schedules">Schedules</button>
+        </span>
+        <button class="ghost" onclick="runIntake()">Run intake now</button>
+      </h2>
+      <div class="body scroll" id="panel"></div>
+    </section>
+
+    <section class="card">
+      <h2>Detail</h2>
+      <div class="body scroll" id="detail"><p class="muted">Select a row.</p></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+// Escapes for an HTML text node *and* for a quoted attribute value. Quotes are in the
+// alphabet because an attribute is where an unescaped quote stops being a character and
+// becomes a delimiter: with the old `[&<>]` alphabet, a ticket id of
+// `INC1" onmouseover="alert(document.cookie)` closed the attribute it sat in and opened a
+// handler beside it, on the page where a human approves privileged actions (#192).
+//
+// What this does not cover, so nothing renders into these: an unquoted attribute, a URL
+// or `javascript:` target, a `<script>` body, or a CSS value. Each needs its own alphabet,
+// and a helper that claims all of them is a helper nobody can check.
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+const api = async (path, options) => {
+  const response = await fetch('/api' + path, options);
+  return response.json();
+};
+let tab = 'tickets';
+
+// --- chat -------------------------------------------------------------------
+function say(text, who) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + who;
+  div.textContent = text;
+  $('chatlog').append(div);
+  $('chatlog').scrollTop = $('chatlog').scrollHeight;
+}
+
+$('ask').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const question = $('q').value.trim();
+  if (!question) return;
+  say(question, 'user');
+  $('q').value = '';
+  $('chatstate').textContent = 'working…';
+  try {
+    const result = await api('/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: question})
+    });
+    say(result.reply || result.error || '(no answer)', 'bot');
+    say('execution ' + result.executionId + ' · ' + result.status, 'sys');
+    if (result.approval) loadApprovals();
+    refresh();
+  } finally {
+    $('chatstate').textContent = '';
+  }
+});
+
+// --- panels -----------------------------------------------------------------
+function showTab(name) {
+  tab = name;
+  for (const id of ['tickets','executions','workflows','artifacts','tools','schedules']) {
+    $('tab-' + id).setAttribute('aria-selected', String(id === name));
+  }
+  refresh();
+}
+
+function riskPill(risk) {
+  const cls = risk === 'DESTRUCTIVE' || risk === 'HIGH' ? 'bad'
+            : risk === 'MEDIUM' ? 'warn' : 'ok';
+  return `<span class="pill ${cls}">${esc(risk)}</span>`;
+}
+
+function statusPill(status) {
+  const cls = status === 'COMPLETED' ? 'ok'
+            : status === 'WAITING_FOR_APPROVAL' ? 'warn'
+            : (status === 'FAILED' || status === 'CANCELLED') ? 'bad' : '';
+  return `<span class="pill ${cls}">${esc(status)}</span>`;
+}
+
+async function refresh() {
+  const panel = $('panel');
+  if (tab === 'tickets') {
+    const rows = await api('/tickets');
+    panel.innerHTML = `<table><tr><th>Ticket</th><th>Title</th><th>Status</th><th>Assignee</th><th>Processing</th></tr>
+      ${rows.map(t => `<tr class="clickable" data-ticket="${esc(t.id)}">
+        <td><code>${esc(t.id)}</code></td><td>${esc(t.title)}</td>
+        <td><span class="pill">${esc(t.status)}</span></td>
+        <td>${esc(t.assignee || '—')}</td>
+        <td>${t.processing ? `<span class="pill">${esc(t.processing)}</span>` : '<span class="muted">—</span>'}</td>
+      </tr>`).join('')}</table>`;
+  } else if (tab === 'executions') {
+    const rows = await api('/executions');
+    panel.innerHTML = `<table><tr><th>Execution</th><th>Trigger</th><th>Status</th><th>Goal</th></tr>
+      ${rows.map(e => `<tr class="clickable" data-execution="${esc(e.id)}">
+        <td><code>${esc(e.id)}</code></td><td><span class="pill">${esc(e.trigger)}</span></td>
+        <td>${statusPill(e.status)}</td>
+        <td>${esc((e.goal || '').split('\\n')[0].slice(0, 70))}</td>
+      </tr>`).join('')}</table>`;
+  } else if (tab === 'workflows') {
+    const rows = await api('/workflows');
+    panel.innerHTML = rows.map(w => `<div style="margin-bottom:14px">
+      <strong>${esc(w.name)}</strong> <span class="pill">v${esc(w.version)}</span>
+      ${w.active ? '<span class="pill ok">active</span>' : '<span class="pill warn">draft</span>'}
+      <div class="muted" style="margin:4px 0 6px">${esc(w.description)}</div>
+      <div>${w.nodes.map(n => `<span class="pill">${esc(n.type)}: ${esc(n.label || n.id)}</span>`).join(' ')}</div>
+      <div class="row"><button data-workflow="${esc(w.id)}">Run</button></div>
+    </div>`).join('');
+  } else if (tab === 'artifacts') {
+    const rows = await api('/artifacts');
+    panel.innerHTML = rows.length ? `<table><tr><th>Artifact</th><th>Kind</th><th>Title</th></tr>
+      ${rows.map(a => `<tr class="clickable" data-artifact="${esc(a.id)}">
+        <td><code>${esc(a.id)}</code></td><td><span class="pill">${esc(a.kind)}</span></td>
+        <td>${esc(a.title)}</td></tr>`).join('')}</table>`
+      : '<p class="muted">No artifacts yet.</p>';
+  } else if (tab === 'tools') {
+    const rows = await api('/tools');
+    panel.innerHTML = `<table><tr><th>Tool</th><th>Capability</th><th>Risk</th><th>Properties</th></tr>
+      ${rows.map(t => `<tr><td><code>${esc(t.name)}</code></td><td class="muted">${esc(t.capability)}</td>
+        <td>${riskPill(t.risk)}</td>
+        <td class="muted">${t.reversible ? 'reversible' : 'irreversible'}${t.idempotent ? ', idempotent' : ''}</td>
+      </tr>`).join('')}</table>`;
+  } else {
+    const rows = await api('/schedules');
+    panel.innerHTML = `<table><tr><th>Schedule</th><th>Cron</th><th>Agent</th><th>Last run</th><th>Started</th></tr>
+      ${rows.map(s => `<tr><td>${esc(s.name)}</td><td><code>${esc(s.cron)}</code></td>
+        <td class="muted">${esc(s.agent)}</td><td class="muted">${esc(s.lastRunAt)}</td>
+        <td>${esc(s.lastStarted)}</td></tr>`).join('')}</table>`;
+  }
+}
+
+// --- row actions ------------------------------------------------------------
+// An id reaches the DOM as data, never as source. The row carries it in a `data-`
+// attribute and one listener on the enclosing container reads it back through `dataset`,
+// so the id is a string from the connector to the click and there is no point at which
+// the browser parses it as JavaScript. That is the structural half of #192: escaping is
+// the second line here, not the first: an onclick attribute built as openTicket('<id>')
+// put an attacker's ticket id inside a JS string inside an HTML attribute — two nested
+// contexts, each with its own way out, and only one of them something `esc` can close.
+//
+// The listeners sit on `#panel` and `#approvals`, which refresh() and loadApprovals()
+// fill but never replace, so they survive every repaint of the rows inside them.
+$('panel').addEventListener('click', (event) => {
+  const row = event.target.closest(
+      '[data-ticket], [data-execution], [data-artifact], [data-workflow]');
+  if (!row) return;
+  if (row.dataset.ticket !== undefined) openTicket(row.dataset.ticket);
+  else if (row.dataset.execution !== undefined) openExecution(row.dataset.execution);
+  else if (row.dataset.artifact !== undefined) openArtifact(row.dataset.artifact);
+  else runWorkflow(row.dataset.workflow);
+});
+
+$('approvals').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-approval]');
+  if (!button) return;
+  decide(button.dataset.approval, button.dataset.decision === 'approve');
+});
+
+// --- detail -----------------------------------------------------------------
+async function openTicket(id) {
+  const t = await api('/tickets/' + encodeURIComponent(id));
+  $('detail').innerHTML = `<h3 style="margin:0 0 4px">${esc(t.id)} — ${esc(t.title)}</h3>
+    <div>${statusPill(t.status.toUpperCase())} <span class="pill">${esc(t.assignment_group || '—')}</span>
+    <span class="pill">${esc(t.assignee || 'unassigned')}</span></div>
+    <p class="muted" style="margin:8px 0 4px">Description as filed — the agent reads this as evidence, not as instruction:</p>
+    <pre>${esc(t.description)}</pre>
+    <p class="muted" style="margin:10px 0 4px">Comments</p>
+    ${(t.comments || []).map(c => `<div style="border-left:2px solid var(--line);padding-left:8px;margin-bottom:6px">
+      <div class="muted" style="font-size:12px">${esc(c.author)} · ${esc(c.at)}</div>${esc(c.body)}</div>`).join('')
+      || '<p class="muted">None.</p>'}`;
+}
+
+async function openExecution(id) {
+  const e = await api('/executions/' + encodeURIComponent(id));
+  $('detail').innerHTML = `<h3 style="margin:0 0 4px">${esc(e.id)} ${statusPill(e.status)}</h3>
+    <div class="muted">${esc(e.trigger)} · ${esc(e.triggerReference || '')} · ${esc(e.createdAt)}</div>
+    <pre>${esc(e.goal)}</pre>
+    ${e.summary ? `<p><strong>Outcome</strong><br>${esc(e.summary)}</p>` : ''}
+    <p class="muted" style="margin:10px 0 4px">Tool calls</p>
+    ${(e.calls || []).map(c => `<div style="margin-bottom:6px">
+      <code>${esc(c.tool)}</code> ${riskPill(c.risk)} ${c.error ? '<span class="pill bad">error</span>' : ''}
+      <div class="muted" style="font-size:12px">${esc(JSON.stringify(c.arguments))}</div>
+      <div style="font-size:12px">${esc((c.result || '').slice(0, 300))}</div></div>`).join('')
+      || '<p class="muted">None.</p>'}
+    <p class="muted" style="margin:10px 0 4px">Events</p>
+    <div class="feed">${(e.events || []).map(ev => `<div><span class="t">${esc(ev.sequence)}</span>
+      ${esc(ev.type)} <span class="muted">${esc(JSON.stringify(ev.detail).slice(0, 160))}</span></div>`).join('')}</div>`;
+}
+
+async function openArtifact(id) {
+  const a = await api('/artifacts/' + encodeURIComponent(id));
+  $('detail').innerHTML = `<h3 style="margin:0 0 4px">${esc(a.title)}</h3>
+    <div><span class="pill">${esc(a.kind)}</span> <span class="muted">${esc(a.createdAt)}</span></div>
+    <pre>${esc(a.body)}</pre>`;
+}
+
+// --- approvals --------------------------------------------------------------
+async function loadApprovals() {
+  const rows = (await api('/approvals')).filter(a => a.state === 'PENDING');
+  $('approvals').innerHTML = rows.length ? rows.map(a => `
+    <div class="approval">
+      <h3>${esc(a.tool)} ${riskPill(a.risk)}</h3>
+      <dl>
+        <dt>Action</dt><dd><code>${esc(JSON.stringify(a.arguments))}</code></dd>
+        <dt>Reason</dt><dd>${esc(a.reason)}</dd>
+        <dt>Effect</dt><dd>${esc(a.effect)}</dd>
+        <dt>Reversible</dt><dd>${a.reversible ? 'yes' : '<strong>no</strong>'}</dd>
+        <dt>Execution</dt><dd><code>${esc(a.executionId)}</code></dd>
+      </dl>
+      <div class="muted" style="font-size:12px">Evidence established from systems of record:</div>
+      <ul>${(a.evidence || []).map(e => `<li>${esc(e)}</li>`).join('') || '<li>none recorded</li>'}</ul>
+      <div class="row">
+        <button data-approval="${esc(a.id)}" data-decision="approve">Approve</button>
+        <button class="danger" data-approval="${esc(a.id)}" data-decision="reject">Reject</button>
+      </div>
+    </div>`).join('') : '<p class="muted">Nothing waiting.</p>';
+}
+
+async function decide(id, approve) {
+  const result = await api('/approvals/' + encodeURIComponent(id)
+      + '/' + (approve ? 'approve' : 'reject'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({by: 'operator@example.com', note: approve ? 'Confirmed.' : 'Not now.'})
+  });
+  say((approve ? 'Approved' : 'Rejected') + ' → execution ' + (result.executionId || '') +
+      ' · ' + (result.status || ''), 'sys');
+  if (result.summary) say(result.summary, 'bot');
+  loadApprovals();
+  refresh();
+}
+
+async function runIntake() {
+  const result = await api('/intake/run', {method: 'POST'});
+  say('Scheduler sweep started ' + result.started + ' execution(s).', 'sys');
+  loadApprovals();
+  refresh();
+}
+
+async function runWorkflow(id) {
+  const result = await api('/workflows/' + encodeURIComponent(id) + '/execute', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email: 'bob@example.com'})
+  });
+  say('Workflow ' + id + ' → ' + result.status + ' at ' + result.lastNode, 'sys');
+  loadApprovals();
+  refresh();
+}
+
+// --- live feed --------------------------------------------------------------
+new EventSource('/api/events').onmessage = (message) => {
+  const event = JSON.parse(message.data);
+  const div = document.createElement('div');
+  div.innerHTML = `<span class="t">${esc(event.executionId)}</span> ${esc(event.type)}`;
+  $('feed').prepend(div);
+  while ($('feed').childElementCount > 200) $('feed').lastElementChild.remove();
+};
+
+say('Ask me to work a ticket. Everything I do is recorded on the right, and anything risky '
+  + 'stops for your approval.', 'bot');
+refresh();
+loadApprovals();
+</script>
+</body>
+</html>
