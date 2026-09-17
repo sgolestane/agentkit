@@ -95,11 +95,11 @@ runs the goal:
 `ExpiryBackstop` deterministically revokes anything still active 5 minutes after expiry, in case a
 deferred action was never scheduled or failed.
 
-**MCP, inside the app:**
-
-- `mcp/McpServer`: the tool subset of the protocol, with transports for stdio (`StdioMcpServer`)
-  and streamable HTTP (`HttpMcpEndpoint`).
-- `mcp/StdioMcpClient`: a client that keeps tool annotations, which `agentkit-mcp`'s client drops.
+**MCP.** The client is `agentkit-mcp`'s. Tool annotations are hints a server could lie in, so a
+server's are acted on only when `connectors.json` marks it `"trustAnnotations": true`, as the
+bundled company systems are. The server side lives in this app: `mcp/McpServer` implements the tool
+subset of the protocol, with transports for stdio (`StdioMcpServer`) and streamable HTTP
+(`HttpMcpEndpoint`).
 
 ## Tests and evals
 

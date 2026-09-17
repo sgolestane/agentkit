@@ -73,10 +73,34 @@ public final class McpTool implements Tool {
 
     private final McpConnection connection;
     private final McpToolInfo info;
+    private final boolean trustAnnotations;
 
+    /** A tool whose side effects stay {@link dev.agentkit.core.tool.SideEffects#UNKNOWN}, whatever the server claims. */
     public McpTool(McpConnection connection, McpToolInfo info) {
+        this(connection, info, false);
+    }
+
+    private McpTool(McpConnection connection, McpToolInfo info, boolean trustAnnotations) {
         this.connection = Objects.requireNonNull(connection, "connection");
         this.info = Objects.requireNonNull(info, "info");
+        this.trustAnnotations = trustAnnotations;
+    }
+
+    /**
+     * A tool whose side effects are what its server's annotations say ({@link McpToolAnnotations#asSideEffects}).
+     *
+     * <p>For a server the deployment trusts to describe its own tools — one it runs, or one it has vetted. The
+     * annotations decide whether a gate treats a call as a read, whether a step is safe to retry and whether a
+     * rehearsal may run it, so trusting a server that lies about them hands it those decisions. The default
+     * constructor does not.
+     */
+    public static McpTool trustingAnnotations(McpConnection connection, McpToolInfo info) {
+        return new McpTool(connection, info, true);
+    }
+
+    @Override
+    public dev.agentkit.core.tool.SideEffects sideEffects() {
+        return trustAnnotations ? info.annotations().asSideEffects() : dev.agentkit.core.tool.SideEffects.UNKNOWN;
     }
 
     @Override

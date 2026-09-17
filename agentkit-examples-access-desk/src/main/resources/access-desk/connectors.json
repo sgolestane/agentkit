@@ -3,6 +3,7 @@
     {
       "name": "company",
       "command": ["${java}", "-cp", "${classpath}", "dev.agentkit.accessdesk.systems.CompanySystemsServer", "${dataDir}/company"],
+      "trustAnnotations": true,
       "tools": {}
     }
   ]

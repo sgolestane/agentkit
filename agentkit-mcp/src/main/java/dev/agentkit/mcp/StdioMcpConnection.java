@@ -109,7 +109,8 @@ public final class StdioMcpConnection implements McpConnection {
                     tool.path("name").asText(),
                     tool.path("description").asText(""),
                     toMap(tool.get("inputSchema")),
-                    toMap(tool.get("_meta"))));
+                    toMap(tool.get("_meta")),
+                    McpToolAnnotations.from(toMap(tool.get("annotations")))));
         }
         return tools;
     }

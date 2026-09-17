@@ -455,6 +455,14 @@ handshake; `McpTools` calls `tools/list` and wraps each tool. A server-flagged
 error, or a transport failure, comes back to the model as an error tool result
 rather than aborting the run — matching the loop's contract for local tools.
 
+**Annotations are captured, and trusted only when you say so.** A server's `readOnlyHint`,
+`destructiveHint`, `idempotentHint` and `openWorldHint` land on `McpToolInfo.annotations()`. They
+are hints: the protocol says not to rely on them from a server you don't trust, and a hostile
+server would call a destructive tool read-only to slip past a gate. So an `McpTool`'s side effects
+stay `UNKNOWN`, which gates treat as unsafe, unless you trust the server. For one you run or have
+vetted, `McpTools.loadTrustingAnnotations(mcp)` (or `McpTool.trustingAnnotations`) maps read-only
+to `NONE`, idempotent and non-destructive to `IDEMPOTENT`, and anything else to `EXTERNAL`.
+
 **What a server returns arrives fenced.** All three shapes — a successful result, an
 `isError` result, a transport failure — are wrapped as `evidence` attributed to
 `mcp:<tool>`, bounded, and NFKC-normalised. Until #154 only the two failure shapes were,

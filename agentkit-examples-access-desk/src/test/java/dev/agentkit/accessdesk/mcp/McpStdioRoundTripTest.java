@@ -9,6 +9,9 @@ import dev.agentkit.core.tool.SideEffects;
 import dev.agentkit.core.tool.Tool;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
+import dev.agentkit.mcp.McpToolAnnotations;
+import dev.agentkit.mcp.McpToolInfo;
+import dev.agentkit.mcp.StdioMcpConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -18,8 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The company systems MCP server, launched as a real subprocess and reached through
- * {@link StdioMcpClient} and {@link Connectors} — the same path the application takes.
+ * The company systems MCP server, launched as a real subprocess and reached through {@code agentkit-mcp}'s
+ * {@link StdioMcpConnection} and {@link Connectors} — the same path the application takes.
  */
 class McpStdioRoundTripTest {
 
@@ -34,16 +37,16 @@ class McpStdioRoundTripTest {
 
     @Test
     void theServerDescribesEachToolWithStandardAnnotationsAndItsDeclaration() {
-        try (StdioMcpClient client = StdioMcpClient.start(serverCommand(dataDir))) {
-            Map<String, StdioMcpClient.ListedTool> tools = client.listDeclaredTools().stream()
-                    .collect(Collectors.toMap(t -> t.info().name(), t -> t));
+        try (StdioMcpConnection client = StdioMcpConnection.start(serverCommand(dataDir))) {
+            Map<String, McpToolInfo> tools = client.listTools().stream()
+                    .collect(Collectors.toMap(McpToolInfo::name, t -> t));
 
             assertThat(tools).containsKeys("directory_lookup", "list_resources", "list_access", "list_messages",
                     "grant_access", "revoke_access", "send_message");
-            assertThat(tools.get("list_resources").annotations()).containsEntry("readOnlyHint", true);
-            assertThat(tools.get("revoke_access").annotations()).containsEntry("destructiveHint", true)
-                    .containsEntry("idempotentHint", true);
-            assertThat(tools.get("grant_access").info().meta())
+            assertThat(tools.get("list_resources").annotations().readOnlyHint()).isTrue();
+            assertThat(tools.get("revoke_access").annotations().destructiveHint()).isTrue();
+            assertThat(tools.get("revoke_access").annotations().idempotentHint()).isTrue();
+            assertThat(tools.get("grant_access").meta())
                     .containsEntry(McpServer.META_EFFECT, "grant").containsEntry(McpServer.META_SUBJECT, "email");
         }
     }
@@ -53,6 +56,7 @@ class McpStdioRoundTripTest {
         String json = """
                 {"servers": [{"name": "company",
                   "command": ["${java}", "-cp", "${classpath}", "%s", "${dataDir}"],
+                  "trustAnnotations": true,
                   "tools": {"send_message": {"system": "slack"}}}]}
                 """.formatted(CompanySystemsServer.class.getName());
         try (Connectors.Connected connected = Connectors.connect(json, placeholders(dataDir))) {
@@ -96,16 +100,28 @@ class McpStdioRoundTripTest {
     }
 
     @Test
-    void aToolTheServerDoesNotDeclareIsLeftOut() {
-        StdioMcpClient.ListedTool undeclared = new StdioMcpClient.ListedTool(
-                new dev.agentkit.mcp.McpToolInfo("mystery", "does something", Map.of("type", "object")), Map.of());
-        StdioMcpClient.ListedTool hintedRead = new StdioMcpClient.ListedTool(
-                new dev.agentkit.mcp.McpToolInfo("peek", "reads", Map.of("type", "object")),
-                Map.of("readOnlyHint", true));
+    void aToolTheServerDoesNotDeclareIsLeftOutAndAHintCountsOnlyFromATrustedServer() {
+        McpToolInfo undeclared = new McpToolInfo("mystery", "does something", Map.of("type", "object"));
+        McpToolInfo hintedRead = new McpToolInfo("peek", "reads", Map.of("type", "object"), Map.of(),
+                McpToolAnnotations.from(Map.of("readOnlyHint", true)));
 
-        assertThat(Connectors.declare("other", undeclared, null)).isEmpty();
-        assertThat(Connectors.declare("other", hintedRead, null)).contains(new ToolInfo("other", Effect.READ, null));
-        assertThat(Connectors.sideEffects(Map.of())).isEqualTo(SideEffects.UNKNOWN);
+        assertThat(Connectors.declare("other", undeclared, null, true)).isEmpty();
+        assertThat(Connectors.declare("other", hintedRead, null, true)).contains(new ToolInfo("other", Effect.READ, null));
+        assertThat(Connectors.declare("other", hintedRead, null, false)).isEmpty();
+    }
+
+    @Test
+    void anUntrustedServersToolsKeepUnknownSideEffects() {
+        String json = """
+                {"servers": [{"name": "company",
+                  "command": ["${java}", "-cp", "${classpath}", "%s", "${dataDir}"]}]}
+                """.formatted(CompanySystemsServer.class.getName());
+        try (Connectors.Connected connected = Connectors.connect(json, placeholders(dataDir))) {
+            // Declared through the server's own _meta, but its annotations are not acted on.
+            assertThat(connected.catalog().info("list_resources")).isPresent();
+            assertThat(connected.catalog().entries()).allSatisfy(e ->
+                    assertThat(e.tool().sideEffects()).isEqualTo(SideEffects.UNKNOWN));
+        }
     }
 
     private static ToolResult call(Connectors.Connected connected, String name, Map<String, Object> args) {
