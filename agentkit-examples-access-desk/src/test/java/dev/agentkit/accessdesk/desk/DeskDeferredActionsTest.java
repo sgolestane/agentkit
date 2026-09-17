@@ -154,8 +154,7 @@ class DeskDeferredActionsTest {
     }
 
     private void schedule(AccessLedger ledger, DeferredActionStore store, String goal, int offsetMinutes) {
-        DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store, clock::get,
-                DeskTools::holdings);
+        DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, clock::get);
         ToolResult result = scheduler.tool(DANA).execute(new ToolInvocation("s", DeferredActionScheduler.TOOL_NAME,
                 new HashMap<>(Map.of("subject_kind", "grant", "subject_id", "GR-1001", "goal", goal,
                         "relative_to", "expires_at", "offset_minutes", offsetMinutes))));

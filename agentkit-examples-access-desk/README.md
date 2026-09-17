@@ -74,6 +74,7 @@ request takes, what a justification must say, and which reminders to schedule. T
 - No access lasts longer than the resource's `max_hours`.
 - The approver is the owner or the requester's manager, and never the requester.
 - Only the named approver decides, and they may shorten a request but not lengthen it.
+- Only a grant's holder, approver or resource owner may schedule deferred actions for it, since they run as the desk.
 - The company systems' raw grant and revoke tools are never given to a model.
 
 **Tools describe themselves.** Every tool declares its effect (read, grant, revoke, notify,
@@ -106,7 +107,7 @@ subset of the protocol, with transports for stdio (`StdioMcpServer`) and streama
 ## Tests and evals
 
 ```bash
-./mvnw -pl agentkit-examples-access-desk test          # 21 offline tests, no model
+./mvnw -pl agentkit-examples-access-desk test          # 22 offline tests, no model
 ```
 
 The offline tests cover:

@@ -56,8 +56,7 @@ class AccessDeskOverMcpTest {
     private final AccessLedger ledger = AccessLedger.open(null);
     private final DemoClock clock = new DemoClock();
     private final DeferredActionStore store = DeferredActionStore.inMemory();
-    private final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
-            clock, DeskTools::holdings);
+    private final DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, clock);
     private ChatRuntime runtime;
     private DeskServer server;
     private final HttpClient http = HttpClient.newHttpClient();

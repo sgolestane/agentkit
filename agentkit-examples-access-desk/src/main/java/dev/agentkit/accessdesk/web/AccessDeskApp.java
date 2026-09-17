@@ -84,8 +84,7 @@ public final class AccessDeskApp {
         DeclaredTools companyTools = connected.catalog();
         AccessLedger ledger = AccessLedger.open(dataDir.resolve("ledger.json"));
         DeferredActionStore store = DeferredActionStore.inDirectory(dataDir.resolve("deferred"));
-        DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store, clock,
-                DeskTools::holdings);
+        DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, clock);
 
         // Who has a console: the demo users the directory knows.
         List<Person> people = new ArrayList<>();

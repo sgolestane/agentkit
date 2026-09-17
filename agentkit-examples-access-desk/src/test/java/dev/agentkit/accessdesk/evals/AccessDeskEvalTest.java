@@ -88,8 +88,7 @@ class AccessDeskEvalTest {
         final CompanyClient company = new CompanyClient(new InProcessMcpConnection(systems.catalog()));
         final AccessLedger ledger = AccessLedger.open(null);
         final DeferredActionStore store = DeferredActionStore.inMemory();
-        final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
-                () -> NOW, DeskTools::holdings);
+        final DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, () -> NOW);
         final List<String> questions = new CopyOnWriteArrayList<>();
         final List<String> confirmations = new CopyOnWriteArrayList<>();
         final List<Turn> turns = new CopyOnWriteArrayList<>();

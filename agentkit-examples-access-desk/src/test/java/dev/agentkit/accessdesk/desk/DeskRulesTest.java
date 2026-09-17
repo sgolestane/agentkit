@@ -34,8 +34,7 @@ class DeskRulesTest {
     private final AccessLedger ledger = AccessLedger.open(null);
     private final DeferredActionStore store = DeferredActionStore.inMemory();
     private final AtomicReference<Instant> clock = new AtomicReference<>(NOW);
-    private final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
-            clock::get, DeskTools::holdings);
+    private final DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, clock::get);
 
     private DeclaredTools as(String who) {
         return new DeskTools(who, ledger, company, scheduler, clock::get).catalog();
@@ -162,6 +161,27 @@ class DeskRulesTest {
         assertThat(store.all()).extracting(DeferredAction::runAt)
                 .containsExactly(Instant.parse("2026-09-16T16:45:00Z"), Instant.parse("2026-09-16T17:00:00Z"));
         assertThat(store.all()).allMatch(a -> a.scheduledBy().equals(DANA));
+    }
+
+    @Test
+    void onlyThoseWhoCouldRevokeAGrantMayScheduleWorkForIt() {
+        call(as(SAM), "grant_low_risk_access", "resource_id", "slack-incident-war-room", "level", "member", "hours", 4,
+                "justification", "on call");
+
+        // Priya cannot revoke Sam's grant, so she cannot schedule its revocation to run later as the desk either.
+        assertThat(call(as(PRIYA), "revoke_grant", "grant_id", "GR-1001", "reason", "x").content()).contains("Only the holder");
+        ToolResult byPriya = call(as(PRIYA), DeferredActionScheduler.TOOL_NAME, "subject_kind", "grant", "subject_id",
+                "GR-1001", "goal", "Revoke GR-1001 now and tell the holder Security revoked it.", "run_at", "2026-09-16T15:01:00Z");
+        assertThat(byPriya.isError()).isTrue();
+        assertThat(byPriya.content()).contains("may not schedule deferred actions for grant GR-1001");
+        assertThat(store.all()).isEmpty();
+
+        // Sam holds the grant (and owns the channel), so he may.
+        assertThat(call(as(SAM), DeferredActionScheduler.TOOL_NAME, "subject_kind", "grant", "subject_id", "GR-1001",
+                "goal", "Revoke GR-1001.", "relative_to", "expires_at").isError()).isFalse();
+        assertThat(call(as(SAM), DeferredActionScheduler.TOOL_NAME, "subject_kind", "grant", "subject_id", "GR-1001",
+                "goal", "Remind about GR-1001.", "relative_to", "expires_at", "offset_minutes", -15).isError()).isFalse();
+        assertThat(store.all()).hasSize(2);
     }
 
     @Test

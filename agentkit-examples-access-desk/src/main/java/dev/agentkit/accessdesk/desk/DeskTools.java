@@ -5,6 +5,7 @@ import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
 import dev.agentkit.accessdesk.desk.CompanyClient.Person;
 import dev.agentkit.accessdesk.desk.CompanyClient.Resource;
 import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.deferred.SubjectRecord;
 import dev.agentkit.core.deferred.SubjectResolver;
 import dev.agentkit.core.tool.DeclaredTools;
@@ -42,7 +43,8 @@ import java.util.function.Supplier;
  *   <li>access never lasts longer than the resource's {@code max_hours};</li>
  *   <li>an approver is the resource's owner or the requester's manager, and never the requester;</li>
  *   <li>only the named approver decides a request, and may shorten it but not lengthen it;</li>
- *   <li>a grant is revoked only by its holder, its approver, the resource's owner, or the desk itself.</li>
+ *   <li>a grant is revoked only by its holder, its approver, the resource's owner, or the desk itself, and only they
+ *       may schedule deferred actions for it ({@link #scheduler}).</li>
  * </ul>
  * The raw {@code grant_access} and {@code revoke_access} tools of the company systems are never given to a
  * model; access changes only through these.
@@ -72,6 +74,21 @@ public final class DeskTools {
         this.company = Objects.requireNonNull(company, "company");
         this.scheduler = scheduler;
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /**
+     * The scheduler for deferred actions about grants. Only someone who could revoke a grant — its holder, its
+     * approver or its resource's owner — may schedule work for it, because the work runs later as the desk, which may
+     * revoke any grant.
+     */
+    public static DeferredActionScheduler scheduler(AccessLedger ledger, DeferredActionStore store, Supplier<Instant> clock) {
+        return new DeferredActionScheduler(grantSubjects(ledger), store, clock, DeskTools::holdings,
+                DeskTools::mayScheduleFor);
+    }
+
+    /** Whether {@code scheduledBy} may schedule deferred actions for {@code grant}: the desk, or one of its contacts. */
+    public static boolean mayScheduleFor(String scheduledBy, SubjectRecord grant) {
+        return scheduledBy != null && (DESK.equals(lower(scheduledBy)) || grant.isContact(scheduledBy));
     }
 
     /** Resolves {@value #GRANT} subjects from the ledger, for deferred actions. */
