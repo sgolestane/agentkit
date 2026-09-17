@@ -89,8 +89,9 @@ public final class OnboardingExample {
             Respond with a flat numbered list, one action per line, and nothing else. Every step \
             must be a single unconditional action naming the system and the exact values to use \
             (emails, groups, teams, channels, dates, addresses, offices). Never write "if", \
-            "otherwise", "unless" or "else" in a step, and never include a step that does not \
-            apply to this hire. When information a step needs is not on file, plan one step that \
+            "otherwise", "unless" or "else" in a step. Leave out every action that does not apply \
+            to this hire entirely: never write a step saying something is skipped, not \
+            applicable, or not needed. When information a step needs is not on file, plan one step that \
             says to obtain it, without saying how; the executor decides how. Never predict or hedge \
             about the outcome of a step: a summary step names its recipient and says to report \
             the results of the earlier steps, without listing what those results will be.""";
@@ -105,6 +106,11 @@ public final class OnboardingExample {
             ask the person to confirm it. Ask the person only when your lookups have not settled \
             it. If you still cannot obtain it, say plainly that it is missing.
             Then reply with one sentence saying what you did, including any value you obtained.""";
+
+    /** A step that only notes a branch was skipped, rather than doing anything. */
+    static final Pattern NO_OP = Pattern.compile(
+            "\\b(not applicable|n/a|skip|skipped|does not apply|doesn't apply|no action|not needed)\\b",
+            Pattern.CASE_INSENSITIVE);
 
     /** Conditional wording that must not survive planning. */
     static final Pattern CONDITIONAL = Pattern.compile("\\b(if|otherwise|unless|else|whether|depending on)\\b",
@@ -189,6 +195,8 @@ public final class OnboardingExample {
         for (String step : steps) {
             checks.that("step is unconditional: " + step, !CONDITIONAL.matcher(step).find());
         }
+        checks.that("no step is a skip / not-applicable note",
+                steps.stream().noneMatch(step -> NO_OP.matcher(step).find()));
         // The manager summary may legitimately say what was skipped ("not enrolled in benefits"),
         // so branch pruning is checked on the action steps only.
         String plan = steps.stream()
