@@ -35,6 +35,11 @@
             <groupId>dev.agentkit</groupId>
             <artifactId>agentkit-llm-bedrock</artifactId>
         </dependency>
+        <!-- OnboardingExample runs against any model routed through OpenRouter. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-openrouter</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.agentkit</groupId>
             <artifactId>agentkit-temporal</artifactId>

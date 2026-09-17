@@ -13,6 +13,7 @@ show one way of doing it.
 | `CollaborationExample` | All three collaboration primitives — blackboard, peer messaging, refine loop. |
 | `WebResearchAgent` | A client-executed search tool, so it works on any backend including Bedrock. |
 | `TemporalWorkerExample` | The loop running durably as a Temporal workflow. |
+| `onboarding.OnboardingExample` | `PlanningAgent` resolving a branching policy into a flat plan, over fake Okta/Slack/GitHub tools, verified by system state. |
 
 ## Running one
 
@@ -58,4 +59,32 @@ export TAVILY_API_KEY=tvly-...                     # optional — omit for offli
 ./mvnw install -DskipTests                          # once — publish the modules locally
 ./mvnw -f agentkit-examples/pom.xml exec:exec \
     -Dexec.mainClass=dev.agentkit.examples.WebResearchAgent
+```
+
+## IT onboarding (`onboarding.OnboardingExample`)
+
+One onboarding policy full of conditions (rehire or new, full-time or contractor,
+remote or on-site, Engineering or Sales, production access requested, GitHub username
+on file) plus one hire's facts make up the goal. `LlmPlanner` resolves every condition
+while planning and emits a flat list of unconditional steps; a fresh executor carries
+out each one against in-memory Okta, GitHub, AWS, Salesforce, Slack, Workday and IT-desk
+tools (`OnboardingSystems`).
+
+What planning cannot know is left to the executor. A GitHub username that is not on
+file becomes one "obtain it" step, and the executor tries the hire's own Slack profile,
+then a GitHub search (a match is only a suggestion the hire must confirm), then asks the
+hire on Slack. `github_add_member` takes an email and adds only the account on record,
+so a username never passes through the model.
+
+Seven hires cover the branches. Each is checked on the plan (no conditional wording,
+pruned branches absent) and on the fake systems' final state, including where a missing
+username came from. The program exits non-zero if any check fails.
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+export ONBOARDING_MODEL=anthropic/claude-sonnet-5    # optional; any OpenRouter model id
+export ONBOARDING_SCENARIOS="github-found rehire"    # optional subset
+
+./mvnw -f agentkit-examples/pom.xml exec:exec \
+    -Dexec.mainClass=dev.agentkit.examples.onboarding.OnboardingExample
 ```
