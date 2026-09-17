@@ -11,13 +11,9 @@ import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.ChatTools;
 import dev.agentkit.chat.ChatUnavailable;
-import dev.agentkit.chat.Turn;
 import dev.agentkit.core.llm.LlmClient;
-import dev.agentkit.core.prompt.Source;
-import dev.agentkit.core.prompt.Spotlight;
 import dev.agentkit.core.tool.SimpleToolRegistry;
 import dev.agentkit.core.tool.Tool;
-import dev.agentkit.core.util.Cut;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,20 +23,10 @@ import java.util.function.Supplier;
 
 /**
  * The desk's agent for one chat turn, as the person the console belongs to — shared by the application and the
- * evals, so the evals exercise exactly what a console runs.
- *
- * <h2>Earlier turns</h2>
- *
- * <p>An {@code agentkit-chat} turn runs on the new message alone; the conversation's earlier turns are not in the
- * model's context. A desk conversation is full of follow-ups ("which incident?" — "INC-4211"), so this adds the
- * recent turns of the conversation to the system prompt, fenced as {@link Spotlight.Kind#ADVISORY}: the run's own
- * earlier work, acted on, unable to change the objective. It belongs in {@code agentkit-chat} and lives here
- * because this application needed it.
+ * evals, so the evals exercise exactly what a console runs. The conversation's earlier turns reach the agent through
+ * {@code ChatRuntime} itself.
  */
 public final class DeskChat {
-
-    /** How many earlier turns a turn sees. */
-    static final int EARLIER_TURNS = 8;
 
     private DeskChat() {
     }
@@ -63,30 +49,11 @@ public final class DeskChat {
             List<Tool> tools = new ArrayList<>(DeskAgent.conversationTools(desk, companyTools).entries().stream()
                     .map(ToolCatalog.Entry::tool).toList());
             tools.add(ChatTools.askPerson(self.get(), session));
-            String prompt = DeskAgent.systemPrompt(config, me, clock.get()) + earlierTurns(session);
+            String prompt = DeskAgent.systemPrompt(config, me, clock.get());
             return session.agent(llm.get(), new SimpleToolRegistry(tools), DeskAgent.agentConfig(model, prompt))
                     .name("access-desk")
                     .toolGate(DeskAgent.gate(session.approver()))
                     .build();
         };
-    }
-
-    /** The conversation's recent finished turns, fenced, or nothing for its first turn. */
-    static String earlierTurns(ChatRuntime.Session session) {
-        List<Turn> finished = session.store().turns(session.tenantId(), session.conversationId()).stream()
-                .filter(t -> !t.id().equals(session.turnId()) && t.state().isTerminal())
-                .toList();
-        if (finished.isEmpty()) {
-            return "";
-        }
-        StringBuilder text = new StringBuilder();
-        for (Turn turn : finished.subList(Math.max(0, finished.size() - EARLIER_TURNS), finished.size())) {
-            text.append("Person: ").append(Cut.to(turn.userText(), 1_000)).append('\n')
-                    .append("Access Desk: ").append(Cut.to(turn.answer() == null || turn.answer().isBlank()
-                            ? "(" + turn.state().name().toLowerCase(java.util.Locale.ROOT) + ")" : turn.answer(), 1_500))
-                    .append("\n\n");
-        }
-        return "\n\nEarlier in this conversation (the newest message is the one you are answering now):\n"
-                + Spotlight.wrap(Spotlight.Kind.ADVISORY, Source.of("conversation"), text.toString().strip());
     }
 }

@@ -95,10 +95,6 @@ runs the goal:
 `ExpiryBackstop` deterministically revokes anything still active 5 minutes after expiry, in case a
 deferred action was never scheduled or failed.
 
-**Conversations remember earlier turns.** An `agentkit-chat` turn sees only its new message, so
-`web/DeskChat` adds the conversation's recent turns to the prompt, fenced as advisory. Without that,
-answering "which incident?" in the next message would arrive with no context.
-
 **MCP, inside the app:**
 
 - `mcp/McpServer`: the tool subset of the protocol, with transports for stdio (`StdioMcpServer`)

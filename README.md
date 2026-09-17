@@ -1687,6 +1687,23 @@ WORKBENCH_LLM=openrouter WORKBENCH_MODEL=anthropic/claude-sonnet-4.5 OPENROUTER_
 Nothing configured is not an error: it boots, names the variable that is missing in
 a banner, and gives you the same sentence back if you type anyway.
 
+### A turn sees the conversation so far
+
+Each turn is its own run, so on its own a turn would start from nothing but the new message, and
+"INC-4211" typed in answer to "which incident?" would reach a model that never asked.
+`ChatRuntime` therefore gives each turn the conversation's recent finished turns: what the person
+said and what the answer was, and nothing else. It leaves out steps, tool results and views.
+
+They travel in the turn's first message, after the new text, fenced as `advisory`: the run's own
+earlier work, which the model can act on but which can't change what this turn is for. They are not
+part of the `Goal`, which is what gets logged, observed and compared in evals. The default is the
+last eight turns and 1,500 characters of each message and answer:
+
+```java
+new ChatRuntime(store, events, agents, capabilityOf, standing,
+        new ChatRuntime.History(4, 1_000));   // or ChatRuntime.History.NONE
+```
+
 ### A tool returns a digest and something to look at
 
 The one contract worth learning. `ToolResult` carries two things, and they go to two
