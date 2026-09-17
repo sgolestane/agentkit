@@ -44,3 +44,6 @@ target/
 # Scratch git worktrees created by tooling. Transient and often locked —
 # committing them would check in a broken pointer to a directory that is gone.
 .claude/worktrees/
+
+# Local secrets
+.env
