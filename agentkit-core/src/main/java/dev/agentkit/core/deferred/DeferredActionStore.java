@@ -2,13 +2,17 @@ package dev.agentkit.core.deferred;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.io.StringWriter;
 import java.io.UncheckedIOException;
-import java.io.Writer;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -23,14 +27,20 @@ import java.util.regex.Pattern;
  * Where deferred actions are kept: in memory ({@link #inMemory()}), or in a directory ({@link #inDirectory}) so a
  * schedule survives a restart.
  *
- * <p>On disk each action is one {@code <id>.properties} file, written to a temporary file and moved into place, so a
- * crash leaves either the old action or the new one and never half of either. Properties rather than JSON because
- * this module takes no dependency to read a file, and {@code java.util.Properties} escapes the multi-line goal and
- * outcome faithfully. A file that cannot be read is skipped with its name in the exception's message rather than
- * silently: an action that vanished from the schedule is the failure a store like this exists to prevent.
+ * <p>On disk each action is one {@code <id>.properties} file, written to a temporary file, flushed to disk and moved
+ * into place, so a crash leaves either the old action or the new one and never half of either. Properties rather than
+ * JSON because this module takes no dependency to read a file, and {@code java.util.Properties} escapes the
+ * multi-line goal and outcome faithfully. A file that cannot be read fails the load, with its name in the message,
+ * rather than being skipped: an action that vanished from the schedule is the failure a store like this exists to
+ * prevent.
  *
- * <p>An action that was {@link DeferredAction.Status#RUNNING} when the process stopped is scheduled again on load: it
- * may not have finished, so actions should be written to be safe to run twice.
+ * <p>Every change is written before it is visible: if the write fails, the call throws and the store still holds what
+ * it held before.
+ *
+ * <p><strong>At least once, not exactly once.</strong> An action that was {@link DeferredAction.Status#RUNNING} when
+ * the process stopped is scheduled again on load, because nothing records how far it got. Write goals whose effects
+ * are safe to repeat (revoking what is already revoked, a second reminder). The store is for one process: two
+ * processes sharing a directory will each run every action.
  */
 public final class DeferredActionStore {
 
@@ -68,16 +78,33 @@ public final class DeferredActionStore {
         return store;
     }
 
-    /** Adds an action, replacing one with the same id; returns whether it replaced one. */
+    /**
+     * Adds an action, replacing a scheduled or finished one with the same id; returns whether it replaced one.
+     *
+     * @throws IllegalArgumentException if the id is not a safe file name, or differs only in case from one already
+     *                                  held (the same file on a case-insensitive disk)
+     * @throws IllegalStateException    if the action it would replace is running
+     * @throws UncheckedIOException     if it could not be written; nothing changed
+     */
     public synchronized boolean put(DeferredAction action) {
         Objects.requireNonNull(action, "action");
         if (!SAFE_ID.matcher(action.id()).matches()) {
             throw new IllegalArgumentException("A deferred action id may use letters, digits, '.', '_' and '-': "
                     + action.id());
         }
-        boolean replaced = actions.put(action.id(), action) != null;
+        for (String held : actions.keySet()) {
+            if (!held.equals(action.id()) && held.equalsIgnoreCase(action.id())) {
+                throw new IllegalArgumentException("The deferred action id " + action.id() + " differs only in case from "
+                        + held + ", which would share its file");
+            }
+        }
+        DeferredAction existing = actions.get(action.id());
+        if (existing != null && existing.status() == DeferredAction.Status.RUNNING) {
+            throw new IllegalStateException("The deferred action " + action.id() + " is running and cannot be replaced");
+        }
         save(action);
-        return replaced;
+        actions.put(action.id(), action);
+        return existing != null;
     }
 
     /** Every action, earliest first. */
@@ -96,27 +123,38 @@ public final class DeferredActionStore {
                 .sorted(Comparator.comparing(DeferredAction::runAt)).toList();
     }
 
-    /** Claims a scheduled action for running; false if it is no longer scheduled. */
+    /**
+     * Claims a scheduled action for running; false if it is no longer scheduled.
+     *
+     * @throws UncheckedIOException if the claim could not be written; the action is still scheduled
+     */
     public synchronized boolean claim(String id, Instant now) {
         DeferredAction action = actions.get(id);
         if (action == null || action.status() != DeferredAction.Status.SCHEDULED) {
             return false;
         }
         DeferredAction running = action.withStatus(DeferredAction.Status.RUNNING, "", null);
-        actions.put(id, running);
         save(running);
+        actions.put(id, running);
         return true;
     }
 
-    /** Records how a claimed action ended. */
-    public synchronized void finish(String id, boolean succeeded, String outcome, Instant now) {
+    /**
+     * Records how a claimed action ended; false, changing nothing, if that action is not running.
+     *
+     * @throws UncheckedIOException if it could not be written; the action is still running here, and scheduled again
+     *                              after a restart
+     */
+    public synchronized boolean finish(String id, boolean succeeded, String outcome, Instant now) {
         DeferredAction action = actions.get(id);
-        if (action != null) {
-            DeferredAction finished = action.withStatus(
-                    succeeded ? DeferredAction.Status.DONE : DeferredAction.Status.FAILED, outcome, now);
-            actions.put(id, finished);
-            save(finished);
+        if (action == null || action.status() != DeferredAction.Status.RUNNING) {
+            return false;
         }
+        DeferredAction finished = action.withStatus(
+                succeeded ? DeferredAction.Status.DONE : DeferredAction.Status.FAILED, outcome, now);
+        save(finished);
+        actions.put(id, finished);
+        return true;
     }
 
     private void save(DeferredAction action) {
@@ -141,13 +179,22 @@ public final class DeferredActionStore {
         }
         Path file = directory.resolve(action.id() + ".properties");
         Path temp = directory.resolve(action.id() + ".properties.tmp");
-        try (Writer out = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
-            p.store(out, "deferred action");
-        } catch (IOException e) {
-            throw new UncheckedIOException("Could not save deferred action " + action.id(), e);
-        }
         try {
-            Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            StringWriter text = new StringWriter();
+            p.store(text, "deferred action");
+            try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                ByteBuffer bytes = ByteBuffer.wrap(text.toString().getBytes(StandardCharsets.UTF_8));
+                while (bytes.hasRemaining()) {
+                    channel.write(bytes);
+                }
+                channel.force(true);
+            }
+            try {
+                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             throw new UncheckedIOException("Could not save deferred action " + action.id(), e);
         }
@@ -157,7 +204,11 @@ public final class DeferredActionStore {
         Properties p = new Properties();
         try (Reader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             p.load(in);
-            return new DeferredAction(p.getProperty("id"), p.getProperty("subjectKind"), p.getProperty("subjectId"),
+            String id = p.getProperty("id");
+            if (id == null || !SAFE_ID.matcher(id).matches() || !file.getFileName().toString().equals(id + ".properties")) {
+                throw new IllegalStateException("its id does not match its file name");
+            }
+            return new DeferredAction(id, p.getProperty("subjectKind"), p.getProperty("subjectId"),
                     Instant.parse(p.getProperty("runAt")), p.getProperty("when"), p.getProperty("goal"),
                     instant(p.getProperty("scheduledAt")), p.getProperty("scheduledBy"),
                     DeferredAction.Status.valueOf(p.getProperty("status", "SCHEDULED")), p.getProperty("outcome"),

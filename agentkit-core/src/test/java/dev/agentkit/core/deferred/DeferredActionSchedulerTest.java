@@ -43,11 +43,15 @@ class DeferredActionSchedulerTest {
             subject -> subject.kind().equals("grant") ? List.of("GR-1") : List.of());
 
     private ToolResult schedule(Object... args) {
+        return scheduleAs(scheduler, "dana@example.com", args);
+    }
+
+    private static ToolResult scheduleAs(DeferredActionScheduler scheduler, String by, Object... args) {
         Map<String, Object> arguments = new HashMap<>();
         for (int i = 0; i < args.length; i += 2) {
             arguments.put((String) args[i], args[i + 1]);
         }
-        return scheduler.tool("dana@example.com").execute(new ToolInvocation("t", DeferredActionScheduler.TOOL_NAME, arguments));
+        return scheduler.tool(by).execute(new ToolInvocation("t", DeferredActionScheduler.TOOL_NAME, arguments));
     }
 
     @Test
@@ -57,7 +61,8 @@ class DeferredActionSchedulerTest {
 
         assertThat(result.isError()).as(result.content()).isFalse();
         assertThat(result.content()).contains("14 days before termination_date");
-        assertThat(store.get("worker_W-1002_202612170000")).hasValueSatisfying(a -> {
+        assertThat(store.get(DeferredActionScheduler.idFor("worker", "W-1002", Instant.parse("2026-12-17T00:00:00Z"))))
+                .hasValueSatisfying(a -> {
             assertThat(a.runAt()).isEqualTo(Instant.parse("2026-12-17T00:00:00Z"));
             assertThat(a.scheduledBy()).isEqualTo("dana@example.com");
             assertThat(a.scheduledAt()).isEqualTo(NOW);
@@ -107,6 +112,70 @@ class DeferredActionSchedulerTest {
         assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "run_at", "2026-09-16").content())
                 .contains("is not after now");
         assertThat(store.all()).isEmpty();
+    }
+
+    @Test
+    void offsetsAreWholeNumbersAndTooLargeOnesAreRefusedNotWrapped() {
+        assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "relative_to", "termination_date",
+                "offset_days", 1.5).content()).contains("whole numbers");
+        // 2^31 + 10 minutes once wrapped to a time before termination_date.
+        assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "relative_to", "termination_date",
+                "offset_minutes", 2_147_483_658L).isError()).isFalse();
+        assertThat(store.all()).extracting(DeferredAction::runAt)
+                .containsExactly(Instant.parse("2026-12-31T00:00:00Z").plus(java.time.Duration.ofMinutes(2_147_483_658L)));
+        assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "relative_to", "termination_date",
+                "offset_minutes", 4_294_967_306L).content()).contains("too far away");
+        assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "relative_to", "termination_date",
+                "offset_days", Long.MAX_VALUE).content()).contains("too large");
+        assertThat(schedule("subject_kind", "worker", "subject_id", "W-1002", "goal", "x", "relative_to", "termination_date",
+                "offset_days", "99999999999999999999").content()).contains("whole numbers");
+        assertThat(store.all()).hasSize(1);
+    }
+
+    @Test
+    void nothingIsScheduledForASubjectTheCallerMayNotActFor() {
+        DeferredActionScheduler guarded = new DeferredActionScheduler(resolver, store, () -> NOW, subject -> List.of(),
+                (by, subject) -> subject.isContact(by));
+
+        assertThat(scheduleAs(guarded, "mallory@example.com", "subject_kind", "worker", "subject_id", "W-1002",
+                "goal", "Deactivate marcus.", "run_at", "2026-12-31").content())
+                .contains("mallory@example.com may not schedule deferred actions for worker W-1002");
+        assertThat(scheduleAs(guarded, "lena@example.com", "subject_kind", "worker", "subject_id", "W-1002",
+                "goal", "Remind lena.", "run_at", "2026-12-31").isError()).isFalse();
+        assertThat(store.all()).extracting(DeferredAction::scheduledBy).containsExactly("lena@example.com");
+    }
+
+    @Test
+    void anotherCallersActionAndOneThatAlreadyRanAreNotReplaced() {
+        assertThat(schedule("subject_kind", "grant", "subject_id", "GR-1", "goal", "Revoke GR-1.", "relative_to", "expires_at")
+                .isError()).isFalse();
+
+        ToolResult other = scheduleAs(scheduler, "mallory@example.com", "subject_kind", "grant", "subject_id", "GR-1",
+                "goal", "Do nothing.", "relative_to", "expires_at");
+        assertThat(other.content()).contains("scheduled by someone else").contains("Nothing scheduled");
+
+        String id = store.all().getFirst().id();
+        store.claim(id, NOW);
+        assertThat(schedule("subject_kind", "grant", "subject_id", "GR-1", "goal", "Do nothing.", "relative_to", "expires_at")
+                .content()).contains("that is running");
+        store.finish(id, true, "Revoked.", NOW);
+        assertThat(schedule("subject_kind", "grant", "subject_id", "GR-1", "goal", "Do nothing.", "relative_to", "expires_at")
+                .content()).contains("that is done");
+
+        assertThat(store.all()).singleElement().satisfies(a -> assertThat(a.goal()).isEqualTo("Revoke GR-1."));
+    }
+
+    @Test
+    void idsAreSafeFileNamesForAnySubjectAndNeverSharedBetweenSubjects() {
+        Instant at = Instant.parse("2026-12-31T00:00:00Z");
+
+        assertThat(DeferredActionScheduler.idFor("user", "alice@example.com", at)).matches("user_aliceexamp_202612310000_[0-9a-f]{7}");
+        assertThat(DeferredActionScheduler.idFor("user_grant", "7", at))
+                .isNotEqualTo(DeferredActionScheduler.idFor("user", "grant_7", at));
+        assertThat(DeferredActionScheduler.idFor("grant", "ab", at))
+                .isNotEqualToIgnoringCase(DeferredActionScheduler.idFor("grant", "AB", at));
+        // Short enough, and with few enough separators, to name the action's fence.
+        assertThat(DeferredActionScheduler.idFor("subscription", "customer-with-a-long-id-0001", at)).hasSizeLessThanOrEqualTo(40);
     }
 
     @Test

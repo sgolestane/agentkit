@@ -780,7 +780,8 @@ DeclaredTools tools = new DeclaredTools()
         .add(sendMessage, new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"));
 
 DeferredActionStore store = DeferredActionStore.inDirectory(Path.of("data/deferred"));
-DeferredActionScheduler scheduler = new DeferredActionScheduler(workers, store, Instant::now, holdings);
+DeferredActionScheduler scheduler = new DeferredActionScheduler(workers, store, Instant::now, holdings,
+        (caller, worker) -> worker.isContact(caller));   // who may schedule for whom
 tools.add(scheduler.tool("onboarding"), new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"));
 
 DeferredRunner runner = new DeferredRunner(store, workers, tools,
@@ -791,22 +792,29 @@ runner.start(Duration.ofMinutes(1));
 
 The use case supplies a `SubjectResolver` (here `workers`): what kinds of subject there are, and a
 `SubjectRecord` for one — the identifiers it is known by, who may be told about it, and its facts.
-`schedule_deferred_action` checks the subject exists and the time is later, taken either as `run_at`
-or relative to a date field of the record (`relative_to: termination_date, offset_days: -14`), so the
-model does no date arithmetic. It stores the goal; it does not judge it.
+`schedule_deferred_action` checks the subject exists, the caller may schedule for it, and the time
+is later, taken either as `run_at` or relative to a date field of the record
+(`relative_to: termination_date, offset_days: -14`), so the model does no date arithmetic. It stores
+the goal; it does not judge it. Pass the last argument (`mayScheduleFor`) unless every caller may act
+on every subject: the action runs later with the runner's tools, not the caller's. There is one action
+per subject and minute, and only the caller who scheduled it can replace it, while it still waits.
 
 When the time comes, `DeferredRunner` claims the action and runs it:
 
-- **Goal:** the stored text is fenced as a procedure under a fixed objective, with the subject's
-  record as it is *now*, so a goal written months ago cannot pose as the instruction, and a run can
-  see that the facts it depended on have changed.
-- **Tools:** only those declared read, revoke, notify or request (`DeferredActions.restrict`). A
-  deferred run cannot grant anything or schedule more work.
+- **Goal:** the stored text is fenced as a procedure under a fixed objective, so a goal written
+  months ago cannot pose as the instruction. The subject's record as it is *now* comes with it, fenced
+  as evidence one line per field, so a run can see that the facts it depended on have changed and a
+  field cannot pose as anything else.
+- **Tools:** only those declared read, revoke, notify or request that name whom they act on
+  (`DeferredActions.restrict`). A deferred run cannot grant anything or schedule more work.
 - **Gate:** every call must name the subject in its declared argument; a notification may also go
-  to one of the record's contacts. A tool that declares no subject is refused.
+  to one of the record's contacts. Ids match exactly and email addresses ignoring case. The runner
+  checks the gate inside each tool as well, so it holds even for an agent built without `.toolGate`.
 
-The store claims before running and records how each action finished, so a restart does not run one
-twice. It is one properties file per action in a directory, or in memory for tests.
+The store claims an action before running it and records how it finished. That is at least once, not
+exactly once: an action that was running when the process stopped runs again after a restart, so
+write goals whose effects are safe to repeat. It is one properties file per action in a directory, for
+one process, or in memory for tests.
 
 ### After you read the web, you cannot write
 
@@ -1747,10 +1755,12 @@ Each turn is its own run, so on its own a turn would start from nothing but the 
 `ChatRuntime` therefore gives each turn the conversation's recent finished turns: what the person
 said and what the answer was, and nothing else. It leaves out steps, tool results and views.
 
-They travel in the turn's first message, after the new text, fenced as `advisory`: the run's own
-earlier work, which the model can act on but which can't change what this turn is for. They are not
-part of the `Goal`, which is what gets logged, observed and compared in evals. The default is the
-last eight turns and 1,500 characters of each message and answer:
+They travel in the turn's first message, after the new text, each message and each answer in its own
+fence, so one cannot pose as another. The person's messages are `advisory`: they could say the same
+thing now. The answers are `evidence`, because an answer may repeat what a tool returned. None of it can
+change what this turn is for, and none of it is part of the `Goal`, which is what gets logged, observed
+and compared in evals. The default is the last eight turns and 1,500 characters of each message and
+answer:
 
 ```java
 new ChatRuntime(store, events, agents, capabilityOf, standing,

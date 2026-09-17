@@ -73,4 +73,60 @@ class DeferredActionStoreTest {
         assertThatThrownBy(() -> DeferredActionStore.inDirectory(dir))
                 .hasMessageContaining("broken.properties");
     }
+
+    @Test
+    void aRunningActionCannotBeReplacedAndOnlyARunningOneCanBeFinished() {
+        DeferredActionStore store = DeferredActionStore.inMemory();
+        store.put(action("a", NOW.minusSeconds(60), "old goal"));
+
+        assertThat(store.finish("a", true, "never ran", NOW)).isFalse();
+        assertThat(store.claim("a", NOW)).isTrue();
+        assertThatThrownBy(() -> store.put(action("a", NOW.minusSeconds(60), "new goal")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(store.finish("a", true, "done", NOW)).isTrue();
+        assertThat(store.finish("a", false, "again", NOW)).isFalse();
+
+        assertThat(store.get("a")).hasValueSatisfying(a -> {
+            assertThat(a.goal()).isEqualTo("old goal");
+            assertThat(a.status()).isEqualTo(DeferredAction.Status.DONE);
+            assertThat(a.outcome()).isEqualTo("done");
+        });
+    }
+
+    @Test
+    void idsThatDifferOnlyInCaseWouldShareAFileOnSomeDisksSoTheSecondIsRefused() {
+        DeferredActionStore store = DeferredActionStore.inDirectory(dir);
+        store.put(action("grant_ab_1", NOW, "x"));
+
+        assertThatThrownBy(() -> store.put(action("grant_AB_1", NOW, "y")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("only in case");
+        assertThat(DeferredActionStore.inDirectory(dir).all()).extracting(DeferredAction::goal).containsExactly("x");
+    }
+
+    @Test
+    void aWriteThatFailsChangesNothing() throws Exception {
+        DeferredActionStore store = DeferredActionStore.inDirectory(dir);
+        store.put(action("a", NOW.minusSeconds(60), "x"));
+        java.util.Set<java.nio.file.attribute.PosixFilePermission> writable = Files.getPosixFilePermissions(dir);
+        Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            assertThatThrownBy(() -> store.claim("a", NOW)).isInstanceOf(java.io.UncheckedIOException.class);
+            assertThatThrownBy(() -> store.put(action("b", NOW, "y"))).isInstanceOf(java.io.UncheckedIOException.class);
+        } finally {
+            Files.setPosixFilePermissions(dir, writable);
+        }
+
+        assertThat(store.get("a")).hasValueSatisfying(a -> assertThat(a.status()).isEqualTo(DeferredAction.Status.SCHEDULED));
+        assertThat(store.get("b")).isEmpty();
+        assertThat(store.due(NOW)).extracting(DeferredAction::id).containsExactly("a");
+    }
+
+    @Test
+    void aFileWhoseIdIsNotItsNameIsRefusedOnLoad() throws Exception {
+        DeferredActionStore.inDirectory(dir).put(action("a", NOW, "x"));
+        Files.move(dir.resolve("a.properties"), dir.resolve("b.properties"));
+
+        assertThatThrownBy(() -> DeferredActionStore.inDirectory(dir)).hasMessageContaining("b.properties")
+                .hasMessageContaining("does not match its file name");
+    }
 }

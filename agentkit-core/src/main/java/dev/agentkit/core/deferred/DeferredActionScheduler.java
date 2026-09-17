@@ -5,18 +5,26 @@ import dev.agentkit.core.tool.Provenance;
 import dev.agentkit.core.tool.SideEffects;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
+import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -35,8 +43,14 @@ import java.util.function.Supplier;
  * If the use case can say what the subject holds ({@code holdings}), the result names any of it the goal never
  * mentions: feedback the model can act on, not a rule, since a reminder need not name everything a removal must.
  *
- * <p>An action's id is {@code kind_subjectId_yyyyMMddHHmm}, so scheduling a second goal for the same subject at the
- * same minute replaces the first.
+ * <p><strong>Who may schedule for whom.</strong> The tool is built for one {@code scheduledBy}, and a deferred action
+ * runs later with the tools of whoever runs it, not of the person who scheduled it. So unless every caller may act on
+ * every subject, pass {@code mayScheduleFor}: without it, anyone who can call the tool can have a revocation carried
+ * out on any subject.
+ *
+ * <p>There is one action per subject and minute ({@link #idFor}). Scheduling at a minute already taken replaces that
+ * action only if it is still waiting and the same caller scheduled it; otherwise the call is refused and nothing
+ * changes.
  */
 public final class DeferredActionScheduler {
 
@@ -45,23 +59,69 @@ public final class DeferredActionScheduler {
     /** The longest goal accepted. */
     public static final int MAX_GOAL_CHARS = 4_000;
 
+    /** The last time an action may run: ids spell the year in four digits. */
+    private static final Instant LATEST = Instant.parse("9999-12-31T23:59:00Z");
+
     private static final DateTimeFormatter ID_TIME = DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(ZoneOffset.UTC);
 
     private final SubjectResolver resolver;
     private final DeferredActionStore store;
     private final Supplier<Instant> clock;
     private final Function<SubjectRecord, List<String>> holdings;
+    private final BiPredicate<String, SubjectRecord> mayScheduleFor;
 
     /**
+     * A scheduler that lets any caller schedule for any subject. Use it only where that is true; see the class
+     * javadoc.
+     *
      * @param holdings what a subject currently holds, named as a goal would name it, for feedback; may return an
      *                 empty list
      */
     public DeferredActionScheduler(SubjectResolver resolver, DeferredActionStore store, Supplier<Instant> clock,
                                    Function<SubjectRecord, List<String>> holdings) {
+        this(resolver, store, clock, holdings, (scheduledBy, subject) -> true);
+    }
+
+    /**
+     * @param holdings       what a subject currently holds, named as a goal would name it, for feedback; may return an
+     *                       empty list
+     * @param mayScheduleFor whether {@code scheduledBy} may schedule work for the subject, judged from its current
+     *                       record
+     */
+    public DeferredActionScheduler(SubjectResolver resolver, DeferredActionStore store, Supplier<Instant> clock,
+                                   Function<SubjectRecord, List<String>> holdings,
+                                   BiPredicate<String, SubjectRecord> mayScheduleFor) {
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.holdings = Objects.requireNonNull(holdings, "holdings");
+        this.mayScheduleFor = Objects.requireNonNull(mayScheduleFor, "mayScheduleFor");
+    }
+
+    /**
+     * The id of the action for {@code kind} and {@code subjectId} at {@code runAt}'s minute:
+     * {@code kind_subject_yyyyMMddHHmm_hash}. The first two parts are the kind and subject id with everything but
+     * letters and digits removed and cut short, for a person reading a listing; the hash is of the exact kind, subject
+     * id and minute, so two subjects never share an id however alike they read, and any subject id (an email, a path)
+     * makes a safe file name.
+     */
+    public static String idFor(String kind, String subjectId, Instant runAt) {
+        String minute = ID_TIME.format(runAt);
+        String digest;
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest((kind + "\u0000" + subjectId + "\u0000" + minute)
+                    .getBytes(StandardCharsets.UTF_8));
+            digest = HexFormat.of().formatHex(hash).substring(0, 7);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", e);
+        }
+        return readable(kind, 8) + "_" + readable(subjectId, 10) + "_" + minute + "_" + digest;
+    }
+
+    private static String readable(String value, int max) {
+        String letters = value.replaceAll("[^A-Za-z0-9]", "");
+        letters = letters.isEmpty() ? "x" : letters;
+        return letters.length() <= max ? letters : letters.substring(0, max);
     }
 
     /** The tool, scheduling on behalf of {@code scheduledBy}. */
@@ -112,6 +172,10 @@ public final class DeferredActionScheduler {
             return ToolResult.error("Scheduler: no " + kind + " with id " + id + ".");
         }
         SubjectRecord subject = found.get();
+        if (!mayScheduleFor.test(scheduledBy, subject)) {
+            return ToolResult.error("Scheduler: " + scheduledBy + " may not schedule deferred actions for " + kind + " "
+                    + id + ".");
+        }
         String goal = blankToNull(inv.stringArgument("goal"));
         if (goal == null) {
             return ToolResult.error("Scheduler: goal is required.");
@@ -142,29 +206,55 @@ public final class DeferredActionScheduler {
                 return ToolResult.error("Scheduler: the " + kind + " " + id + " has no date or time field " + relativeTo
                         + ". Its fields: " + new TreeSet<>(subject.facts().keySet()));
             }
-            Integer days = optionalInteger(inv.argument("offset_days"));
-            Integer minutes = optionalInteger(inv.argument("offset_minutes"));
+            Long days = optionalWhole(inv.argument("offset_days"));
+            Long minutes = optionalWhole(inv.argument("offset_minutes"));
             if (days == null || minutes == null) {
                 return ToolResult.error("Scheduler: offset_days and offset_minutes must be whole numbers.");
             }
-            Duration offset = Duration.ofDays(days).plusMinutes(minutes);
-            runAt = anchor.get().plus(offset);
+            Duration offset;
+            try {
+                offset = Duration.ofDays(days).plusMinutes(minutes);
+                runAt = anchor.get().plus(offset);
+            } catch (ArithmeticException | DateTimeException e) {
+                return ToolResult.error("Scheduler: that offset is too large. Nothing scheduled.");
+            }
             when = offset.isZero() ? "at " + relativeTo + " (" + anchor.get() + ")"
                     : describe(offset.abs()) + (offset.isNegative() ? " before " : " after ") + relativeTo
                             + " (" + anchor.get() + ")";
         }
         Instant now = clock.get();
+        if (runAt.isAfter(LATEST)) {
+            return ToolResult.error("Scheduler: " + runAt + " is too far away. Nothing scheduled.");
+        }
         if (!runAt.isAfter(now)) {
             return ToolResult.error("Scheduler: " + runAt + " is not after now (" + now + "). Nothing scheduled.");
         }
 
-        String actionId = kind + "_" + id + "_" + ID_TIME.format(runAt);
+        String actionId = idFor(kind, id, runAt);
+        Optional<DeferredAction> existing = store.get(actionId);
+        if (existing.isPresent()) {
+            DeferredAction taken = existing.get();
+            if (!taken.subjectKind().equals(kind) || !taken.subjectId().equals(id)) {
+                return ToolResult.error("Scheduler: that minute's id is taken by another subject. Choose another minute.");
+            }
+            if (taken.status() != DeferredAction.Status.SCHEDULED) {
+                return ToolResult.error("Scheduler: the " + kind + " " + id + " already has a deferred action at "
+                        + runAt + " that is " + taken.status().name().toLowerCase(Locale.ROOT)
+                        + ". Choose another minute. Nothing scheduled.");
+            }
+            if (!taken.scheduledBy().equals(scheduledBy == null ? "" : scheduledBy)) {
+                return ToolResult.error("Scheduler: the " + kind + " " + id + " already has a deferred action at "
+                        + runAt + ", scheduled by someone else. Choose another minute. Nothing scheduled.");
+            }
+        }
         boolean replaced;
         try {
             replaced = store.put(new DeferredAction(actionId, kind, id, runAt, when, goal, now, scheduledBy,
                     DeferredAction.Status.SCHEDULED, "", null));
-        } catch (IllegalArgumentException e) {
-            return ToolResult.error("Scheduler: " + e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ToolResult.error("Scheduler: " + e.getMessage() + ". Nothing scheduled.");
+        } catch (UncheckedIOException e) {
+            return ToolResult.error("Scheduler: the action could not be saved, so nothing was scheduled.");
         }
 
         StringBuilder out = new StringBuilder("Scheduler: " + (replaced ? "replaced" : "scheduled") + " deferred action "
@@ -207,20 +297,27 @@ public final class DeferredActionScheduler {
         return days + (days == 1 ? " day " : " days ") + minutes + (minutes == 1 ? " minute" : " minutes");
     }
 
-    /** A whole number, 0 when absent, or null when present and not a whole number. */
-    private static Integer optionalInteger(Object value) {
+    /** A whole number, 0 when absent, or null when present and not a whole number that fits a long exactly. */
+    private static Long optionalWhole(Object value) {
         if (value == null) {
-            return 0;
+            return 0L;
         }
-        if (value instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())) {
-            return n.intValue();
+        if (value instanceof Long || value instanceof Integer || value instanceof Short || value instanceof Byte) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof Number n) {
+            try {
+                return new BigDecimal(n.toString()).longValueExact();
+            } catch (NumberFormatException | ArithmeticException e) {
+                return null;
+            }
         }
         if (value instanceof String s) {
             if (s.isBlank()) {
-                return 0;
+                return 0L;
             }
             try {
-                return Integer.parseInt(s.strip());
+                return Long.parseLong(s.strip());
             } catch (NumberFormatException e) {
                 return null;
             }

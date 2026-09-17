@@ -6,8 +6,7 @@ import java.util.Objects;
 /**
  * Work to carry out for a subject at a later time, and what became of it.
  *
- * @param id          {@code kind_subjectId_yyyyMMddHHmm}, so a second goal for the same subject at the same
- *                    minute replaces the first
+ * @param id          see {@link DeferredActionScheduler#idFor}: one per subject and minute
  * @param when        how the time was given, e.g. {@code "15 minutes before expires_at (2026-09-16T18:00:00Z)"}
  * @param goal        what to do, written by the model when it was scheduled
  * @param scheduledBy who scheduled it
