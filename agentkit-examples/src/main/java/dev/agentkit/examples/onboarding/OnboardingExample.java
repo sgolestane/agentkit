@@ -14,12 +14,15 @@ import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.core.util.OneLine;
 import dev.agentkit.examples.onboarding.OnboardingSystems.AwsGrant;
+import dev.agentkit.examples.deferred.DeferredAction;
+import dev.agentkit.examples.deferred.DeferredActions;
 import dev.agentkit.examples.onboarding.OnboardingSystems.GithubIdentity;
 import dev.agentkit.examples.onboarding.OnboardingSystems.ItTicket;
 import dev.agentkit.examples.onboarding.OnboardingSystems.OktaUser;
 import dev.agentkit.examples.onboarding.OnboardingSystems.SlackAccount;
 import dev.agentkit.examples.onboarding.OnboardingSystems.SlackQuestion;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -45,6 +48,18 @@ import java.util.regex.Pattern;
  * those lookups return, so that is left to the executor, which is an agent precisely so it
  * can make that call. The four {@code github-*} scenarios cover each outcome.
  *
+ * <p>Work that belongs on a later date is scheduled, not done. The policy says that a hire with a
+ * termination date gets two deferred actions once their access is set up — a reminder to their
+ * manager 14 days before, and on the day the removal of everything they were given — and the
+ * executor writes each action's goal from the policy and the results of the earlier steps. Nothing
+ * about those actions is defined in code; {@link DeferredActions} only bounds what one may do when
+ * it runs. The run cannot wait months, so it verifies that both were recorded for the right dates
+ * and that the goal of the one on the termination date covers every system onboarding set up.
+ *
+ * <p>The policy and both prompts are what a customer changes, and they are files, not code
+ * ({@link OnboardingConfig}): {@code ONBOARDING_POLICY_FILE}, {@code ONBOARDING_PLANNER_PROMPT_FILE}
+ * and {@code ONBOARDING_EXECUTOR_PROMPT_FILE} each replace a shipped default.
+ *
  * <p>Each scenario is verified on the plan (flat, with branches that do not apply pruned)
  * and on the fake systems' final state, including which path obtained a missing value.
  *
@@ -61,51 +76,6 @@ import java.util.regex.Pattern;
 public final class OnboardingExample {
 
     static final String DEFAULT_MODEL = "anthropic/claude-sonnet-5";
-
-    static final String POLICY = """
-            Onboarding policy:
-            - Identity: if the hire is a rehire, reactivate their existing Okta account; otherwise \
-            create a new Okta account. Every account is in the department group (the department \
-            name in lowercase). Full-time employees are also in "all-staff". Contractors are in \
-            "contractors" instead of "all-staff", and their account expires on their contract end date.
-            - Slack: full-time employees get a member account in #general and their department \
-            channel (#engineering or #sales). Contractors get a guest account in their department \
-            channel only.
-            - Equipment: remote hires have a laptop shipped to their home address. On-site hires get \
-            an IT ticket of category laptop_pickup naming their office.
-            - Benefits: enroll full-time employees in Workday benefits. Contractors are not eligible.
-            - Sales hires: assign a Salesforce seat.
-            - Engineering hires: grant AWS staging access. If production access was requested, do not \
-            grant it; open an IT ticket of category access_request asking security to review \
-            production AWS access instead. Then add them to their GitHub team. If their GitHub \
-            username is not on file, obtaining it is its own step, before adding them to the team.
-            - Finally, send the manager a Slack message reporting the results of the earlier steps, \
-            including anything still pending.""";
-
-    static final String PLANNER_PROMPT = """
-            You are an IT onboarding planner. The goal contains a policy with conditions and the \
-            facts about one new hire. Resolve every condition against those facts now, while \
-            planning, and output only the actions that apply to this hire.
-            Respond with a flat numbered list, one action per line, and nothing else. Every step \
-            must be a single unconditional action naming the system and the exact values to use \
-            (emails, groups, teams, channels, dates, addresses, offices). Never write "if", \
-            "otherwise", "unless" or "else" in a step. Leave out every action that does not apply \
-            to this hire entirely: never write a step saying something is skipped, not \
-            applicable, or not needed. When information a step needs is not on file, plan one step that \
-            says to obtain it, without saying how; the executor decides how. Never predict or hedge \
-            about the outcome of a step: a summary step names its recipient and says to report \
-            the results of the earlier steps, without listing what those results will be.""";
-
-    static final String EXECUTOR_PROMPT = """
-            You are an IT onboarding operator. You are given one step of an onboarding plan. \
-            Carry out exactly that step with your tools, using the values the step names, and do \
-            not perform other steps.
-            When the step is to obtain information that is not on file, find it with your tools \
-            before involving the person: check what the person recorded about themselves first, \
-            then search. A search result is only a possible match, never the answer; to use one, \
-            ask the person to confirm it. Ask the person only when your lookups have not settled \
-            it. If you still cannot obtain it, say plainly that it is missing.
-            Then reply with one sentence saying what you did, including any value you obtained.""";
 
     /** A step that only notes a branch was skipped, rather than doing anything. */
     static final Pattern NO_OP = Pattern.compile(
@@ -131,6 +101,7 @@ public final class OnboardingExample {
             System.exit(2);
         }
         String model = System.getenv().getOrDefault("ONBOARDING_MODEL", DEFAULT_MODEL);
+        OnboardingConfig config = OnboardingConfig.fromEnv();
         LlmClient llm = OpenRouterLlmClient.builder(key).title("agentkit onboarding example").build();
 
         String subset = args.length > 0 ? String.join(" ", args)
@@ -142,7 +113,7 @@ public final class OnboardingExample {
             if (!wanted.isEmpty() && !wanted.contains(scenario.name())) {
                 continue;
             }
-            boolean passed = run(scenario, llm, model);
+            boolean passed = run(scenario, config, llm, model);
             results.add((passed ? "  PASS  " : "  FAIL  ") + scenario.name());
             failed += passed ? 0 : 1;
         }
@@ -152,16 +123,17 @@ public final class OnboardingExample {
         System.exit(failed == 0 ? 0 : 1);
     }
 
-    /** The goal handed to the planning agent: the shared policy plus one hire's facts. */
-    static Goal goalFor(Scenario scenario) {
+    /** The goal handed to the planning agent: the customer's policy plus one hire's facts. */
+    static Goal goalFor(Scenario scenario, OnboardingConfig config) {
         return Goal.of("Onboard the new hire below by following the onboarding policy.\n\n"
-                + POLICY + "\n\nNew hire:\n" + scenario.facts());
+                + config.policy() + "\n\nNew hire:\n" + scenario.facts());
     }
 
-    static PlanningAgent planningAgent(LlmClient llm, String model, OnboardingSystems systems) {
-        LlmPlanner planner = new LlmPlanner(llm, model, PLANNER_PROMPT, 1024);
+    static PlanningAgent planningAgent(OnboardingConfig onboarding, LlmClient llm, String model,
+                                       OnboardingSystems systems) {
+        LlmPlanner planner = new LlmPlanner(llm, model, onboarding.plannerPrompt(), 1024);
         AgentConfig config = AgentConfig.builder(model)
-                .systemPrompt(EXECUTOR_PROMPT)
+                .systemPrompt(onboarding.executorPrompt())
                 .maxSteps(8)
                 .maxTokens(1024)
                 .build();
@@ -170,10 +142,10 @@ public final class OnboardingExample {
                 .build());
     }
 
-    static boolean run(Scenario scenario, LlmClient llm, String model) {
+    static boolean run(Scenario scenario, OnboardingConfig config, LlmClient llm, String model) {
         System.out.println("\n=== " + scenario.name() + " (" + scenario.email() + ") ===");
         OnboardingSystems systems = OnboardingSystems.seeded();
-        PlanExecution execution = planningAgent(llm, model, systems).run(goalFor(scenario));
+        PlanExecution execution = planningAgent(config, llm, model, systems).run(goalFor(scenario, config));
 
         System.out.println("\nPlan:");
         List<String> steps = execution.plan().steps();
@@ -188,6 +160,15 @@ public final class OnboardingExample {
         System.out.println("GitHub account on record: " + (identity == null ? "none"
                 : identity.username() + " (source: " + identity.source() + ")")
                 + ", Slack questions sent: " + systems.slackQuestions().size());
+        for (DeferredAction action : systems.deferredActions()) {
+            System.out.println("\nDeferred action " + action.id() + " runs " + action.runOn() + " (" + action.when()
+                    + "), scheduled " + action.scheduledOn() + ". It will run with tools "
+                    + DeferredActions.restrict(systems.tools(), systems::declared).tools().stream().map(t -> t.name()).toList()
+                    + " and this goal:");
+            systems.subjects().resolve(action.subjectKind(), action.subjectId()).ifPresent(subject ->
+                    DeferredActions.goalFor(action, subject, action.runOn()).description().lines()
+                            .forEach(line -> System.out.println("    | " + line)));
+        }
 
         Checks checks = new Checks();
         checks.that("run completed", execution.isSuccess());
@@ -226,12 +207,13 @@ public final class OnboardingExample {
                         - Title: Senior Backend Engineer
                         - Department: Engineering
                         - Employment type: full-time
+                        - Termination date: none
                         - Rehire: no
                         - Work location: remote, home address Rua Augusta 100, 1100-053 Lisbon, Portugal
                         - GitHub username: priyan-dev, team: backend
                         - Production AWS access requested: no
                         - Manager: dana.kim@acme.example""",
-                        Set.of("salesforce", "guest", "reactivat", "contractors", "pickup", "pick up", "obtain"),
+                        Set.of("salesforce", "guest", "reactivat", "contractors", "pickup", "pick up", "obtain", "deferred", "terminat"),
                         (s, c) -> {
                             String email = "priya.natarajan@acme.example";
                             OktaUser okta = s.oktaUser(email);
@@ -240,7 +222,6 @@ public final class OnboardingExample {
                             c.that("Okta groups include engineering and all-staff, not contractors", okta != null
                                     && okta.groups().containsAll(Set.of("engineering", "all-staff"))
                                     && !okta.groups().contains("contractors"));
-                            c.that("Okta account does not expire", okta != null && okta.expiresOn() == null);
                             c.that("GitHub: priyan-dev on team backend",
                                     "backend".equals(s.githubMembers().get("priyan-dev")));
                             c.that("no Slack question sent (username was on file)", s.slackQuestions().isEmpty());
@@ -254,6 +235,7 @@ public final class OnboardingExample {
                                     && s.shipments().get(0).address().contains("Lisbon"));
                             c.that("no laptop_pickup ticket", noTicket(s, "laptop_pickup"));
                             c.that("benefits enrolled", s.benefitsEnrolled().equals(Set.of("W-1001")));
+                            c.that("no deferred actions scheduled", s.deferredActions().isEmpty());
                         }),
 
                 new Scenario("contractor", "marcus.bell@acme.example", "lena.ortiz@acme.example", """
@@ -262,7 +244,9 @@ public final class OnboardingExample {
                         - Work email: marcus.bell@acme.example
                         - Title: Account Executive
                         - Department: Sales
-                        - Employment type: contractor, contract ends 2026-12-31
+                        - Employment type: contractor
+                        - Start date: 2026-10-01
+                        - Termination date: 2026-12-31 (end of contract)
                         - Rehire: no
                         - Work location: on-site, New York office
                         - GitHub username: none
@@ -276,7 +260,6 @@ public final class OnboardingExample {
                             c.that("Okta groups include sales and contractors, not all-staff", okta != null
                                     && okta.groups().containsAll(Set.of("sales", "contractors"))
                                     && !okta.groups().contains("all-staff"));
-                            c.that("Okta account expires 2026-12-31", okta != null && "2026-12-31".equals(okta.expiresOn()));
                             c.that("Salesforce seat assigned", s.salesforceSeats().equals(Set.of(email)));
                             c.that("no GitHub membership", s.githubMembers().isEmpty());
                             c.that("no Slack question sent", s.slackQuestions().isEmpty());
@@ -285,6 +268,7 @@ public final class OnboardingExample {
                             c.that("laptop_pickup ticket names the New York office", pickupAt(s, "new york"));
                             c.that("no laptop shipped", s.shipments().isEmpty());
                             c.that("no benefits enrollment", s.benefitsEnrolled().isEmpty());
+                            terminationDeferred(c, s, "W-1002", LocalDate.of(2026, 12, 31));
                         }),
 
                 new Scenario("rehire", "maria.chen@acme.example", "sam.okafor@acme.example", """
@@ -294,12 +278,13 @@ public final class OnboardingExample {
                         - Title: Site Reliability Engineer
                         - Department: Engineering
                         - Employment type: full-time
+                        - Termination date: none
                         - Rehire: yes (previous Okta account is deactivated)
                         - Work location: on-site, San Francisco office
                         - GitHub username: mchen-sre, team: sre
                         - Production AWS access requested: yes
                         - Manager: sam.okafor@acme.example""",
-                        Set.of("salesforce", "guest", "contractors", "ship", "obtain"),
+                        Set.of("salesforce", "guest", "contractors", "ship", "obtain", "deferred", "terminat"),
                         (s, c) -> {
                             String email = "maria.chen@acme.example";
                             OktaUser okta = s.oktaUser(email);
@@ -320,6 +305,7 @@ public final class OnboardingExample {
                             c.that("laptop_pickup ticket names the San Francisco office", pickupAt(s, "san francisco"));
                             c.that("no laptop shipped", s.shipments().isEmpty());
                             c.that("benefits enrolled", s.benefitsEnrolled().equals(Set.of("W-1003")));
+                            c.that("no deferred actions scheduled", s.deferredActions().isEmpty());
                         }),
 
                 // ---- GitHub username not on file: the agent has to obtain it.
@@ -389,12 +375,13 @@ public final class OnboardingExample {
                 - Title: Software Engineer
                 - Department: Engineering
                 - Employment type: full-time
+                - Termination date: none
                 - Rehire: no
                 - Work location: on-site, Austin office
                 - GitHub username: not on file, team: %s
                 - Production AWS access requested: no
                 - Manager: dana.kim@acme.example""".formatted(fullName, employeeId, email, team),
-                Set.of("salesforce", "guest", "reactivat", "contractors", "ship", "production"),
+                Set.of("salesforce", "guest", "reactivat", "contractors", "ship", "production", "deferred", "terminat"),
                 (s, c) -> {
                     OktaUser okta = s.oktaUser(email);
                     c.that("Okta account created with engineering and all-staff", s.oktaCreated().contains(email)
@@ -403,8 +390,51 @@ public final class OnboardingExample {
                     slackIs(c, s.slackAccount(email), "member", Set.of("#general", "#engineering"));
                     c.that("laptop_pickup ticket names the Austin office", pickupAt(s, "austin"));
                     c.that("benefits enrolled", s.benefitsEnrolled().equals(Set.of(employeeId)));
+                    c.that("no deferred actions scheduled", s.deferredActions().isEmpty());
                     github.accept(s, c);
                 });
+    }
+
+    /**
+     * A termination date is scheduled, not acted on, so this checks what was recorded: exactly one
+     * action 14 days before the termination date and one on it, for this worker; a reminder that
+     * names the manager and the date; and a goal on the termination date that covers every system
+     * onboarding actually set up — judged from the systems' own state, not from the grant record the
+     * scheduler reported to the model.
+     */
+    private static void terminationDeferred(Checks c, OnboardingSystems s, String employeeId, LocalDate terminationDate) {
+        List<DeferredAction> tasks = s.deferredActions();
+        c.that("deferred actions are exactly on " + terminationDate.minusDays(14) + " and " + terminationDate,
+                tasks.size() == 2 && tasks.stream().allMatch(t -> t.subjectKind().equals(OnboardingSystems.WORKER)
+                        && t.subjectId().equals(employeeId))
+                        && tasks.stream().map(DeferredAction::runOn).collect(java.util.stream.Collectors.toSet())
+                                .equals(Set.of(terminationDate.minusDays(14), terminationDate)));
+
+        OnboardingSystems.Worker worker = s.worker(employeeId);
+        String email = worker.email();
+        tasks.stream().filter(t -> t.runOn().equals(terminationDate.minusDays(14))).findFirst().ifPresent(reminder -> {
+            String goal = reminder.goal().toLowerCase(Locale.ROOT);
+            c.that("reminder goal names the manager and the termination date",
+                    goal.contains(worker.manager()) && goal.contains(terminationDate.toString()));
+        });
+
+        List<String> provisioned = new ArrayList<>();
+        if (s.oktaUser(email) != null) provisioned.add("okta");
+        if (s.slackAccount(email) != null) provisioned.add("slack");
+        if (s.salesforceSeats().contains(email)) provisioned.add("salesforce");
+        if (s.githubIdentity(email) != null && s.githubMembers().containsKey(s.githubIdentity(email).username())) {
+            provisioned.add("github");
+        }
+        if (s.awsGrants().stream().anyMatch(g -> g.email().equals(email))) provisioned.add("aws");
+        if (s.tickets().stream().anyMatch(t -> t.forEmail().equals(email) && t.category().equals("laptop_pickup"))
+                || s.shipments().stream().anyMatch(sh -> sh.email().equals(email))) provisioned.add("laptop");
+        tasks.stream().filter(t -> t.runOn().equals(terminationDate)).findFirst().ifPresent(removal -> {
+            String goal = removal.goal().toLowerCase(Locale.ROOT);
+            c.that("termination-day goal covers every system onboarding set up " + provisioned,
+                    provisioned.stream().allMatch(goal::contains));
+            c.that("termination-day goal names the worker and notifies the manager",
+                    goal.contains(email) && goal.contains(worker.manager()));
+        });
     }
 
     private static boolean lookedUpBeforeAsking(OnboardingSystems s) {

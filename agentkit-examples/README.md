@@ -76,6 +76,19 @@ then a GitHub search (a match is only a suggestion the hire must confirm), then 
 hire on Slack. `github_add_member` takes an email and adds only the account on record,
 so a username never passes through the model.
 
+A hire with a termination date gets two deferred actions, scheduled once their access is set
+up: a reminder to their manager 14 days before, and on the day the removal of everything they
+were given. The planner and executor write what each does from the policy and the results so far;
+nothing about them is defined in code. What is fixed is what a deferred action may do when it
+runs: tools declare their effect and whom they act on, and a deferred run gets only the ones that
+revoke, notify or request, for that one worker (`DeferredActionBoundsTest` pins this without a
+model).
+
+The policy and both prompts are files, not code, so they can be changed without a rebuild:
+`src/main/resources/onboarding/{policy,planner-prompt,executor-prompt}.md` are the defaults, and
+`ONBOARDING_POLICY_FILE`, `ONBOARDING_PLANNER_PROMPT_FILE` and `ONBOARDING_EXECUTOR_PROMPT_FILE`
+each replace one.
+
 Seven hires cover the branches. Each is checked on the plan (no conditional wording,
 pruned branches absent) and on the fake systems' final state, including where a missing
 username came from. The program exits non-zero if any check fails.
@@ -84,6 +97,7 @@ username came from. The program exits non-zero if any check fails.
 export OPENROUTER_API_KEY=sk-or-...
 export ONBOARDING_MODEL=anthropic/claude-sonnet-5    # optional; any OpenRouter model id
 export ONBOARDING_SCENARIOS="github-found rehire"    # optional subset
+export ONBOARDING_POLICY_FILE=./my-policy.md         # optional; your own policy
 
 ./mvnw -f agentkit-examples/pom.xml exec:exec \
     -Dexec.mainClass=dev.agentkit.examples.onboarding.OnboardingExample
