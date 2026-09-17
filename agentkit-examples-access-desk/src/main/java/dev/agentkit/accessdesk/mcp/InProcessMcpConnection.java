@@ -1,6 +1,6 @@
 package dev.agentkit.accessdesk.mcp;
 
-import dev.agentkit.accessdesk.tools.ToolCatalog;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.mcp.McpCallResult;
@@ -12,14 +12,14 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * An {@link McpConnection} to a {@link ToolCatalog} in the same process, with no transport between — for
+ * An {@link McpConnection} to a {@link DeclaredTools} in the same process, with no transport between — for
  * tests and evals that want MCP's shapes (and {@code McpTool}'s fencing) without a subprocess.
  */
 public final class InProcessMcpConnection implements McpConnection {
 
-    private final ToolCatalog tools;
+    private final DeclaredTools tools;
 
-    public InProcessMcpConnection(ToolCatalog tools) {
+    public InProcessMcpConnection(DeclaredTools tools) {
         this.tools = tools;
     }
 
@@ -27,7 +27,7 @@ public final class InProcessMcpConnection implements McpConnection {
     public List<McpToolInfo> listTools() {
         return tools.entries().stream()
                 .map(e -> new McpToolInfo(e.tool().name(), e.tool().description(), e.tool().inputSchema(),
-                        Map.of(McpServer.META_EFFECT, e.info().effect().wire())))
+                        Map.of(McpServer.META_EFFECT, e.declaration().effect().wire())))
                 .toList();
     }
 

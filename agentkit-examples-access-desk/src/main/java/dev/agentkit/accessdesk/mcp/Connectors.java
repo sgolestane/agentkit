@@ -2,9 +2,9 @@ package dev.agentkit.accessdesk.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
+import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.mcp.McpConnection;
 import dev.agentkit.mcp.McpTool;
 import dev.agentkit.mcp.McpToolInfo;
@@ -20,7 +20,7 @@ import java.util.Optional;
 
 /**
  * Connects to the MCP servers named in a {@code connectors.json} and turns their tools into a
- * {@link ToolCatalog}, each tool with what it does declared.
+ * {@link DeclaredTools}, each tool with what it does declared.
  *
  * <pre>{@code
  * {
@@ -55,7 +55,7 @@ public final class Connectors {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** The catalog, and each server's connection by name, to use directly and to close when the application stops. */
-    public record Connected(ToolCatalog catalog, Map<String, McpConnection> clients) implements AutoCloseable {
+    public record Connected(DeclaredTools catalog, Map<String, McpConnection> clients) implements AutoCloseable {
         /** The connection to the named server. */
         public McpConnection client(String serverName) {
             McpConnection client = clients.get(serverName);
@@ -86,7 +86,7 @@ public final class Connectors {
         } catch (IOException e) {
             throw new UncheckedIOException("connectors.json is not valid JSON", e);
         }
-        ToolCatalog catalog = new ToolCatalog();
+        DeclaredTools catalog = new DeclaredTools();
         Map<String, McpConnection> clients = new LinkedHashMap<>();
         try {
             for (JsonNode server : root.path("servers")) {
@@ -113,12 +113,12 @@ public final class Connectors {
     }
 
     /** The declaration for one listed tool, from the override, the server's meta, or a trusted read-only hint. */
-    static Optional<ToolInfo> declare(String serverName, McpToolInfo listed, JsonNode override, boolean trustAnnotations) {
+    static Optional<ToolDeclaration> declare(String serverName, McpToolInfo listed, JsonNode override, boolean trustAnnotations) {
         Map<String, Object> meta = listed.meta();
-        Optional<Effect> effect = Effect.parse(text(override, "effect"))
-                .or(() -> Effect.parse(asString(meta.get(McpServer.META_EFFECT))))
+        Optional<ToolEffect> effect = ToolEffect.parse(text(override, "effect"))
+                .or(() -> ToolEffect.parse(asString(meta.get(McpServer.META_EFFECT))))
                 .or(() -> trustAnnotations && Boolean.TRUE.equals(listed.annotations().readOnlyHint())
-                        ? Optional.of(Effect.READ) : Optional.empty());
+                        ? Optional.of(ToolEffect.READ) : Optional.empty());
         if (effect.isEmpty()) {
             return Optional.empty();
         }
@@ -127,7 +127,7 @@ public final class Connectors {
                 .orElse(serverName);
         String subject = Optional.ofNullable(text(override, "subject"))
                 .orElse(asString(meta.get(McpServer.META_SUBJECT)));
-        return Optional.of(new ToolInfo(system, effect.get(), subject));
+        return Optional.of(new ToolDeclaration(system, effect.get(), subject));
     }
 
     private static String substitute(String value, Map<String, String> placeholders) {

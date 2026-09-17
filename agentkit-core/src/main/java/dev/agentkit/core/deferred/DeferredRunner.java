@@ -1,9 +1,11 @@
-package dev.agentkit.accessdesk.deferred;
+package dev.agentkit.core.deferred;
 
-import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.core.agent.AgentResult;
 import dev.agentkit.core.agent.Goal;
 import dev.agentkit.core.reliability.ToolGate;
+import dev.agentkit.core.tool.DeclaredTools;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -12,8 +14,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Runs deferred actions when their time comes.
@@ -28,7 +28,7 @@ public final class DeferredRunner implements AutoCloseable {
     /** Runs one deferred action's goal with the tools and gate it is allowed. */
     @FunctionalInterface
     public interface ActionAgent {
-        AgentResult run(Goal goal, ToolCatalog tools, ToolGate gate);
+        AgentResult run(Goal goal, DeclaredTools tools, ToolGate gate);
     }
 
     /** Something to do on every sweep besides running actions, such as a backstop. */
@@ -41,7 +41,7 @@ public final class DeferredRunner implements AutoCloseable {
 
     private final DeferredActionStore store;
     private final SubjectResolver resolver;
-    private final ToolCatalog tools;
+    private final DeclaredTools tools;
     private final ActionAgent agent;
     private final Supplier<Instant> clock;
     private final SweepHook hook;
@@ -51,7 +51,7 @@ public final class DeferredRunner implements AutoCloseable {
      * @param tools every tool a deferred action could be given; each run gets only those
      *              {@link DeferredActions#restrict} allows
      */
-    public DeferredRunner(DeferredActionStore store, SubjectResolver resolver, ToolCatalog tools, ActionAgent agent,
+    public DeferredRunner(DeferredActionStore store, SubjectResolver resolver, DeclaredTools tools, ActionAgent agent,
                           Supplier<Instant> clock, SweepHook hook) {
         this.store = Objects.requireNonNull(store, "store");
         this.resolver = Objects.requireNonNull(resolver, "resolver");
@@ -77,7 +77,7 @@ public final class DeferredRunner implements AutoCloseable {
                             + " no longer exists, so nothing was done.", clock.get());
                     continue;
                 }
-                ToolCatalog allowed = DeferredActions.restrict(tools);
+                DeclaredTools allowed = DeferredActions.restrict(tools);
                 AgentResult result = agent.run(DeferredActions.goalFor(action, subject.get(), now), allowed,
                         DeferredActions.gateFor(action, subject.get(), allowed));
                 store.finish(action.id(), result.isSuccess(), result.output(), clock.get());

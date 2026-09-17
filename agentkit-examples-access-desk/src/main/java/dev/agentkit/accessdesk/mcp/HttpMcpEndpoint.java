@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
+import dev.agentkit.core.tool.DeclaredTools;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
@@ -36,12 +36,12 @@ public final class HttpMcpEndpoint implements HttpHandler {
     static final String SESSION_HEADER = "Mcp-Session-Id";
 
     private final McpServer server;
-    private final Function<String, Optional<ToolCatalog>> toolsFor;
+    private final Function<String, Optional<DeclaredTools>> toolsFor;
 
     /**
      * @param toolsFor the catalog to serve to a caller, or empty if the caller is not known
      */
-    public HttpMcpEndpoint(McpServer server, Function<String, Optional<ToolCatalog>> toolsFor) {
+    public HttpMcpEndpoint(McpServer server, Function<String, Optional<DeclaredTools>> toolsFor) {
         this.server = Objects.requireNonNull(server, "server");
         this.toolsFor = Objects.requireNonNull(toolsFor, "toolsFor");
     }
@@ -66,7 +66,7 @@ public final class HttpMcpEndpoint implements HttpHandler {
                 return;
             }
             String user = exchange.getRequestHeaders().getFirst(USER_HEADER);
-            Optional<ToolCatalog> tools = user == null ? Optional.empty() : toolsFor.apply(user.strip());
+            Optional<DeclaredTools> tools = user == null ? Optional.empty() : toolsFor.apply(user.strip());
             if (tools.isEmpty()) {
                 send(exchange, 401, McpServer.error(message == null ? null : message.get("id"), -32001,
                         "Unknown caller: send the " + USER_HEADER + " header with a known user's email"));

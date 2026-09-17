@@ -2,7 +2,7 @@ package dev.agentkit.accessdesk.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
+import dev.agentkit.core.tool.DeclaredTools;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,7 +24,7 @@ public final class StdioMcpServer {
     }
 
     /** Reads messages until {@code in} ends, answering each on {@code out}. */
-    public static void serve(McpServer server, ToolCatalog tools, InputStream in, OutputStream out) {
+    public static void serve(McpServer server, DeclaredTools tools, InputStream in, OutputStream out) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
              Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8)) {
             String line;

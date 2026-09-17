@@ -1,12 +1,12 @@
 package dev.agentkit.accessdesk.desk;
 
 import dev.agentkit.accessdesk.desk.CompanyClient.Person;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.core.agent.AgentConfig;
 import dev.agentkit.core.reliability.Approver;
 import dev.agentkit.core.reliability.ToolGate;
 import dev.agentkit.core.reliability.ToolGates;
+import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.ToolEffect;
 import java.time.Instant;
 import java.util.Set;
 
@@ -30,9 +30,9 @@ public final class DeskAgent {
      * company systems' grants and revocations are left out, so access only ever changes through the desk's
      * tools and their rules.
      */
-    public static ToolCatalog conversationTools(DeskTools desk, ToolCatalog company) {
-        return new ToolCatalog().addAll(desk.catalog())
-                .addAll(company.where(info -> info.effect() == Effect.READ || info.effect() == Effect.NOTIFY));
+    public static DeclaredTools conversationTools(DeskTools desk, DeclaredTools company) {
+        return new DeclaredTools().addAll(desk.catalog())
+                .addAll(company.where(info -> info.effect() == ToolEffect.READ || info.effect() == ToolEffect.NOTIFY));
     }
 
     /** The system prompt for a turn: the desk's prompt, the customer's policy, who is asking, and the time. */

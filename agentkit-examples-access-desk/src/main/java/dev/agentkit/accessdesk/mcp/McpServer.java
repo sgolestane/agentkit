@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.SideEffects;
 import dev.agentkit.core.tool.Tool;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import java.util.List;
@@ -19,7 +19,7 @@ import java.util.UUID;
 
 /**
  * The transport-independent half of an MCP server: one JSON-RPC message in, at most one out, over a
- * {@link ToolCatalog}.
+ * {@link DeclaredTools}.
  *
  * <p>Implements the tool subset of the protocol: {@code initialize}, {@code notifications/initialized},
  * {@code ping}, {@code tools/list} and {@code tools/call}. Anything else is answered with JSON-RPC's
@@ -28,7 +28,7 @@ import java.util.UUID;
  * <h2>How a tool describes itself</h2>
  *
  * <p>Each listed tool carries the standard MCP annotations, derived from what it declares:
- * {@code readOnlyHint} for {@link Effect#READ}, {@code destructiveHint} for {@link Effect#REVOKE},
+ * {@code readOnlyHint} for {@link ToolEffect#READ}, {@code destructiveHint} for {@link ToolEffect#REVOKE},
  * {@code idempotentHint} from its {@link SideEffects}. The annotations cannot say <em>grant</em> or
  * <em>revoke</em>, or which argument names the person, so the full declaration also travels in
  * {@code _meta} under {@link #META_EFFECT}, {@link #META_SYSTEM} and {@link #META_SUBJECT}. A client
@@ -66,7 +66,7 @@ public final class McpServer {
      *
      * @return the response, or empty for a notification (which gets none)
      */
-    public Optional<ObjectNode> handle(JsonNode message, ToolCatalog tools) {
+    public Optional<ObjectNode> handle(JsonNode message, DeclaredTools tools) {
         Objects.requireNonNull(tools, "tools");
         if (message == null || !message.isObject() || !message.hasNonNull("method")) {
             return Optional.of(error(message == null ? null : message.get("id"), -32600, "Invalid request"));
@@ -105,19 +105,19 @@ public final class McpServer {
         return result;
     }
 
-    private ObjectNode listTools(ToolCatalog tools) {
+    private ObjectNode listTools(DeclaredTools tools) {
         ObjectNode result = MAPPER.createObjectNode();
         ArrayNode list = result.putArray("tools");
-        for (ToolCatalog.Entry entry : tools.entries()) {
+        for (DeclaredTools.Entry entry : tools.entries()) {
             Tool tool = entry.tool();
-            ToolInfo info = entry.info();
+            ToolDeclaration info = entry.declaration();
             ObjectNode listed = list.addObject();
             listed.put("name", tool.name());
             listed.put("description", tool.description());
             listed.set("inputSchema", MAPPER.valueToTree(tool.inputSchema()));
             ObjectNode annotations = listed.putObject("annotations");
-            annotations.put("readOnlyHint", info.effect() == Effect.READ);
-            annotations.put("destructiveHint", info.effect() == Effect.REVOKE);
+            annotations.put("readOnlyHint", info.effect() == ToolEffect.READ);
+            annotations.put("destructiveHint", info.effect() == ToolEffect.REVOKE);
             annotations.put("idempotentHint", tool.sideEffects() == SideEffects.NONE
                     || tool.sideEffects() == SideEffects.IDEMPOTENT);
             annotations.put("openWorldHint", false);
@@ -132,9 +132,9 @@ public final class McpServer {
     }
 
     @SuppressWarnings("unchecked")
-    private ObjectNode callTool(JsonNode id, JsonNode params, ToolCatalog tools) {
+    private ObjectNode callTool(JsonNode id, JsonNode params, DeclaredTools tools) {
         String toolName = params.path("name").asText("");
-        Optional<ToolCatalog.Entry> entry = tools.entry(toolName);
+        Optional<DeclaredTools.Entry> entry = tools.entry(toolName);
         if (entry.isEmpty()) {
             return error(id, -32602, "Unknown tool: " + toolName);
         }

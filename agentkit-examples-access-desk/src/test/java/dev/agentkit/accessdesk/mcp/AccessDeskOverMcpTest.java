@@ -4,14 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.agentkit.accessdesk.deferred.DeferredActionScheduler;
-import dev.agentkit.accessdesk.deferred.DeferredActionStore;
 import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.CompanyClient;
 import dev.agentkit.accessdesk.desk.DeskAgent;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.accessdesk.systems.CompanySystems;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.accessdesk.web.DemoClock;
 import dev.agentkit.accessdesk.web.DeskServer;
 import dev.agentkit.accessdesk.web.McpBridge;
@@ -19,6 +16,8 @@ import dev.agentkit.chat.ChatEvents;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.store.InMemoryChatStore;
 import dev.agentkit.core.agent.AgentConfig;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.llm.LlmRequest;
 import dev.agentkit.core.llm.LlmResponse;
@@ -28,6 +27,10 @@ import dev.agentkit.core.message.Message;
 import dev.agentkit.core.message.ProposedCall;
 import dev.agentkit.core.message.Role;
 import dev.agentkit.core.message.TextBlock;
+import dev.agentkit.core.tool.DeclaredTools;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -37,9 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 
 /**
  * Access Desk as an MCP server, end to end without a real model: an MCP client posts {@code tools/call} for
@@ -55,7 +55,7 @@ class AccessDeskOverMcpTest {
     private final CompanyClient company = new CompanyClient(new InProcessMcpConnection(systems.catalog()));
     private final AccessLedger ledger = AccessLedger.open(null);
     private final DemoClock clock = new DemoClock();
-    private final DeferredActionStore store = DeferredActionStore.open(null);
+    private final DeferredActionStore store = DeferredActionStore.inMemory();
     private final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
             clock, DeskTools::holdings);
     private ChatRuntime runtime;
@@ -73,7 +73,7 @@ class AccessDeskOverMcpTest {
                 LlmStopReason.END_TURN, TokenUsage.ZERO);
         runtime = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(), session -> {
             DeskTools desk = new DeskTools(session.tenantId(), ledger, company, scheduler, clock);
-            ToolCatalog tools = DeskAgent.conversationTools(desk, systems.catalog());
+            DeclaredTools tools = DeskAgent.conversationTools(desk, systems.catalog());
             return session.agent(scripted, tools.registry(), AgentConfig.builder("scripted").systemPrompt("desk").build())
                     .toolGate(DeskAgent.gate(session.approver()))
                     .build();

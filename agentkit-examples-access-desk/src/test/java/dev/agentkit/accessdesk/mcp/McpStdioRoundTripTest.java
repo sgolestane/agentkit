@@ -3,22 +3,22 @@ package dev.agentkit.accessdesk.mcp;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.agentkit.accessdesk.systems.CompanySystemsServer;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolInfo;
 import dev.agentkit.core.tool.SideEffects;
 import dev.agentkit.core.tool.Tool;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.mcp.McpToolAnnotations;
 import dev.agentkit.mcp.McpToolInfo;
 import dev.agentkit.mcp.StdioMcpConnection;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The company systems MCP server, launched as a real subprocess and reached through {@code agentkit-mcp}'s
@@ -60,10 +60,10 @@ class McpStdioRoundTripTest {
                   "tools": {"send_message": {"system": "slack"}}}]}
                 """.formatted(CompanySystemsServer.class.getName());
         try (Connectors.Connected connected = Connectors.connect(json, placeholders(dataDir))) {
-            assertThat(connected.catalog().info("grant_access")).contains(new ToolInfo("access", Effect.GRANT, "email"));
-            assertThat(connected.catalog().info("list_resources")).contains(new ToolInfo("catalog", Effect.READ, null));
+            assertThat(connected.catalog().declaration("grant_access")).contains(new ToolDeclaration("access", ToolEffect.GRANT, "email"));
+            assertThat(connected.catalog().declaration("list_resources")).contains(new ToolDeclaration("catalog", ToolEffect.READ, null));
             // The operator's override wins over what the server says.
-            assertThat(connected.catalog().info("send_message")).contains(new ToolInfo("slack", Effect.NOTIFY, "to_email"));
+            assertThat(connected.catalog().declaration("send_message")).contains(new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"));
 
             Tool list = connected.catalog().entry("list_resources").orElseThrow().tool();
             Tool revoke = connected.catalog().entry("revoke_access").orElseThrow().tool();
@@ -106,7 +106,7 @@ class McpStdioRoundTripTest {
                 McpToolAnnotations.from(Map.of("readOnlyHint", true)));
 
         assertThat(Connectors.declare("other", undeclared, null, true)).isEmpty();
-        assertThat(Connectors.declare("other", hintedRead, null, true)).contains(new ToolInfo("other", Effect.READ, null));
+        assertThat(Connectors.declare("other", hintedRead, null, true)).contains(new ToolDeclaration("other", ToolEffect.READ, null));
         assertThat(Connectors.declare("other", hintedRead, null, false)).isEmpty();
     }
 
@@ -118,7 +118,7 @@ class McpStdioRoundTripTest {
                 """.formatted(CompanySystemsServer.class.getName());
         try (Connectors.Connected connected = Connectors.connect(json, placeholders(dataDir))) {
             // Declared through the server's own _meta, but its annotations are not acted on.
-            assertThat(connected.catalog().info("list_resources")).isPresent();
+            assertThat(connected.catalog().declaration("list_resources")).isPresent();
             assertThat(connected.catalog().entries()).allSatisfy(e ->
                     assertThat(e.tool().sideEffects()).isEqualTo(SideEffects.UNKNOWN));
         }

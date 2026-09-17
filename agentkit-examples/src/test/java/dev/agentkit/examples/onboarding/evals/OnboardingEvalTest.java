@@ -17,7 +17,7 @@ import dev.agentkit.eval.CheckOutcome;
 import dev.agentkit.eval.Checks;
 import dev.agentkit.eval.EvalRun;
 import dev.agentkit.eval.ToolCall;
-import dev.agentkit.examples.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredAction;
 import dev.agentkit.examples.onboarding.OnboardingApp;
 import dev.agentkit.examples.onboarding.OnboardingConfig;
 import dev.agentkit.examples.onboarding.OnboardingFixtures;
@@ -310,8 +310,8 @@ class OnboardingEvalTest {
                         s::deferredActions, actions -> actions.size() == 2
                                 && actions.stream().allMatch(a -> a.subjectKind().equals(OnboardingSystems.WORKER)
                                         && a.subjectId().equals(employeeId))
-                                && actions.stream().map(DeferredAction::runOn).collect(Collectors.toSet())
-                                        .equals(Set.of(reminderDate, terminationDate))),
+                                && actions.stream().map(DeferredAction::runAt).collect(Collectors.toSet())
+                                        .equals(Set.of(startOf(reminderDate), startOf(terminationDate)))),
                 named("reminder goal names the manager and the termination date", () -> goalOn(s, reminderDate)
                         .map(goal -> goal.contains(worker.manager()) && goal.contains(terminationDate.toString()))
                         .orElse(false)),
@@ -328,8 +328,12 @@ class OnboardingEvalTest {
 
     // ---------------------------------------------------------------- helpers
 
+    private static java.time.Instant startOf(LocalDate date) {
+        return date.atStartOfDay().toInstant(java.time.ZoneOffset.UTC);
+    }
+
     private static java.util.Optional<String> goalOn(OnboardingSystems s, LocalDate date) {
-        return s.deferredActions().stream().filter(a -> a.runOn().equals(date)).findFirst()
+        return s.deferredActions().stream().filter(a -> a.runAt().equals(startOf(date))).findFirst()
                 .map(a -> a.goal().toLowerCase(Locale.ROOT));
     }
 

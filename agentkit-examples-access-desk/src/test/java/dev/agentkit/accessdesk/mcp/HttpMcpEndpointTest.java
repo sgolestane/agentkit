@@ -6,16 +6,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import dev.agentkit.accessdesk.systems.CompanySystems;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
+import dev.agentkit.core.tool.DeclaredTools;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Optional;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 
 /** The streamable HTTP transport, spoken to the way an MCP client such as Claude Code speaks to it. */
 class HttpMcpEndpointTest {
@@ -29,7 +29,7 @@ class HttpMcpEndpointTest {
 
     @BeforeEach
     void start() throws Exception {
-        ToolCatalog catalog = CompanySystems.open(null).catalog();
+        DeclaredTools catalog = CompanySystems.open(null).catalog();
         McpServer mcp = new McpServer("access-desk", "0.1.0", "Ask for access.");
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", new HttpMcpEndpoint(mcp, user -> PRIYA.equals(user)

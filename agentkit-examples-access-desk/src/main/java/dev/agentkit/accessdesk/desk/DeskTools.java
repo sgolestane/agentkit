@@ -1,18 +1,18 @@
 package dev.agentkit.accessdesk.desk;
 
-import dev.agentkit.accessdesk.deferred.DeferredActionScheduler;
-import dev.agentkit.accessdesk.deferred.SubjectRecord;
-import dev.agentkit.accessdesk.deferred.SubjectResolver;
 import dev.agentkit.accessdesk.desk.AccessLedger.AccessRequest;
 import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
 import dev.agentkit.accessdesk.desk.CompanyClient.Person;
 import dev.agentkit.accessdesk.desk.CompanyClient.Resource;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.SubjectRecord;
+import dev.agentkit.core.deferred.SubjectResolver;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.FunctionTool;
 import dev.agentkit.core.tool.Provenance;
 import dev.agentkit.core.tool.SideEffects;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.core.tool.View;
@@ -126,8 +126,8 @@ public final class DeskTools {
     }
 
     /** Every desk tool, with its declaration. */
-    public ToolCatalog catalog() {
-        ToolCatalog catalog = new ToolCatalog();
+    public DeclaredTools catalog() {
+        DeclaredTools catalog = new DeclaredTools();
         catalog.add(tool("grant_low_risk_access",
                         "Grant the person you are talking to access to a LOW-sensitivity resource right away, for a number "
                                 + "of hours. Refused for anything that is not low sensitivity.",
@@ -135,7 +135,7 @@ public final class DeskTools {
                                 "hours", integer("How many hours the access lasts"),
                                 "justification", str("Why the person needs it")),
                         List.of("resource_id", "level", "hours", "justification"), SideEffects.EXTERNAL, this::grantLowRisk),
-                new ToolInfo("access-desk", Effect.GRANT, null));
+                new ToolDeclaration("access-desk", ToolEffect.GRANT, null));
         catalog.add(tool("submit_access_request",
                         "Submit a request for access that needs approval, naming the approver. The approver must be the "
                                 + "resource's owner or the requester's manager, and cannot be the requester. The approver is "
@@ -146,10 +146,10 @@ public final class DeskTools {
                                 "approver_email", str("Work email of who must approve")),
                         List.of("resource_id", "level", "hours", "justification", "approver_email"), SideEffects.EXTERNAL,
                         this::submit),
-                new ToolInfo("access-desk", Effect.REQUEST, null));
+                new ToolDeclaration("access-desk", ToolEffect.REQUEST, null));
         catalog.add(tool("pending_approvals", "List the access requests waiting for the person you are talking to to decide.",
                         props(), List.of(), SideEffects.NONE, inv -> pendingApprovals()),
-                new ToolInfo("access-desk", Effect.READ, null));
+                new ToolDeclaration("access-desk", ToolEffect.READ, null));
         catalog.add(tool("decide_request",
                         "Approve or deny an access request waiting for the person you are talking to. When approving you may "
                                 + "give fewer hours than were asked for, never more. Approving grants the access.",
@@ -158,23 +158,23 @@ public final class DeskTools {
                                 "hours", integer("Hours to approve; leave out to approve what was asked"),
                                 "note", str("Optional note for the requester")),
                         List.of("request_id", "decision"), SideEffects.EXTERNAL, this::decide),
-                new ToolInfo("access-desk", Effect.GRANT, null));
+                new ToolDeclaration("access-desk", ToolEffect.GRANT, null));
         catalog.add(tool("my_access", "List the access the person you are talking to holds through the desk, and when each ends.",
                         props(), List.of(), SideEffects.NONE, inv -> myAccess()),
-                new ToolInfo("access-desk", Effect.READ, null));
+                new ToolDeclaration("access-desk", ToolEffect.READ, null));
         catalog.add(tool("my_requests", "List the access requests the person you are talking to has made, and where each stands.",
                         props(), List.of(), SideEffects.NONE, inv -> myRequests()),
-                new ToolInfo("access-desk", Effect.READ, null));
+                new ToolDeclaration("access-desk", ToolEffect.READ, null));
         catalog.add(tool("revoke_grant",
                         "Revoke a grant now. Allowed for the grant's holder, its approver, the resource's owner, and the desk.",
                         props("grant_id", str("Grant id, e.g. GR-1001"), "reason", str("Why it is being revoked")),
                         List.of("grant_id", "reason"), SideEffects.IDEMPOTENT, this::revoke),
-                new ToolInfo("access-desk", Effect.REVOKE, "grant_id"));
+                new ToolDeclaration("access-desk", ToolEffect.REVOKE, "grant_id"));
         catalog.add(tool("audit_log", "Show recent access-desk activity involving the person you are talking to.",
                         props(), List.of(), SideEffects.NONE, inv -> auditLog()),
-                new ToolInfo("access-desk", Effect.READ, null));
+                new ToolDeclaration("access-desk", ToolEffect.READ, null));
         if (scheduler != null) {
-            catalog.add(scheduler.tool(me), new ToolInfo("scheduler", Effect.SCHEDULE, "subject_id"));
+            catalog.add(scheduler.tool(me), new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"));
         }
         return catalog;
     }

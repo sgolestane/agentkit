@@ -2,21 +2,21 @@ package dev.agentkit.accessdesk.desk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.agentkit.accessdesk.deferred.DeferredAction;
-import dev.agentkit.accessdesk.deferred.DeferredActionScheduler;
-import dev.agentkit.accessdesk.deferred.DeferredActionStore;
-import dev.agentkit.accessdesk.deferred.SubjectRecord;
 import dev.agentkit.accessdesk.mcp.InProcessMcpConnection;
 import dev.agentkit.accessdesk.systems.CompanySystems;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
+import dev.agentkit.core.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
+import dev.agentkit.core.deferred.SubjectRecord;
+import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
+import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.Test;
 
 /**
  * The rules the desk enforces in code, whatever a model concludes from the policy. No model here: each tool
@@ -32,16 +32,16 @@ class DeskRulesTest {
     private final CompanySystems systems = CompanySystems.open(null);
     private final CompanyClient company = new CompanyClient(new InProcessMcpConnection(systems.catalog()));
     private final AccessLedger ledger = AccessLedger.open(null);
-    private final DeferredActionStore store = DeferredActionStore.open(null);
+    private final DeferredActionStore store = DeferredActionStore.inMemory();
     private final AtomicReference<Instant> clock = new AtomicReference<>(NOW);
     private final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
             clock::get, DeskTools::holdings);
 
-    private ToolCatalog as(String who) {
+    private DeclaredTools as(String who) {
         return new DeskTools(who, ledger, company, scheduler, clock::get).catalog();
     }
 
-    private static ToolResult call(ToolCatalog tools, String name, Object... args) {
+    private static ToolResult call(DeclaredTools tools, String name, Object... args) {
         Map<String, Object> arguments = new HashMap<>();
         for (int i = 0; i < args.length; i += 2) {
             arguments.put((String) args[i], args[i + 1]);
@@ -166,13 +166,13 @@ class DeskRulesTest {
 
     @Test
     void conversationsNeverGetTheCompanySystemsRawGrantsOrRevocations() {
-        ToolCatalog tools = DeskAgent.conversationTools(new DeskTools(PRIYA, ledger, company, scheduler, clock::get),
+        DeclaredTools tools = DeskAgent.conversationTools(new DeskTools(PRIYA, ledger, company, scheduler, clock::get),
                 systems.catalog());
 
-        assertThat(tools.info("grant_access")).isEmpty();
-        assertThat(tools.info("revoke_access")).isEmpty();
-        assertThat(tools.info("list_resources")).hasValueSatisfying(i -> assertThat(i.effect()).isEqualTo(Effect.READ));
-        assertThat(tools.info("send_message")).hasValueSatisfying(i -> assertThat(i.effect()).isEqualTo(Effect.NOTIFY));
-        assertThat(tools.info("decide_request")).isPresent();
+        assertThat(tools.declaration("grant_access")).isEmpty();
+        assertThat(tools.declaration("revoke_access")).isEmpty();
+        assertThat(tools.declaration("list_resources")).hasValueSatisfying(i -> assertThat(i.effect()).isEqualTo(ToolEffect.READ));
+        assertThat(tools.declaration("send_message")).hasValueSatisfying(i -> assertThat(i.effect()).isEqualTo(ToolEffect.NOTIFY));
+        assertThat(tools.declaration("decide_request")).isPresent();
     }
 }

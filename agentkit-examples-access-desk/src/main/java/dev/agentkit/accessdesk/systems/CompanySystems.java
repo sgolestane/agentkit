@@ -4,12 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.FunctionTool;
 import dev.agentkit.core.tool.Provenance;
 import dev.agentkit.core.tool.SideEffects;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import java.io.IOException;
@@ -101,13 +101,13 @@ public final class CompanySystems {
     }
 
     /** Every tool, with its declaration. */
-    public ToolCatalog catalog() {
-        ToolCatalog catalog = new ToolCatalog();
+    public DeclaredTools catalog() {
+        DeclaredTools catalog = new DeclaredTools();
         catalog.add(tool("directory_lookup", "Look a person up in the company directory by work email: "
                         + "name, title, department and manager.",
                 Map.of("email", str("Work email")), List.of("email"), SideEffects.NONE,
                 inv -> read(people.get(lower(inv.stringArgument("email"))), "No person with that email")),
-                new ToolInfo("directory", Effect.READ, "email"));
+                new ToolDeclaration("directory", ToolEffect.READ, "email"));
         catalog.add(tool("list_resources", "List the resources people can be given access to, optionally "
                         + "filtered by a search term: id, name, system, access levels, sensitivity (low, high, "
                         + "critical), owner and the most hours access may last.",
@@ -118,13 +118,13 @@ public final class CompanySystems {
                             .filter(r -> query.isEmpty() || (r.id() + " " + r.name() + " " + r.system())
                                     .toLowerCase(Locale.ROOT).contains(query))
                             .toList());
-                }), new ToolInfo("catalog", Effect.READ, null));
+                }), new ToolDeclaration("catalog", ToolEffect.READ, null));
         catalog.add(tool("list_access", "List the access a person currently has.",
                 Map.of("email", str("Work email")), List.of("email"), SideEffects.NONE,
                 inv -> {
                     String email = lower(inv.stringArgument("email"));
                     return json(access.stream().filter(a -> a.email().equals(email)).toList());
-                }), new ToolInfo("access", Effect.READ, "email"));
+                }), new ToolDeclaration("access", ToolEffect.READ, "email"));
         catalog.add(tool("list_messages", "List the direct messages a person has received, newest first.",
                 Map.of("email", str("Work email")), List.of("email"), SideEffects.NONE,
                 inv -> {
@@ -132,13 +132,13 @@ public final class CompanySystems {
                     List<Message> theirs = new ArrayList<>(messages.stream().filter(m -> m.to().equals(email)).toList());
                     java.util.Collections.reverse(theirs);
                     return json(theirs);
-                }), new ToolInfo("chat", Effect.READ, "email"));
+                }), new ToolDeclaration("chat", ToolEffect.READ, "email"));
         catalog.add(tool("grant_access", "Give a person access to a resource at a level.",
                 accessArgs(), List.of("resource_id", "email", "level"), SideEffects.IDEMPOTENT,
-                inv -> change(inv, true)), new ToolInfo("access", Effect.GRANT, "email"));
+                inv -> change(inv, true)), new ToolDeclaration("access", ToolEffect.GRANT, "email"));
         catalog.add(tool("revoke_access", "Take a person's access to a resource at a level away.",
                 accessArgs(), List.of("resource_id", "email", "level"), SideEffects.IDEMPOTENT,
-                inv -> change(inv, false)), new ToolInfo("access", Effect.REVOKE, "email"));
+                inv -> change(inv, false)), new ToolDeclaration("access", ToolEffect.REVOKE, "email"));
         catalog.add(tool("send_message", "Send a person a direct message.",
                 Map.of("to_email", str("Recipient's work email"), "text", str("Message text")),
                 List.of("to_email", "text"), SideEffects.EXTERNAL, inv -> {
@@ -153,7 +153,7 @@ public final class CompanySystems {
                     messages.add(new Message(to, text.strip(), Instant.now()));
                     save();
                     return ToolResult.ok("Message sent to " + to);
-                }), new ToolInfo("chat", Effect.NOTIFY, "to_email"));
+                }), new ToolDeclaration("chat", ToolEffect.NOTIFY, "to_email"));
         return catalog;
     }
 

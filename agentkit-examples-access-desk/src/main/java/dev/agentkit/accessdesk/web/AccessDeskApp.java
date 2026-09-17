@@ -1,24 +1,24 @@
 package dev.agentkit.accessdesk.web;
 
-import dev.agentkit.accessdesk.deferred.DeferredActionScheduler;
-import dev.agentkit.accessdesk.deferred.DeferredActionStore;
-import dev.agentkit.accessdesk.deferred.DeferredRunner;
 import dev.agentkit.accessdesk.desk.AccessLedger;
-import dev.agentkit.accessdesk.desk.CompanyClient;
 import dev.agentkit.accessdesk.desk.CompanyClient.Person;
+import dev.agentkit.accessdesk.desk.CompanyClient;
 import dev.agentkit.accessdesk.desk.DeskAgent;
 import dev.agentkit.accessdesk.desk.DeskConfig;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.accessdesk.desk.ExpiryBackstop;
 import dev.agentkit.accessdesk.mcp.Connectors;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.chat.ChatEvents;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.store.FileChatStore;
 import dev.agentkit.chat.web.ChatServer;
 import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.agent.AgentConfig;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
+import dev.agentkit.core.deferred.DeferredRunner;
 import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,9 +81,9 @@ public final class AccessDeskApp {
                 "classpath", System.getProperty("java.class.path"),
                 "dataDir", dataDir.toString()));
         CompanyClient company = new CompanyClient(connected.client("company"));
-        ToolCatalog companyTools = connected.catalog();
+        DeclaredTools companyTools = connected.catalog();
         AccessLedger ledger = AccessLedger.open(dataDir.resolve("ledger.json"));
-        DeferredActionStore store = DeferredActionStore.open(dataDir.resolve("deferred.json"));
+        DeferredActionStore store = DeferredActionStore.inDirectory(dataDir.resolve("deferred"));
         DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store, clock,
                 DeskTools::holdings);
 

@@ -2,18 +2,14 @@ package dev.agentkit.accessdesk.evals;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.agentkit.accessdesk.deferred.DeferredAction;
-import dev.agentkit.accessdesk.deferred.DeferredActionScheduler;
-import dev.agentkit.accessdesk.deferred.DeferredActionStore;
-import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.AccessLedger.AccessRequest;
 import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
+import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.CompanyClient;
 import dev.agentkit.accessdesk.desk.DeskConfig;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.accessdesk.mcp.InProcessMcpConnection;
 import dev.agentkit.accessdesk.systems.CompanySystems;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
 import dev.agentkit.accessdesk.web.DeskChat;
 import dev.agentkit.chat.ChatEvents;
 import dev.agentkit.chat.ChatRuntime;
@@ -22,18 +18,25 @@ import dev.agentkit.chat.Step;
 import dev.agentkit.chat.Turn;
 import dev.agentkit.chat.store.InMemoryChatStore;
 import dev.agentkit.core.agent.AgentResult;
-import dev.agentkit.eval.EvalRun;
 import dev.agentkit.core.agent.Goal;
+import dev.agentkit.core.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.reliability.ApprovalDecision;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.eval.CaseReport;
 import dev.agentkit.eval.Check;
 import dev.agentkit.eval.CheckOutcome;
 import dev.agentkit.eval.Checks;
+import dev.agentkit.eval.EvalRun;
 import dev.agentkit.mcp.McpTool;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -44,16 +47,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
 
 /**
  * Evaluates Access Desk's conversational agent against a real model: one conversation turn per case, scored on
@@ -87,7 +87,7 @@ class AccessDeskEvalTest {
         final CompanySystems systems = CompanySystems.open(null);
         final CompanyClient company = new CompanyClient(new InProcessMcpConnection(systems.catalog()));
         final AccessLedger ledger = AccessLedger.open(null);
-        final DeferredActionStore store = DeferredActionStore.open(null);
+        final DeferredActionStore store = DeferredActionStore.inMemory();
         final DeferredActionScheduler scheduler = new DeferredActionScheduler(DeskTools.grantSubjects(ledger), store,
                 () -> NOW, DeskTools::holdings);
         final List<String> questions = new CopyOnWriteArrayList<>();
@@ -330,11 +330,11 @@ class AccessDeskEvalTest {
     // ---------------------------------------------------------------- helpers
 
     /** The company systems' tools as the app sees them: {@code McpTool}s, fenced, with their declarations. */
-    private static ToolCatalog mcpTools(CompanySystems systems) {
-        ToolCatalog declared = systems.catalog();
+    private static DeclaredTools mcpTools(CompanySystems systems) {
+        DeclaredTools declared = systems.catalog();
         InProcessMcpConnection connection = new InProcessMcpConnection(declared);
-        ToolCatalog catalog = new ToolCatalog();
-        connection.listTools().forEach(info -> catalog.add(new McpTool(connection, info), declared.info(info.name()).orElseThrow()));
+        DeclaredTools catalog = new DeclaredTools();
+        connection.listTools().forEach(info -> catalog.add(new McpTool(connection, info), declared.declaration(info.name()).orElseThrow()));
         return catalog;
     }
 

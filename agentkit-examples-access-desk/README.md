@@ -77,15 +77,17 @@ request takes, what a justification must say, and which reminders to schedule. T
 - The company systems' raw grant and revoke tools are never given to a model.
 
 **Tools describe themselves.** Every tool declares its effect (read, grant, revoke, notify,
-request or schedule) and which argument names who it acts on (`tools/ToolInfo`). The company
+request or schedule) and which argument names who it acts on (core's `ToolDeclaration`, collected
+in a `DeclaredTools`). The company
 systems' MCP server sends the standard annotations, plus these declarations in `_meta`.
 `connectors.json` can declare tools for servers that don't send them. A tool nobody declares is
 left out.
 
-**Deferred actions are written by the model and limited by the product** (`deferred/`).
-`schedule_deferred_action` stores a goal about a subject (here, a grant) and checks its time, which
-can be exact or relative to a field such as `expires_at`. When the time comes, `DeferredRunner`
-runs the goal:
+**Deferred actions are written by the model and limited by the product** (core's
+`dev.agentkit.core.deferred`). `schedule_deferred_action` stores a goal about a subject (here, a
+grant) and checks its time, which can be exact or relative to a field such as `expires_at`. When the
+time comes, `DeferredRunner` runs the goal. The desk supplies only the subject (the `AccessLedger`, as a
+`SubjectResolver`), the store's directory and the prompt; the bounds are the framework's:
 
 - **Goal:** fenced as a procedure under the product's own objective.
 - **Tools:** only those that read, revoke, notify or request.
@@ -104,7 +106,7 @@ subset of the protocol, with transports for stdio (`StdioMcpServer`) and streama
 ## Tests and evals
 
 ```bash
-./mvnw -pl agentkit-examples-access-desk test          # 20 offline tests, no model
+./mvnw -pl agentkit-examples-access-desk test          # 21 offline tests, no model
 ```
 
 The offline tests cover:

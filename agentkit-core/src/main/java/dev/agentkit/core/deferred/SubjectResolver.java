@@ -1,4 +1,4 @@
-package dev.agentkit.accessdesk.deferred;
+package dev.agentkit.core.deferred;
 
 import java.util.Optional;
 import java.util.Set;

@@ -763,6 +763,51 @@ If nobody answers before the deadline, the run ends with `AWAITING_APPROVAL` and
 `AgentRunResult.awaiting()` carries what expired. To wait indefinitely, pass
 `DurableAgentOptions.NO_APPROVAL_DEADLINE`.
 
+### Work for later: deferred actions
+
+Some work belongs on a later date: take access away when it expires, remind a manager two weeks
+before a contract ends. `dev.agentkit.core.deferred` lets the model schedule that work as a goal it
+writes, instead of a code path somebody wrote for each case, and holds what the goal can do when it
+runs, whatever it says.
+
+Tools first declare what they are. A `ToolDeclaration` names the system, the `ToolEffect` (read,
+grant, revoke, notify, request, schedule) and which argument names the subject acted on; a
+`DeclaredTools` keeps each tool with its declaration.
+
+```java
+DeclaredTools tools = new DeclaredTools()
+        .add(deactivateUser, new ToolDeclaration("okta", ToolEffect.REVOKE, "email"))
+        .add(sendMessage, new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"));
+
+DeferredActionStore store = DeferredActionStore.inDirectory(Path.of("data/deferred"));
+DeferredActionScheduler scheduler = new DeferredActionScheduler(workers, store, Instant::now, holdings);
+tools.add(scheduler.tool("onboarding"), new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"));
+
+DeferredRunner runner = new DeferredRunner(store, workers, tools,
+        (goal, allowed, gate) -> Agent.builder(llm, allowed.registry(), config).toolGate(gate).build().run(goal),
+        Instant::now, null);
+runner.start(Duration.ofMinutes(1));
+```
+
+The use case supplies a `SubjectResolver` (here `workers`): what kinds of subject there are, and a
+`SubjectRecord` for one — the identifiers it is known by, who may be told about it, and its facts.
+`schedule_deferred_action` checks the subject exists and the time is later, taken either as `run_at`
+or relative to a date field of the record (`relative_to: termination_date, offset_days: -14`), so the
+model does no date arithmetic. It stores the goal; it does not judge it.
+
+When the time comes, `DeferredRunner` claims the action and runs it:
+
+- **Goal:** the stored text is fenced as a procedure under a fixed objective, with the subject's
+  record as it is *now*, so a goal written months ago cannot pose as the instruction, and a run can
+  see that the facts it depended on have changed.
+- **Tools:** only those declared read, revoke, notify or request (`DeferredActions.restrict`). A
+  deferred run cannot grant anything or schedule more work.
+- **Gate:** every call must name the subject in its declared argument; a notification may also go
+  to one of the record's contacts. A tool that declares no subject is refused.
+
+The store claims before running and records how each action finished, so a restart does not run one
+twice. It is one properties file per action in a directory, or in memory for tests.
+
 ### After you read the web, you cannot write
 
 A gate decides per call. A **trust floor** decides per *run*: once this run has read

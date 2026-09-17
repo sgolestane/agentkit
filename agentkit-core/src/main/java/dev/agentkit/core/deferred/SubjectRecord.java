@@ -1,4 +1,4 @@
-package dev.agentkit.accessdesk.deferred;
+package dev.agentkit.core.deferred;
 
 import java.time.Instant;
 import java.time.LocalDate;

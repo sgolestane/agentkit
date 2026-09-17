@@ -1,14 +1,14 @@
-package dev.agentkit.accessdesk.deferred;
+package dev.agentkit.core.deferred;
 
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
 import dev.agentkit.core.agent.Goal;
 import dev.agentkit.core.prompt.Source;
 import dev.agentkit.core.prompt.Spotlight;
 import dev.agentkit.core.reliability.GateResult;
 import dev.agentkit.core.reliability.ToolGate;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.Tool;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import java.time.Instant;
 import java.util.Locale;
@@ -37,7 +37,7 @@ import java.util.TreeSet;
 public final class DeferredActions {
 
     /** What a deferred action may do. */
-    public static final Set<Effect> ALLOWED_EFFECTS = Set.of(Effect.READ, Effect.REVOKE, Effect.NOTIFY, Effect.REQUEST);
+    public static final Set<ToolEffect> ALLOWED_EFFECTS = Set.of(ToolEffect.READ, ToolEffect.REVOKE, ToolEffect.NOTIFY, ToolEffect.REQUEST);
 
     private DeferredActions() {
     }
@@ -63,14 +63,14 @@ public final class DeferredActions {
     }
 
     /** Only the tools a deferred action may use, judged by what each declares. */
-    public static ToolCatalog restrict(ToolCatalog tools) {
+    public static DeclaredTools restrict(DeclaredTools tools) {
         return tools.where(info -> ALLOWED_EFFECTS.contains(info.effect()));
     }
 
     /**
      * Keeps a deferred action to its subject, using {@code tools} to learn what each tool declares.
      */
-    public static ToolGate gateFor(DeferredAction action, SubjectRecord current, ToolCatalog tools) {
+    public static ToolGate gateFor(DeferredAction action, SubjectRecord current, DeclaredTools tools) {
         Objects.requireNonNull(action, "action");
         Objects.requireNonNull(current, "current");
         Objects.requireNonNull(tools, "tools");
@@ -82,11 +82,11 @@ public final class DeferredActions {
 
             @Override
             public GateResult evaluate(Tool tool, ToolInvocation invocation) {
-                Optional<ToolInfo> declared = tools.info(invocation.name());
+                Optional<ToolDeclaration> declared = tools.declaration(invocation.name());
                 if (declared.isEmpty()) {
                     return GateResult.deny("A deferred action can only use tools that declare what they do.");
                 }
-                ToolInfo info = declared.get();
+                ToolDeclaration info = declared.get();
                 if (!ALLOWED_EFFECTS.contains(info.effect())) {
                     return GateResult.deny("A deferred action cannot use " + invocation.name() + " ("
                             + info.effect().wire() + "); it may only read, revoke, notify or request.");
@@ -97,11 +97,11 @@ public final class DeferredActions {
                 }
                 String target = invocation.stringArgument(info.subjectParam());
                 boolean allowed = current.refersTo(target)
-                        || (info.effect() == Effect.NOTIFY && current.isContact(target));
+                        || (info.effect() == ToolEffect.NOTIFY && current.isContact(target));
                 if (!allowed) {
                     return GateResult.deny("A deferred action for " + action.subjectKind() + " " + action.subjectId()
                             + " can only act on that " + action.subjectKind()
-                            + (info.effect() == Effect.NOTIFY ? " or notify its contacts" : "") + ", not "
+                            + (info.effect() == ToolEffect.NOTIFY ? " or notify its contacts" : "") + ", not "
                             + String.valueOf(target).toLowerCase(Locale.ROOT) + ".");
                 }
                 return GateResult.allow();

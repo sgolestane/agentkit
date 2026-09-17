@@ -1,15 +1,15 @@
 package dev.agentkit.accessdesk.web;
 
 import dev.agentkit.accessdesk.desk.DeskTools;
-import dev.agentkit.accessdesk.tools.Effect;
-import dev.agentkit.accessdesk.tools.ToolCatalog;
-import dev.agentkit.accessdesk.tools.ToolInfo;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.Conversation;
 import dev.agentkit.chat.Turn;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.FunctionTool;
 import dev.agentkit.core.tool.Provenance;
 import dev.agentkit.core.tool.SideEffects;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolResult;
 import java.time.Duration;
 import java.util.List;
@@ -53,12 +53,12 @@ public final class McpBridge {
     }
 
     /** The tools served to {@code user}, or empty if the desk does not know them. */
-    public Optional<ToolCatalog> toolsFor(String user) {
+    public Optional<DeclaredTools> toolsFor(String user) {
         String caller = user == null ? "" : user.strip().toLowerCase(java.util.Locale.ROOT);
         if (!users.contains(caller)) {
             return Optional.empty();
         }
-        ToolCatalog catalog = new ToolCatalog();
+        DeclaredTools catalog = new DeclaredTools();
         catalog.add(FunctionTool.builder("ask_access_desk",
                         "Ask Access Desk, in plain language, for temporary access or anything about access: \"I need read "
                                 + "access to the payments database for INC-4211 for 2 hours\", \"what access do I have?\", "
@@ -70,8 +70,8 @@ public final class McpBridge {
                         .provenance(Provenance.FIRST_PARTY)
                         .handler(inv -> ask(caller, inv.stringArgument("message")))
                         .build(),
-                new ToolInfo("access-desk", Effect.REQUEST, null));
-        ToolCatalog desk = deskFor.apply(caller).catalog();
+                new ToolDeclaration("access-desk", ToolEffect.REQUEST, null));
+        DeclaredTools desk = deskFor.apply(caller).catalog();
         for (String read : List.of("my_access", "my_requests", "pending_approvals")) {
             desk.entry(read).ifPresent(catalog::add);
         }
