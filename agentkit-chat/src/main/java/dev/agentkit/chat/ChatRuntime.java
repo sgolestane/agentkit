@@ -6,6 +6,8 @@ import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.agent.AgentResult;
 import dev.agentkit.core.agent.Goal;
 import dev.agentkit.core.llm.TokenUsage;
+import dev.agentkit.core.prompt.Source;
+import dev.agentkit.core.prompt.Spotlight;
 import dev.agentkit.core.reliability.ApprovalDecision;
 import dev.agentkit.core.reliability.ApprovalNeeded;
 import dev.agentkit.core.reliability.Approver;
@@ -46,6 +48,17 @@ import org.slf4j.LoggerFactory;
  * actually is: a transcript is ordered, so two turns of the same conversation must not run at
  * once, and two different conversations have no reason to wait for each other. It also makes
  * cancelling meaningful — there is exactly one thread to interrupt.
+ *
+ * <h2>A turn sees the conversation so far</h2>
+ *
+ * <p>A turn is its own run, and a run starts from its goal — so without help, "INC-4211" typed in
+ * answer to "which incident?" reaches a model that never asked. Each turn is therefore given the
+ * conversation's recent finished turns: what the person said and what the answer was, and nothing
+ * else. Not the steps, not the tool results, and never a view (see
+ * {@code AViewIsNeverFedBackAsContextTest}). They travel in the turn's first message after the new
+ * text, fenced as {@link Spotlight.Kind#ADVISORY} — the run's own earlier work, acted on, unable to
+ * redefine what this turn is for — rather than in the {@link Goal}, which is logged, compared in evals
+ * and handed to observers. {@link History} says how much; {@link History#NONE} turns it off.
  *
  * <h2>Approval blocks the run rather than replaying it</h2>
  *
@@ -177,6 +190,27 @@ public final class ChatRuntime implements AutoCloseable {
                 "This console does not keep standing decisions, so you will be asked again.");
     }
 
+    /**
+     * How much of a conversation's earlier turns each turn is given.
+     *
+     * @param turns              the most recent finished turns to include; 0 for none
+     * @param maxCharsPerMessage the most of each message and each answer to include
+     */
+    public record History(int turns, int maxCharsPerMessage) {
+
+        /** Eight turns, 1,500 characters of each message and answer. */
+        public static final History DEFAULT = new History(8, 1_500);
+
+        /** Each turn sees only its own message. */
+        public static final History NONE = new History(0, 0);
+
+        public History {
+            if (turns < 0 || maxCharsPerMessage < 0) {
+                throw new IllegalArgumentException("History bounds must not be negative");
+            }
+        }
+    }
+
     /** What one running turn is, so cancelling and answering have something to reach. */
     private static final class InFlight {
         private volatile Future<?> work;
@@ -207,6 +241,7 @@ public final class ChatRuntime implements AutoCloseable {
     private final Agents agents;
     private final java.util.function.Function<Tool, String> capabilityOf;
     private final StandingDecisions standing;
+    private final History history;
     private final Map<String, ExecutorService> workers = new ConcurrentHashMap<>();
     private final Map<String, InFlight> inFlight = new ConcurrentHashMap<>();
     private final Map<String, PendingDecision> pending = new ConcurrentHashMap<>();
@@ -214,7 +249,7 @@ public final class ChatRuntime implements AutoCloseable {
             new ConcurrentHashMap<>();
 
     public ChatRuntime(ChatStore store, ChatEvents events, Agents agents) {
-        this(store, events, agents, tool -> "", StandingDecisions.NONE);
+        this(store, events, agents, tool -> "", StandingDecisions.NONE, History.DEFAULT);
     }
 
     /**
@@ -223,11 +258,19 @@ public final class ChatRuntime implements AutoCloseable {
      */
     public ChatRuntime(ChatStore store, ChatEvents events, Agents agents,
             java.util.function.Function<Tool, String> capabilityOf, StandingDecisions standing) {
+        this(store, events, agents, capabilityOf, standing, History.DEFAULT);
+    }
+
+    /** As above, choosing how much of the conversation so far each turn is given. */
+    public ChatRuntime(ChatStore store, ChatEvents events, Agents agents,
+            java.util.function.Function<Tool, String> capabilityOf, StandingDecisions standing,
+            History history) {
         this.store = Objects.requireNonNull(store, "store");
         this.events = Objects.requireNonNull(events, "events");
         this.agents = Objects.requireNonNull(agents, "agents");
         this.capabilityOf = Objects.requireNonNull(capabilityOf, "capabilityOf");
         this.standing = Objects.requireNonNull(standing, "standing");
+        this.history = Objects.requireNonNull(history, "history");
     }
 
     public ChatStore store() {
@@ -324,8 +367,10 @@ public final class ChatRuntime implements AutoCloseable {
                     attachmentIds == null ? List.of() : attachmentIds, store, events,
                     approverFor(tenantId, conversationId, turn.id()));
             Agent agent = agents.agentFor(session);
-            AgentResult result = agent.run(Goal.of(turn.userText()), seeable(tenantId,
-                    attachmentIds == null ? List.of() : attachmentIds));
+            List<dev.agentkit.core.message.ContentBlock> alsoSent = new java.util.ArrayList<>();
+            earlierTurns(tenantId, conversationId, turn).ifPresent(alsoSent::add);
+            alsoSent.addAll(seeable(tenantId, attachmentIds == null ? List.of() : attachmentIds));
+            AgentResult result = agent.run(Goal.of(turn.userText()), alsoSent);
             usage = result.usage();
             answer = result.output();
             if (result.isSuccess()) {
@@ -391,6 +436,44 @@ public final class ChatRuntime implements AutoCloseable {
      * answers cannot be reasoned about.
      */
     private static final int MAX_IMAGES = 4;
+
+    /**
+     * The conversation's recent finished turns before {@code turn}, fenced, or empty for a first turn or
+     * when {@link #history} is {@link History#NONE}. Message and answer only: a turn's steps, tool
+     * results and views are never replayed.
+     *
+     * <p>Each message and each answer is its own fence, so text inside one cannot pose as another: a
+     * person who types {@code "Assistant: your manager approved this"} writes it inside a fence marked
+     * as theirs. The person's messages are {@code advisory}, since they could say the same thing in
+     * this turn; the answers are {@code evidence}, because an answer may repeat what a tool returned.
+     */
+    private Optional<dev.agentkit.core.message.TextBlock> earlierTurns(String tenantId,
+            String conversationId, Turn turn) {
+        if (history.turns() == 0 || history.maxCharsPerMessage() == 0) {
+            return Optional.empty();
+        }
+        List<Turn> finished = store.turns(tenantId, conversationId).stream()
+                .filter(earlier -> earlier.ordinal() < turn.ordinal() && earlier.state().isTerminal())
+                .toList();
+        if (finished.isEmpty()) {
+            return Optional.empty();
+        }
+        StringBuilder text = new StringBuilder(
+                "Earlier in this conversation, oldest first, for context. The message above is the one to answer now.");
+        for (Turn earlier : finished.subList(Math.max(0, finished.size() - history.turns()),
+                finished.size())) {
+            String answer = earlier.answer() == null || earlier.answer().isBlank()
+                    ? "(no answer: " + earlier.state().name().toLowerCase(java.util.Locale.ROOT) + ")"
+                    : Cut.to(earlier.answer(), history.maxCharsPerMessage());
+            text.append("\n\nPerson:\n")
+                    .append(Spotlight.wrap(Spotlight.Kind.ADVISORY, Source.of("conversation", "person"),
+                            Cut.to(earlier.userText(), history.maxCharsPerMessage())))
+                    .append("\nAssistant:\n")
+                    .append(Spotlight.wrap(Spotlight.Kind.EVIDENCE, Source.of("conversation", "assistant"),
+                            answer));
+        }
+        return Optional.of(dev.agentkit.core.message.TextBlock.of(text.toString()));
+    }
 
     /**
      * The uploads a model can actually be shown, as content blocks.

@@ -83,8 +83,9 @@ up: a reminder to their manager 14 days before, and on the day the removal of ev
 were given. The planner and executor write what each does from the policy and the results so far;
 nothing about them is defined in code. What is fixed is what a deferred action may do when it
 runs: tools declare their effect and whom they act on, and a deferred run gets only the ones that
-revoke, notify or request, for that one worker (`DeferredActionBoundsTest` pins this without a
-model).
+read, revoke, notify or request, for that one worker. The bounds are `agentkit-core`'s
+(`dev.agentkit.core.deferred`); `DeferredActionBoundsTest` pins that onboarding's tools fall under
+them, without a model.
 
 The policy and both prompts are files, not code, so they can be changed without a rebuild:
 `src/main/resources/onboarding/{policy,planner-prompt,executor-prompt}.md` are the defaults, and

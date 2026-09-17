@@ -1,12 +1,11 @@
-package dev.agentkit.examples.deferred;
+package dev.agentkit.core.deferred;
 
 import java.util.Optional;
 import java.util.Set;
 
 /**
- * Looks a subject up in its system of record. Each use case supplies one: an HRIS for workers, a
- * CRM for accounts. It is asked when a deferred action is scheduled, and again when it runs, so the
- * run sees the record as it is then rather than as it was.
+ * Looks a subject up in its system of record. Asked when a deferred action is scheduled and again when
+ * it runs, so a run sees the record as it is then.
  */
 public interface SubjectResolver {
 

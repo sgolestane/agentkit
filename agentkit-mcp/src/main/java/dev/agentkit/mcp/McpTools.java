@@ -35,6 +35,17 @@ public final class McpTools {
                 .toList();
     }
 
+    /**
+     * The same, with each tool's side effects taken from the server's annotations. Only for a server trusted to
+     * describe its own tools; see {@link McpTool#trustingAnnotations}.
+     */
+    public static List<Tool> loadTrustingAnnotations(McpConnection connection) {
+        Objects.requireNonNull(connection, "connection");
+        return connection.listTools().stream()
+                .<Tool>map(info -> McpTool.trustingAnnotations(connection, info))
+                .toList();
+    }
+
     /** A {@link ToolRegistry} advertising exactly the server's tools. */
     public static ToolRegistry registry(McpConnection connection) {
         return new SimpleToolRegistry(load(connection));

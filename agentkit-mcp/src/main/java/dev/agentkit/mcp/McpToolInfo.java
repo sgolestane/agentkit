@@ -96,7 +96,7 @@ import java.util.Set;
  *                    deliberately shallow copy safe
  */
 public record McpToolInfo(String name, String description, Map<String, Object> inputSchema,
-                          Map<String, Object> meta) {
+                          Map<String, Object> meta, McpToolAnnotations annotations) {
 
     /**
      * The three-arg shape, for every caller that predates MCP Apps.
@@ -108,6 +108,12 @@ public record McpToolInfo(String name, String description, Map<String, Object> i
      */
     public McpToolInfo(String name, String description, Map<String, Object> inputSchema) {
         this(name, description, inputSchema, Map.of());
+    }
+
+    /** The shape before annotations were captured: a tool whose server said nothing about its behaviour. */
+    public McpToolInfo(String name, String description, Map<String, Object> inputSchema,
+                       Map<String, Object> meta) {
+        this(name, description, inputSchema, meta, McpToolAnnotations.NONE);
     }
 
     /**
@@ -208,6 +214,9 @@ public record McpToolInfo(String name, String description, Map<String, Object> i
         // anything that is not ui://.
         meta = meta == null ? Map.of()
                 : Collections.unmodifiableMap(new LinkedHashMap<>(meta));
+        // Coerced like meta: a listing from a server that predates annotations has none, and that is a
+        // tool nothing is known about, not a malformed one. See McpToolAnnotations on what they are worth.
+        annotations = annotations == null ? McpToolAnnotations.NONE : annotations;
     }
 
     /**

@@ -1,9 +1,9 @@
 package dev.agentkit.examples.onboarding;
 
+import dev.agentkit.core.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredActions;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.planning.PlanExecution;
-import dev.agentkit.examples.deferred.DeferredAction;
-import dev.agentkit.examples.deferred.DeferredActions;
 import dev.agentkit.examples.planexecute.PlanExecuteAgent;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.io.IOException;
@@ -77,14 +77,14 @@ public final class OnboardingApp {
                 execution.overall().stopReason(), execution.stepResults().size(), steps.size(),
                 execution.overall().steps(), execution.overall().usage().inputTokens(),
                 execution.overall().usage().outputTokens());
-        List<String> deferredTools = DeferredActions.restrict(systems.tools(), systems::declared).tools().stream()
-                .map(t -> t.name()).toList();
+        List<String> deferredTools = DeferredActions.restrict(systems.catalog()).entries().stream()
+                .map(e -> e.tool().name()).toList();
         for (DeferredAction action : systems.deferredActions()) {
-            out.println("\nDeferred action " + action.id() + " runs " + action.runOn() + " (" + action.when()
-                    + "), scheduled " + action.scheduledOn() + ". It will run with tools " + deferredTools
+            out.println("\nDeferred action " + action.id() + " runs " + action.runAt() + " (" + action.when()
+                    + "), scheduled " + action.scheduledAt() + ". It will run with tools " + deferredTools
                     + " and this goal:");
             systems.subjects().resolve(action.subjectKind(), action.subjectId()).ifPresent(subject ->
-                    DeferredActions.goalFor(action, subject, action.runOn()).description().lines()
+                    DeferredActions.goalFor(action, subject, action.runAt()).description().lines()
                             .forEach(line -> out.println("    | " + line)));
         }
     }

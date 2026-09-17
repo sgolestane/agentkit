@@ -41,9 +41,11 @@ target/
 # OS
 .DS_Store
 
-# Scratch git worktrees created by tooling. Transient and often locked —
-# committing them would check in a broken pointer to a directory that is gone.
-.claude/worktrees/
-
-# Local secrets
-.env
+# Anything at the root whose name starts with a dot is local (.env, editor and tool state)
+# — except the ones the project itself keeps. A new root dot-entry the project needs must be
+# added to this list, or files inside it are silently never added.
+/.*
+!/.gitignore
+!/.editorconfig
+!/.github/
+!/.mvn/

@@ -455,6 +455,14 @@ handshake; `McpTools` calls `tools/list` and wraps each tool. A server-flagged
 error, or a transport failure, comes back to the model as an error tool result
 rather than aborting the run — matching the loop's contract for local tools.
 
+**Annotations are captured, and trusted only when you say so.** A server's `readOnlyHint`,
+`destructiveHint`, `idempotentHint` and `openWorldHint` land on `McpToolInfo.annotations()`. They
+are hints: the protocol says not to rely on them from a server you don't trust, and a hostile
+server would call a destructive tool read-only to slip past a gate. So an `McpTool`'s side effects
+stay `UNKNOWN`, which gates treat as unsafe, unless you trust the server. For one you run or have
+vetted, `McpTools.loadTrustingAnnotations(mcp)` (or `McpTool.trustingAnnotations`) maps read-only
+to `NONE`, idempotent and non-destructive to `IDEMPOTENT`, and anything else to `EXTERNAL`.
+
 **What a server returns arrives fenced.** All three shapes — a successful result, an
 `isError` result, a transport failure — are wrapped as `evidence` attributed to
 `mcp:<tool>`, bounded, and NFKC-normalised. Until #154 only the two failure shapes were,
@@ -754,6 +762,59 @@ Three things worth knowing before you build that console:
 If nobody answers before the deadline, the run ends with `AWAITING_APPROVAL` and
 `AgentRunResult.awaiting()` carries what expired. To wait indefinitely, pass
 `DurableAgentOptions.NO_APPROVAL_DEADLINE`.
+
+### Work for later: deferred actions
+
+Some work belongs on a later date: take access away when it expires, remind a manager two weeks
+before a contract ends. `dev.agentkit.core.deferred` lets the model schedule that work as a goal it
+writes, instead of a code path somebody wrote for each case, and holds what the goal can do when it
+runs, whatever it says.
+
+Tools first declare what they are. A `ToolDeclaration` names the system, the `ToolEffect` (read,
+grant, revoke, notify, request, schedule) and which argument names the subject acted on; a
+`DeclaredTools` keeps each tool with its declaration.
+
+```java
+DeclaredTools tools = new DeclaredTools()
+        .add(deactivateUser, new ToolDeclaration("okta", ToolEffect.REVOKE, "email"))
+        .add(sendMessage, new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"));
+
+DeferredActionStore store = DeferredActionStore.inDirectory(Path.of("data/deferred"));
+DeferredActionScheduler scheduler = new DeferredActionScheduler(workers, store, Instant::now, holdings,
+        (caller, worker) -> worker.isContact(caller));   // who may schedule for whom
+tools.add(scheduler.tool("onboarding"), new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"));
+
+DeferredRunner runner = new DeferredRunner(store, workers, tools,
+        (goal, allowed, gate) -> Agent.builder(llm, allowed.registry(), config).toolGate(gate).build().run(goal),
+        Instant::now, null);
+runner.start(Duration.ofMinutes(1));
+```
+
+The use case supplies a `SubjectResolver` (here `workers`): what kinds of subject there are, and a
+`SubjectRecord` for one — the identifiers it is known by, who may be told about it, and its facts.
+`schedule_deferred_action` checks the subject exists, the caller may schedule for it, and the time
+is later, taken either as `run_at` or relative to a date field of the record
+(`relative_to: termination_date, offset_days: -14`), so the model does no date arithmetic. It stores
+the goal; it does not judge it. Pass the last argument (`mayScheduleFor`) unless every caller may act
+on every subject: the action runs later with the runner's tools, not the caller's. There is one action
+per subject and minute, and only the caller who scheduled it can replace it, while it still waits.
+
+When the time comes, `DeferredRunner` claims the action and runs it:
+
+- **Goal:** the stored text is fenced as a procedure under a fixed objective, so a goal written
+  months ago cannot pose as the instruction. The subject's record as it is *now* comes with it, fenced
+  as evidence one line per field, so a run can see that the facts it depended on have changed and a
+  field cannot pose as anything else.
+- **Tools:** only those declared read, revoke, notify or request that name whom they act on
+  (`DeferredActions.restrict`). A deferred run cannot grant anything or schedule more work.
+- **Gate:** every call must name the subject in its declared argument; a notification may also go
+  to one of the record's contacts. Ids match exactly and email addresses ignoring case. The runner
+  checks the gate inside each tool as well, so it holds even for an agent built without `.toolGate`.
+
+The store claims an action before running it and records how it finished. That is at least once, not
+exactly once: an action that was running when the process stopped runs again after a restart, so
+write goals whose effects are safe to repeat. It is one properties file per action in a directory, for
+one process, or in memory for tests.
 
 ### After you read the web, you cannot write
 
@@ -1686,6 +1747,25 @@ WORKBENCH_LLM=openrouter WORKBENCH_MODEL=anthropic/claude-sonnet-4.5 OPENROUTER_
 
 Nothing configured is not an error: it boots, names the variable that is missing in
 a banner, and gives you the same sentence back if you type anyway.
+
+### A turn sees the conversation so far
+
+Each turn is its own run, so on its own a turn would start from nothing but the new message, and
+"INC-4211" typed in answer to "which incident?" would reach a model that never asked.
+`ChatRuntime` therefore gives each turn the conversation's recent finished turns: what the person
+said and what the answer was, and nothing else. It leaves out steps, tool results and views.
+
+They travel in the turn's first message, after the new text, each message and each answer in its own
+fence, so one cannot pose as another. The person's messages are `advisory`: they could say the same
+thing now. The answers are `evidence`, because an answer may repeat what a tool returned. None of it can
+change what this turn is for, and none of it is part of the `Goal`, which is what gets logged, observed
+and compared in evals. The default is the last eight turns and 1,500 characters of each message and
+answer:
+
+```java
+new ChatRuntime(store, events, agents, capabilityOf, standing,
+        new ChatRuntime.History(4, 1_000));   // or ChatRuntime.History.NONE
+```
 
 ### A tool returns a digest and something to look at
 

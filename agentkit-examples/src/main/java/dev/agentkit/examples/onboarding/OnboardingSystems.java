@@ -8,13 +8,17 @@ import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolRegistry;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.core.tool.SimpleToolRegistry;
-import dev.agentkit.examples.deferred.DeferredAction;
-import dev.agentkit.examples.deferred.DeferredActionScheduler;
-import dev.agentkit.examples.deferred.Effect;
-import dev.agentkit.examples.deferred.SubjectRecord;
-import dev.agentkit.examples.deferred.SubjectResolver;
-import dev.agentkit.examples.deferred.ToolInfo;
+import dev.agentkit.core.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredActionScheduler;
+import dev.agentkit.core.deferred.DeferredActionStore;
+import dev.agentkit.core.deferred.SubjectRecord;
+import dev.agentkit.core.deferred.SubjectResolver;
+import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.ToolDeclaration;
+import dev.agentkit.core.tool.ToolEffect;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -38,10 +42,10 @@ import java.util.regex.Pattern;
  *
  * <h2>Tools describe themselves</h2>
  *
- * <p>Each tool declares a {@link ToolInfo}: the system it belongs to, its {@link Effect}, and which
- * argument names the person it acts on. The record of every {@link Grant} is derived from that, and
- * so are the bounds on deferred actions, which live in {@code dev.agentkit.examples.deferred} and
- * know nothing about onboarding.
+ * <p>Each tool declares a {@link ToolDeclaration}: the system it belongs to, its {@link ToolEffect}, and
+ * which argument names the person it acts on. The record of every {@link Grant} is derived from that, and
+ * so are the bounds on deferred actions, which live in {@code dev.agentkit.core.deferred} and know
+ * nothing about onboarding.
  *
  * <h2>Resolving a missing GitHub username</h2>
  *
@@ -95,7 +99,7 @@ public final class OnboardingSystems {
     /** The subject kind onboarding schedules deferred actions for. */
     public static final String WORKER = "worker";
 
-    /** Access a {@link Effect#GRANT} tool gave a person, recorded by the tool wrapper from its {@link ToolInfo}. */
+    /** Access a {@link ToolEffect#GRANT} tool gave a person, recorded by the tool wrapper from its {@link ToolDeclaration}. */
     public record Grant(String email, String system, String tool) {
     }
 
@@ -125,6 +129,9 @@ public final class OnboardingSystems {
     /** The example's "today". Fixed, so scheduled dates and checks never drift with the calendar. */
     public static final LocalDate TODAY = LocalDate.of(2026, 9, 16);
 
+    /** The start of {@link #TODAY} in UTC: the scheduler's "now". */
+    public static final Instant NOW = TODAY.atStartOfDay().toInstant(ZoneOffset.UTC);
+
     /** What an HRIS field holds when it holds nothing. */
     private static final Set<String> NO_VALUE = Set.of("", "none", "n/a", "na", "unknown", "not on file", "-");
 
@@ -151,15 +158,16 @@ public final class OnboardingSystems {
     private final Set<String> benefitsEnrolled = new LinkedHashSet<>();
     private final Map<String, Worker> workers = new LinkedHashMap<>();
     private final Set<Grant> grants = new LinkedHashSet<>();
-    private final Map<String, ToolInfo> toolInfo = new LinkedHashMap<>();
+    private final Map<String, ToolDeclaration> declarations = new LinkedHashMap<>();
     private final List<String> toolCalls = new ArrayList<>();
     private final long replyWaitMillis;
 
+    private final DeferredActionStore deferredActions = DeferredActionStore.inMemory();
     private final DeferredActionScheduler scheduler;
 
     private OnboardingSystems(long replyWaitMillis) {
         this.replyWaitMillis = replyWaitMillis;
-        this.scheduler = new DeferredActionScheduler(subjects(), () -> TODAY, this::holdings);
+        this.scheduler = new DeferredActionScheduler(subjects(), deferredActions, () -> NOW, this::holdings);
     }
 
     /** The HRIS, as the generic deferred-action code sees it. */
@@ -248,17 +256,15 @@ public final class OnboardingSystems {
         return allTools();
     }
 
-    /** What the named tool declares, if it is one of these tools. */
-    public synchronized Optional<ToolInfo> declared(String toolName) {
-        if (!toolInfo.containsKey(toolName)) {
-            allTools(); // declarations are registered as the tools are built
+    /** Every tool, with what it declares about itself. */
+    public DeclaredTools catalog() {
+        DeclaredTools catalog = new DeclaredTools();
+        for (Tool tool : allTools()) { // declarations are registered as the tools are built
+            synchronized (this) {
+                catalog.add(tool, declarations.get(tool.name()));
+            }
         }
-        return Optional.ofNullable(toolInfo.get(toolName));
-    }
-
-    /** What the named tool declares about itself; throws for a tool that is not one of these. */
-    public ToolInfo toolInfo(String toolName) {
-        return declared(toolName).orElseThrow(() -> new IllegalArgumentException("Unknown tool " + toolName));
+        return catalog;
     }
 
     private List<Tool> allTools() {
@@ -276,7 +282,7 @@ public final class OnboardingSystems {
 
     private FunctionTool oktaCreateUser() {
         return tool("okta_create_user", "Create a new Okta account and add it to groups.",
-                new ToolInfo("okta", Effect.GRANT, "email"),
+                new ToolDeclaration("okta", ToolEffect.GRANT, "email"),
                 schema(Map.of(
                         "email", str("Work email"),
                         "first_name", str("First name"),
@@ -298,7 +304,7 @@ public final class OnboardingSystems {
 
     private FunctionTool oktaReactivateUser() {
         return tool("okta_reactivate_user", "Reactivate a deactivated Okta account and set its groups.",
-                new ToolInfo("okta", Effect.GRANT, "email"),
+                new ToolDeclaration("okta", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email"), "groups", strings("Okta group names")),
                         "email", "groups"),
                 SideEffects.EXTERNAL, inv -> {
@@ -316,7 +322,7 @@ public final class OnboardingSystems {
 
     private FunctionTool oktaDeactivateUser() {
         return tool("okta_deactivate_user", "Deactivate an Okta account.",
-                new ToolInfo("okta", Effect.REVOKE, "email"),
+                new ToolDeclaration("okta", ToolEffect.REVOKE, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.EXTERNAL, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -338,7 +344,7 @@ public final class OnboardingSystems {
                 "Read a person's Slack profile fields. If the person has filled in the GitHub field of "
                         + "their own profile and that account exists, it is recorded as their GitHub "
                         + "account (source: slack_profile).",
-                new ToolInfo("slack", Effect.READ, "email"),
+                new ToolDeclaration("slack", ToolEffect.READ, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -365,7 +371,7 @@ public final class OnboardingSystems {
                 "Search public GitHub users by name. Results are possible matches only — nothing is "
                         + "recorded, and a match by name does not establish that the account belongs to "
                         + "the person.",
-                new ToolInfo("github", Effect.READ, null),
+                new ToolDeclaration("github", ToolEffect.READ, null),
                 schema(Map.of("query", str("A person's name")), "query"),
                 SideEffects.NONE, inv -> {
                     String query = lower(inv.stringArgument("query"));
@@ -387,7 +393,7 @@ public final class OnboardingSystems {
                         + "suggested username for them to confirm or correct, and wait for them to submit it. "
                         + "A valid submitted username is recorded as their GitHub account "
                         + "(source: confirmed_by_hire).",
-                new ToolInfo("slack", Effect.READ, "email"),
+                new ToolDeclaration("slack", ToolEffect.READ, "email"),
                 schema(Map.of("email", str("Work email of the person to ask"),
                                 "suggested_username", str("Optional username to prefill for them to confirm")),
                         "email"),
@@ -421,7 +427,7 @@ public final class OnboardingSystems {
         return tool("github_add_member",
                 "Add a person's GitHub account on record to the acme org and a team. Takes the person's work "
                         + "email; fails if no GitHub account is on record for them yet.",
-                new ToolInfo("github", Effect.GRANT, "email"),
+                new ToolDeclaration("github", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email"), "team", str("Team slug")), "email", "team"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -440,7 +446,7 @@ public final class OnboardingSystems {
     private FunctionTool githubRemoveMember() {
         return tool("github_remove_member",
                 "Remove a person's GitHub account on record from the acme org. Takes the person's work email.",
-                new ToolInfo("github", Effect.REVOKE, "email"),
+                new ToolDeclaration("github", ToolEffect.REVOKE, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -456,7 +462,7 @@ public final class OnboardingSystems {
 
     private FunctionTool awsGrantAccess() {
         return tool("aws_grant_access", "Grant a user access to an AWS environment.",
-                new ToolInfo("aws", Effect.GRANT, "email"),
+                new ToolDeclaration("aws", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email"),
                                 "environment", Map.of("type", "string", "enum", List.of("staging", "production"))),
                         "email", "environment"),
@@ -473,7 +479,7 @@ public final class OnboardingSystems {
 
     private FunctionTool awsRevokeAccess() {
         return tool("aws_revoke_access", "Revoke a user's access to an AWS environment.",
-                new ToolInfo("aws", Effect.REVOKE, "email"),
+                new ToolDeclaration("aws", ToolEffect.REVOKE, "email"),
                 schema(Map.of("email", str("Work email"),
                                 "environment", Map.of("type", "string", "enum", List.of("staging", "production"))),
                         "email", "environment"),
@@ -489,7 +495,7 @@ public final class OnboardingSystems {
 
     private FunctionTool salesforceAssignSeat() {
         return tool("salesforce_assign_seat", "Assign a Salesforce license seat to a user.",
-                new ToolInfo("salesforce", Effect.GRANT, "email"),
+                new ToolDeclaration("salesforce", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -500,7 +506,7 @@ public final class OnboardingSystems {
 
     private FunctionTool salesforceReleaseSeat() {
         return tool("salesforce_release_seat", "Release the Salesforce license seat assigned to a user.",
-                new ToolInfo("salesforce", Effect.REVOKE, "email"),
+                new ToolDeclaration("salesforce", ToolEffect.REVOKE, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -516,7 +522,7 @@ public final class OnboardingSystems {
     private FunctionTool slackCreateAccount() {
         return tool("slack_create_account",
                 "Create a Slack account (or convert a pre-boarding account) and set its channels.",
-                new ToolInfo("slack", Effect.GRANT, "email"),
+                new ToolDeclaration("slack", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email"),
                                 "account_type", Map.of("type", "string", "enum", List.of("member", "guest")),
                                 "channels", strings("Channel names, e.g. #general")),
@@ -537,7 +543,7 @@ public final class OnboardingSystems {
 
     private FunctionTool slackRemoveAccount() {
         return tool("slack_remove_account", "Deactivate a person's Slack account.",
-                new ToolInfo("slack", Effect.REVOKE, "email"),
+                new ToolDeclaration("slack", ToolEffect.REVOKE, "email"),
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
@@ -550,7 +556,7 @@ public final class OnboardingSystems {
 
     private FunctionTool slackSendMessage() {
         return tool("slack_send_message", "Send a Slack direct message to a user by email.",
-                new ToolInfo("slack", Effect.NOTIFY, "to_email"),
+                new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"),
                 schema(Map.of("to_email", str("Recipient's work email"), "text", str("Message text")),
                         "to_email", "text"),
                 SideEffects.EXTERNAL, inv -> {
@@ -564,7 +570,7 @@ public final class OnboardingSystems {
 
     private FunctionTool shipLaptop() {
         return tool("ship_laptop", "Ship a standard laptop to an address.",
-                new ToolInfo("laptop", Effect.GRANT, "email"),
+                new ToolDeclaration("laptop", ToolEffect.GRANT, "email"),
                 schema(Map.of("email", str("Work email of the recipient"), "address", str("Full shipping address")),
                         "email", "address"),
                 SideEffects.EXTERNAL, inv -> {
@@ -575,7 +581,7 @@ public final class OnboardingSystems {
 
     private FunctionTool itCreateTicket() {
         return tool("it_create_ticket", "Open an IT service desk ticket.",
-                new ToolInfo("it desk", Effect.REQUEST, "for_email"),
+                new ToolDeclaration("it desk", ToolEffect.REQUEST, "for_email"),
                 schema(Map.of(
                                 "category", Map.of("type", "string",
                                         "enum", List.of("laptop_pickup", "laptop_return", "access_request")),
@@ -593,7 +599,7 @@ public final class OnboardingSystems {
 
     private FunctionTool workdayEnrollBenefits() {
         return tool("workday_enroll_benefits", "Enroll an employee in the standard benefits package.",
-                new ToolInfo("workday", Effect.GRANT, "employee_id"),
+                new ToolDeclaration("workday", ToolEffect.GRANT, "employee_id"),
                 schema(Map.of("employee_id", str("Workday employee id")), "employee_id"),
                 SideEffects.IDEMPOTENT, inv -> {
                     benefitsEnrolled.add(inv.stringArgument("employee_id"));
@@ -605,14 +611,14 @@ public final class OnboardingSystems {
 
     private FunctionTool scheduleDeferredAction() {
         return tool(DeferredActionScheduler.TOOL_NAME, scheduler.description(),
-                new ToolInfo("scheduler", Effect.SCHEDULE, "subject_id"),
-                scheduler.schema(), SideEffects.IDEMPOTENT, scheduler::schedule);
+                new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"),
+                scheduler.schema(), SideEffects.IDEMPOTENT, inv -> scheduler.schedule(inv, "onboarding"));
     }
 
     // ---------------------------------------------------------------- state, for verification
 
     public List<DeferredAction> deferredActions() {
-        return scheduler.scheduled();
+        return deferredActions.all();
     }
 
     public synchronized List<Grant> grants() {
@@ -708,13 +714,13 @@ public final class OnboardingSystems {
 
     /**
      * Builds a tool that declares what it is. Every call is logged and runs under this instance's
-     * lock, and a successful call to a {@link Effect#GRANT} tool is recorded as a {@link Grant} —
+     * lock, and a successful call to a {@link ToolEffect#GRANT} tool is recorded as a {@link Grant} —
      * from the declaration, so no tool has to remember to do it.
      */
-    private FunctionTool tool(String name, String description, ToolInfo info, Map<String, Object> schema,
+    private FunctionTool tool(String name, String description, ToolDeclaration info, Map<String, Object> schema,
                               SideEffects sideEffects, Function<ToolInvocation, ToolResult> handler) {
         synchronized (this) {
-            toolInfo.put(name, info);
+            declarations.put(name, info);
         }
         return FunctionTool.builder(name, description)
                 .schema(schema)
@@ -724,7 +730,7 @@ public final class OnboardingSystems {
                     synchronized (this) {
                         toolCalls.add(name);
                         ToolResult result = handler.apply(inv);
-                        if (info.effect() == Effect.GRANT && !result.isError() && info.subjectParam() != null) {
+                        if (info.effect() == ToolEffect.GRANT && !result.isError() && info.subjectParam() != null) {
                             grants.add(new Grant(subjectEmail(inv.stringArgument(info.subjectParam())), info.system(), name));
                         }
                         return result;
