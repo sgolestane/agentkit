@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Desk</title>
+<style>
+  :root { --bg:#f7f7f5; --panel:#fff; --ink:#1c1c1a; --muted:#6b6b66; --line:#e3e3de; --accent:#2f6f4f; --warn:#9a5b00; --bad:#a3322a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161615; --panel:#1f1f1d; --ink:#ececea; --muted:#9a9a94; --line:#33332f; --accent:#6fbf94; --warn:#e0a43c; --bad:#e5786f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 32px 0 10px; }
+  p.lede { color: var(--muted); margin: 0 0 8px; max-width: 70ch; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  .card .who { font-weight: 600; }
+  .card .role { color: var(--muted); font-size: 13px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  button { font: inherit; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color: var(--accent); }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; overflow-x:auto; white-space: pre-wrap; word-break: break-all; }
+  table { width:100%; border-collapse: collapse; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align: top; font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; }
+  td.goal { min-width: 220px; max-width: 420px; }
+  td.when { white-space: nowrap; }
+  .status-SCHEDULED { color: var(--warn); } .status-DONE { color: var(--accent); } .status-FAILED { color: var(--bad); }
+  .scroll { overflow-x: auto; }
+  #now { font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Access Desk</h1>
+  <p class="lede">Temporary access, by chat. Ask for what you need in plain language; the access policy decides who approves; every grant ends on its own.</p>
+
+  <h2>Consoles</h2>
+  <p class="lede">Each person has their own console. Open two side by side to play requester and approver.</p>
+  <div class="grid" id="consoles"></div>
+
+  <h2>Demo clock</h2>
+  <div class="card">
+    <div class="row">Now: <span id="now">…</span></div>
+    <div class="row" style="margin-top:8px">
+      <button data-minutes="15">+15 min</button>
+      <button data-minutes="60">+1 hour</button>
+      <button data-minutes="240">+4 hours</button>
+      <button data-minutes="1440">+1 day</button>
+    </div>
+    <p class="lede" style="margin-top:8px">Moving the clock runs whatever deferred actions are now due: reminders before access ends, and revocation when it does.</p>
+  </div>
+
+  <h2>Deferred actions</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Runs at</th><th>Subject</th><th>Status</th><th>Goal</th><th>Outcome</th></tr></thead>
+    <tbody id="deferred"><tr><td colspan="5">…</td></tr></tbody>
+  </table></div>
+
+  <h2>Use it from Claude Code (MCP)</h2>
+  <pre id="mcp">…</pre>
+</main>
+<script>
+  const minute = iso => iso ? iso.slice(0, 16).replace('T', ' ') + ' UTC' : '';
+  const text = (tag, value, cls) => { const el = document.createElement(tag); el.textContent = value ?? ''; if (cls) el.className = cls; return el; };
+
+  async function load() {
+    const desk = await (await fetch('/api/desk')).json();
+    const consoles = document.getElementById('consoles');
+    consoles.replaceChildren(...desk.consoles.map(c => {
+      const card = document.createElement('div'); card.className = 'card';
+      card.append(text('div', c.name, 'who'), text('div', c.title + ' · ' + c.email, 'role'));
+      const link = document.createElement('a'); link.href = c.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open console →';
+      card.append(link);
+      return card;
+    }));
+    const first = desk.consoles[0]?.email ?? 'you@example.com';
+    document.getElementById('mcp').textContent =
+      'claude mcp add --transport http access-desk ' + desk.mcp + ' \\\n  --header "' + desk.mcpUserHeader + ': ' + first + '"';
+    await refresh();
+  }
+
+  async function refresh() {
+    const clock = await (await fetch('/api/clock')).json();
+    document.getElementById('now').textContent = minute(clock.now) + (clock.offsetMinutes ? '  (+' + clock.offsetMinutes + ' min)' : '');
+    const actions = await (await fetch('/api/deferred')).json();
+    const body = document.getElementById('deferred');
+    if (!actions.length) { body.replaceChildren(Object.assign(document.createElement('tr'), { innerHTML: '<td colspan="5">None yet. Ask for access in a console.</td>' })); return; }
+    body.replaceChildren(...actions.map(a => {
+      const row = document.createElement('tr');
+      row.append(text('td', minute(a.runAt), 'when'), text('td', a.subjectKind + ' ' + a.subjectId, 'when'), text('td', a.status, 'status-' + a.status),
+                 text('td', a.goal, 'goal'), text('td', a.outcome));
+      return row;
+    }));
+  }
+
+  document.querySelectorAll('button[data-minutes]').forEach(button => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try { await fetch('/api/clock/advance?minutes=' + button.dataset.minutes, { method: 'POST' }); await refresh(); }
+    finally { button.disabled = false; }
+  }));
+
+  load();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>
