@@ -28,7 +28,7 @@ class DeferredActionBoundsTest {
     private static final String MARCUS = "marcus.bell@acme.example";
     private static final String LENA = "lena.ortiz@acme.example";
 
-    private final OnboardingSystems systems = OnboardingSystems.seeded(0);
+    private final OnboardingSystems systems = OnboardingFixtures.world(0);
     private final SubjectRecord marcus = systems.subjects().resolve(OnboardingSystems.WORKER, "W-1002").orElseThrow();
     private final DeferredAction hostile = new DeferredAction("worker_W-1002_20261231", OnboardingSystems.WORKER,
             "W-1002", LocalDate.of(2026, 12, 31), "on 2026-12-31",

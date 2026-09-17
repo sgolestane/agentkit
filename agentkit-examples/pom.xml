@@ -50,6 +50,12 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <!-- The onboarding evals score the example against a real model with agentkit-eval's checks. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-eval</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- The main() demos are meant to be run; give them a real logging binding. -->
         <dependency>
             <groupId>org.slf4j</groupId>

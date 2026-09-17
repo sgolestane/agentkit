@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * side: it behaves the same for every customer, and a customer changes behavior through the
  * policy and prompts in {@link OnboardingConfig}, never here.
  *
- * <p>Every write is recorded so {@link OnboardingExample} can verify a run by what it did to
+ * <p>Every write is recorded so the onboarding evals can verify a run by what it did to
  * these systems rather than by what the model said it did. One instance serves one run.
  *
  * <h2>Tools describe themselves</h2>
@@ -46,7 +46,7 @@ import java.util.regex.Pattern;
  * <h2>Resolving a missing GitHub username</h2>
  *
  * <p>{@code github_add_member} takes an email, not a username: it adds the GitHub account <em>on
- * record</em> for that person, and refuses when none is. Only the HRIS (seeded), the person's own
+ * record</em> for that person, and refuses when none is. Only the HRIS, the person's own
  * Slack profile, or the person answering a Slack form put one on record. A search records nothing:
  * a name match is only a suggestion the person must confirm.
  *
@@ -125,6 +125,9 @@ public final class OnboardingSystems {
     /** The example's "today". Fixed, so scheduled dates and checks never drift with the calendar. */
     public static final LocalDate TODAY = LocalDate.of(2026, 9, 16);
 
+    /** What an HRIS field holds when it holds nothing. */
+    private static final Set<String> NO_VALUE = Set.of("", "none", "n/a", "na", "unknown", "not on file", "-");
+
     /** GitHub's own username rule: alphanumerics and single inner hyphens, at most 39 characters. */
     private static final Pattern GITHUB_USERNAME =
             Pattern.compile("^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$", Pattern.CASE_INSENSITIVE);
@@ -182,49 +185,57 @@ public final class OnboardingSystems {
         return grants.stream().filter(g -> subject.refersTo(g.email())).map(Grant::system).distinct().toList();
     }
 
-    /** Systems seeded with the company's existing state that the scenarios rely on. */
-    public static OnboardingSystems seeded() {
-        return seeded(1_000);
+    /** Empty systems: no workers, accounts or history. A person answering a Slack form takes a second. */
+    public static OnboardingSystems create() {
+        return create(1_000);
     }
 
-    static OnboardingSystems seeded(long replyWaitMillis) {
-        OnboardingSystems s = new OnboardingSystems(replyWaitMillis);
+    /** Empty systems, where a person answering a Slack form takes {@code replyWaitMillis}. */
+    public static OnboardingSystems create(long replyWaitMillis) {
+        return new OnboardingSystems(replyWaitMillis);
+    }
 
-        // A former employee whose Okta account was deactivated when she left.
-        s.okta.put("maria.chen@acme.example", new OktaUser("maria.chen@acme.example",
-                "Maria", "Chen", "DEACTIVATED", Set.of()));
+    // ---------------------------------------------------------------- existing state
+    //
+    // What the connected systems already hold before an onboarding runs. A real deployment reads
+    // this from the systems themselves; the fakes are told it.
 
-        // The HRIS record of the one hire with a termination date.
-        s.workers.put("W-1002", new Worker(Map.of(
-                "employee_id", "W-1002", "name", "Marcus Bell", "work_email", "marcus.bell@acme.example",
-                "title", "Account Executive", "department", "Sales", "employment_type", "contractor",
-                "start_date", "2026-10-01", "termination_date", "2026-12-31", "office", "New York",
-                "manager", "lena.ortiz@acme.example")));
-
-        // Public GitHub. An account called "Jordan Lee" exists, and it is not our Jordan Lee.
-        for (String[] user : new String[][] {
-                {"priyan-dev", "Priya N."}, {"mchen-sre", "Maria Chen"}, {"nfischer-code", "Noah Fischer"},
-                {"ar-codes", ""}, {"jlee", "Jordan Lee"}, {"jl-builds", ""}}) {
-            s.githubDirectory.put(user[0], user[1]);
+    /**
+     * Adds a worker to the HRIS. A {@code github_username} field that holds a username (rather than a
+     * placeholder such as "none" or "not on file") puts that GitHub account on record for them, with
+     * the HRIS as its source.
+     */
+    public synchronized Worker addWorker(Map<String, String> fields) {
+        Worker worker = new Worker(fields);
+        Objects.requireNonNull(worker.employeeId(), "employee_id");
+        Objects.requireNonNull(worker.email(), "work_email");
+        workers.put(worker.employeeId(), worker);
+        String github = fields.get("github_username");
+        if (github != null && !NO_VALUE.contains(lower(github)) && GITHUB_USERNAME.matcher(github.strip()).matches()) {
+            recordIdentity(lower(worker.email()), lower(github), "hris");
         }
+        return worker;
+    }
 
-        // The HRIS already knows these engineers' GitHub accounts.
-        s.recordIdentity("priya.natarajan@acme.example", "priyan-dev", "hris");
-        s.recordIdentity("maria.chen@acme.example", "mchen-sre", "hris");
+    /** An Okta account deactivated when its owner left. */
+    public synchronized void addDeactivatedOktaUser(String email, String firstName, String lastName) {
+        okta.put(lower(email), new OktaUser(lower(email), firstName, lastName, "DEACTIVATED", Set.of()));
+    }
 
-        // Hires invited to Slack before their start date. Only Noah filled in his GitHub field.
-        for (String email : List.of("noah.fischer@acme.example", "aisha.rahman@acme.example",
-                "jordan.lee@acme.example", "alex.rivera@acme.example")) {
-            s.slack.put(email, new SlackAccount(email, "guest", Set.of("#welcome")));
-            s.slackProfiles.put(email, new LinkedHashMap<>(Map.of("title", "New hire", "timezone", "America/Chicago")));
-        }
-        s.slackProfiles.get("noah.fischer@acme.example").put("github", "nfischer-code");
+    /** A public GitHub account; {@code publicName} may be empty. */
+    public synchronized void addGithubUser(String login, String publicName) {
+        githubDirectory.put(lower(login), publicName == null ? "" : publicName);
+    }
 
-        // What each person submits if asked. Alex never answers.
-        s.hireReplies.put("noah.fischer@acme.example", "nfischer-code");
-        s.hireReplies.put("aisha.rahman@acme.example", "ar-codes");
-        s.hireReplies.put("jordan.lee@acme.example", "jl-builds");
-        return s;
+    /** A Slack account created before the start date, with whatever the person put on their profile. */
+    public synchronized void addPreboardingSlackAccount(String email, Map<String, String> profile) {
+        slack.put(lower(email), new SlackAccount(lower(email), "guest", Set.of("#welcome")));
+        slackProfiles.put(lower(email), new LinkedHashMap<>(profile));
+    }
+
+    /** What a person submits when a Slack form asks them for their GitHub username; unset means they never answer. */
+    public synchronized void setGithubUsernameReply(String email, String reply) {
+        hireReplies.put(lower(email), reply);
     }
 
     /** Every tool, in one registry. Build a fresh registry per executor step. */

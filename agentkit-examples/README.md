@@ -13,7 +13,7 @@ show one way of doing it.
 | `CollaborationExample` | All three collaboration primitives — blackboard, peer messaging, refine loop. |
 | `WebResearchAgent` | A client-executed search tool, so it works on any backend including Bedrock. |
 | `TemporalWorkerExample` | The loop running durably as a Temporal workflow. |
-| `onboarding.OnboardingExample` | `PlanningAgent` resolving a branching policy into a flat plan, over fake Okta/Slack/GitHub tools, verified by system state. |
+| `onboarding.OnboardingApp` | `PlanningAgent` resolving a branching policy into a flat plan, over fake Okta/Slack/GitHub tools, with evals scored on system state. |
 
 ## Running one
 
@@ -61,11 +61,13 @@ export TAVILY_API_KEY=tvly-...                     # optional — omit for offli
     -Dexec.mainClass=dev.agentkit.examples.WebResearchAgent
 ```
 
-## IT onboarding (`onboarding.OnboardingExample`)
+## IT onboarding (`onboarding.OnboardingApp`)
 
-One onboarding policy full of conditions (rehire or new, full-time or contractor,
-remote or on-site, Engineering or Sales, production access requested, GitHub username
-on file) plus one hire's facts make up the goal. `LlmPlanner` resolves every condition
+The application is two pieces. `OnboardingGoal` is the only onboarding-specific one: one
+onboarding policy full of conditions (rehire or new, full-time or contractor, remote or on-site,
+Engineering or Sales, production access requested, GitHub username on file, termination date) plus
+one hire's HRIS record. `planexecute.PlanExecuteAgent` runs it, and knows nothing about onboarding:
+a planner prompt, an executor prompt, a model and a tool registry around `PlanningAgent`. `LlmPlanner` resolves every condition
 while planning and emits a flat list of unconditional steps; a fresh executor carries
 out each one against in-memory Okta, GitHub, AWS, Salesforce, Slack, Workday and IT-desk
 tools (`OnboardingSystems`).
@@ -89,16 +91,36 @@ The policy and both prompts are files, not code, so they can be changed without 
 `ONBOARDING_POLICY_FILE`, `ONBOARDING_PLANNER_PROMPT_FILE` and `ONBOARDING_EXECUTOR_PROMPT_FILE`
 each replace one.
 
-Seven hires cover the branches. Each is checked on the plan (no conditional wording,
-pruned branches absent) and on the fake systems' final state, including where a missing
-username came from. The program exits non-zero if any check fails.
+### Running it
+
+`OnboardingApp` onboards one hire, from a `key: value` HRIS record file or a bundled sample
+contractor, and prints the plan, every tool call, and the deferred actions with the goal and
+tools each will run with:
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 export ONBOARDING_MODEL=anthropic/claude-sonnet-5    # optional; any OpenRouter model id
-export ONBOARDING_SCENARIOS="github-found rehire"    # optional subset
+export ONBOARDING_HIRE_FILE=./my-hire.properties     # optional; see src/main/resources/onboarding/sample-hire.properties
 export ONBOARDING_POLICY_FILE=./my-policy.md         # optional; your own policy
 
 ./mvnw -f agentkit-examples/pom.xml exec:exec \
-    -Dexec.mainClass=dev.agentkit.examples.onboarding.OnboardingExample
+    -Dexec.mainClass=dev.agentkit.examples.onboarding.OnboardingApp
 ```
+
+### Evals
+
+The evals are tests, kept apart from the application: `OnboardingFixtures` holds seven hires and
+what the systems already hold, and `onboarding.evals.OnboardingEvalTest` runs each hire against a
+real model and scores it with `agentkit-eval` checks, on the plan (no conditional wording, no skip
+notes, branches that do not apply absent) and on the systems' final state (accounts, grants,
+tickets, where a missing GitHub username came from, deferred actions and their goals). They cost
+real tokens, so they are skipped unless asked for:
+
+```bash
+ONBOARDING_EVAL=true OPENROUTER_API_KEY=sk-or-... \
+ONBOARDING_SCENARIOS="github-found rehire" \
+    ./mvnw -f agentkit-examples/pom.xml test -Dtest=OnboardingEvalTest
+```
+
+Leave out `ONBOARDING_SCENARIOS` to run all seven: `engineer`, `contractor`, `rehire`,
+`github-found`, `github-asked`, `github-guessed` and `github-missing`.

@@ -10,7 +10,8 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * What a customer customizes, and nothing else: the onboarding policy and the two prompts.
+ * What a customer customizes, and nothing else: the onboarding policy, which goes into each
+ * {@link OnboardingGoal}, and the two prompts the {@code PlanExecuteAgent} runs with.
  *
  * <p>Each is a text file. The defaults ship on the classpath under {@code onboarding/}; an
  * environment variable naming a file replaces one of them without a code change or a rebuild:
