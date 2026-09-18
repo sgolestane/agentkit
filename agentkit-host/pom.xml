@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-host</artifactId>
+    <name>AgentKit :: Host</name>
+    <description>Agents as configuration: an organization's Git repository of agent definitions
+        (prompts, policy, tools chosen by what they declare, confirmations, arguments bound to the
+        person asking), validated, pinned to a commit, and assembled into a running agent per
+        turn over MCP connectors.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-chat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-openrouter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

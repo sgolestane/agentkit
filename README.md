@@ -74,6 +74,7 @@ agentkit-otel/           # OpenTelemetry traces and metrics (GenAI semantic conv
 agentkit-chat/           # a conversation as the front door: turns, events, approvals, uploads
 agentkit-chat-ui/        # the console agentkit-chat serves (React), built into its jar
 agentkit-agui/           # that stream spoken as AG-UI, for a CopilotKit or assistant-ui frontend
+agentkit-host/           # agents as configuration: an org's Git repo of definitions, assembled over MCP connectors
 agentkit-examples/       # runnable end-to-end demos
 ```
 

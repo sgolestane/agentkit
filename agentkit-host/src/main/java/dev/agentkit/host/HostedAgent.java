@@ -1,0 +1,285 @@
+package dev.agentkit.host;
+
+import dev.agentkit.chat.ChatRuntime;
+import dev.agentkit.chat.ChatTools;
+import dev.agentkit.chat.ChatUnavailable;
+import dev.agentkit.core.agent.Agent;
+import dev.agentkit.core.agent.AgentConfig;
+import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.core.prompt.Source;
+import dev.agentkit.core.prompt.Spotlight;
+import dev.agentkit.core.reliability.Approver;
+import dev.agentkit.core.reliability.ToolGate;
+import dev.agentkit.core.reliability.ToolGates;
+import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.SimpleToolRegistry;
+import dev.agentkit.core.tool.Tool;
+import dev.agentkit.core.tool.ToolEffect;
+import dev.agentkit.core.util.OneLine;
+import dev.agentkit.host.repo.AgentDefinition;
+import dev.agentkit.host.repo.AgentDefinition.ToolRef;
+import dev.agentkit.host.repo.AgentDefinition.ToolSelector;
+import dev.agentkit.host.repo.DefinitionException;
+import dev.agentkit.host.repo.DefinitionException.Problem;
+import dev.agentkit.host.repo.OrgRepo;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+/**
+ * One agent definition, assembled against its organization's connected tools: what a turn with it is given, and how.
+ *
+ * <p>{@link #assemble} checks what could not be checked before the connectors were reached, and refuses the
+ * definition with every problem at once:
+ * <ul>
+ *   <li>each tool selector selects something, and every tool it names exists;</li>
+ *   <li>no two selected tools share a name, since the model calls tools by name;</li>
+ *   <li>every confirmed tool exists and is selected;</li>
+ *   <li>every bound argument is an argument of the tool it is bound on;</li>
+ *   <li><strong>nothing grants without a person in the loop</strong>: a selected tool that declares
+ *       {@link ToolEffect#GRANT} must be confirmed, unless its connector is marked {@code authoritative} — it
+ *       enforces its own rules for what it grants, as Access Desk's ledger does.</li>
+ * </ul>
+ * A connector that is not reachable is not a problem with the definition. The agent is assembled as unavailable, and
+ * says why when asked.
+ *
+ * <p>Per turn, {@link #tools(Principal)} binds arguments to the person asking, {@link #systemPrompt} gives the model
+ * the prompt, the policy, who it is talking to and the time, and {@link #gate} stops confirmed tools for the person.
+ */
+public final class HostedAgent {
+
+    /** One tool the agent is given: where it comes from, and the arguments bound on it. */
+    private record Selected(String connector, DeclaredTools.Entry entry, Map<String, String> bindings) {
+    }
+
+    private final OrgRepo repo;
+    private final AgentDefinition definition;
+    private final List<Selected> selected;
+    private final Set<String> confirmed;
+    private final Optional<String> unavailable;
+
+    private HostedAgent(OrgRepo repo, AgentDefinition definition, List<Selected> selected, Set<String> confirmed,
+                        Optional<String> unavailable) {
+        this.repo = repo;
+        this.definition = definition;
+        this.selected = List.copyOf(selected);
+        this.confirmed = Set.copyOf(confirmed);
+        this.unavailable = unavailable;
+    }
+
+    /**
+     * Assembles {@code definition} against {@code connectors}.
+     *
+     * @throws DefinitionException listing everything wrong with it
+     */
+    public static HostedAgent assemble(OrgRepo repo, AgentDefinition definition, OrgConnectors connectors) {
+        String file = "agents/" + definition.id() + "/agent.yaml";
+        List<Problem> problems = new ArrayList<>();
+
+        List<String> down = definition.tools().stream().map(ToolSelector::connector).distinct()
+                .filter(c -> connectors.catalog(c).isEmpty()).toList();
+        if (!down.isEmpty()) {
+            String why = down.stream().map(c -> connectors.failure(c).orElse("The " + c + " connector is not connected."))
+                    .collect(Collectors.joining(" "));
+            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why));
+        }
+
+        // Which tools, in the order the selectors and each connector list them.
+        Map<String, Selected> byName = new LinkedHashMap<>();
+        for (int i = 0; i < definition.tools().size(); i++) {
+            ToolSelector selector = definition.tools().get(i);
+            DeclaredTools catalog = connectors.catalog(selector.connector()).orElseThrow();
+            for (String named : selector.tools()) {
+                if (catalog.entry(named).isEmpty()) {
+                    problems.add(new Problem(file, "tools[" + i + "].tools",
+                            selector.connector() + " has no tool " + named + " that declares what it does"));
+                }
+            }
+            int count = 0;
+            for (DeclaredTools.Entry entry : catalog.entries()) {
+                if (!selector.selects(selector.connector(), entry.tool().name(), entry.declaration().effect())) {
+                    continue;
+                }
+                count++;
+                Selected already = byName.get(entry.tool().name());
+                if (already == null) {
+                    byName.put(entry.tool().name(), new Selected(selector.connector(), entry, Map.of()));
+                } else if (!already.connector().equals(selector.connector())) {
+                    problems.add(new Problem(file, "tools[" + i + "]", "both " + already.connector() + " and "
+                            + selector.connector() + " have a tool named " + entry.tool().name()
+                            + "; select only one of them"));
+                }
+            }
+            if (count == 0) {
+                problems.add(new Problem(file, "tools[" + i + "]", "selects no tool of " + selector.connector()));
+            }
+        }
+
+        // Confirmations.
+        Set<String> confirmed = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < definition.confirm().size(); i++) {
+            ToolRef ref = definition.confirm().get(i);
+            Selected tool = byName.get(ref.tool());
+            if (tool == null || !tool.connector().equals(ref.connector())) {
+                problems.add(new Problem(file, "confirm[" + i + "]", ref + " is not one of this agent's tools"));
+            } else {
+                confirmed.add(ref.tool());
+            }
+        }
+
+        // Bindings: exact ones must fit their tool; a wildcard binds every tool of the connector that has the argument.
+        Map<String, Map<String, String>> bindings = new LinkedHashMap<>();
+        for (Map.Entry<ToolRef, Map<String, String>> bind : definition.bind().entrySet()) {
+            ToolRef ref = bind.getKey();
+            List<Selected> targets = byName.values().stream()
+                    .filter(s -> ref.matches(s.connector(), s.entry().tool().name())).toList();
+            if (targets.isEmpty()) {
+                problems.add(new Problem(file, "bind." + ref, ref.isWildcard()
+                        ? "this agent has no tools of " + ref.connector() : ref + " is not one of this agent's tools"));
+                continue;
+            }
+            for (Map.Entry<String, String> argument : bind.getValue().entrySet()) {
+                List<Selected> fitting = targets.stream()
+                        .filter(s -> BoundTool.hasArgument(s.entry().tool().inputSchema(), argument.getKey())).toList();
+                if (fitting.isEmpty() || !ref.isWildcard() && fitting.size() != targets.size()) {
+                    problems.add(new Problem(file, "bind." + ref + "." + argument.getKey(), (ref.isWildcard()
+                            ? "no tool of " + ref.connector() + " has an argument " : ref + " has no argument ")
+                            + argument.getKey()));
+                    continue;
+                }
+                fitting.forEach(s -> bindings.computeIfAbsent(s.entry().tool().name(), k -> new LinkedHashMap<>())
+                        .put(argument.getKey(), argument.getValue()));
+            }
+        }
+
+        // Nothing grants without a person, unless the connector holds the rules itself.
+        for (Selected tool : byName.values()) {
+            if (tool.entry().declaration().effect() == ToolEffect.GRANT && !confirmed.contains(tool.entry().tool().name())
+                    && !connectors.isAuthoritative(tool.connector())) {
+                problems.add(new Problem(file, "confirm", tool.connector() + "/" + tool.entry().tool().name()
+                        + " grants something, so it must be confirmed, or " + tool.connector()
+                        + " marked authoritative because it enforces its own rules"));
+            }
+        }
+
+        if (!problems.isEmpty()) {
+            throw new DefinitionException(problems);
+        }
+        List<Selected> tools = byName.values().stream()
+                .map(s -> new Selected(s.connector(), s.entry(), bindings.getOrDefault(s.entry().tool().name(), Map.of())))
+                .toList();
+        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty());
+    }
+
+    public AgentDefinition definition() {
+        return definition;
+    }
+
+    /** {@code id@version}: which definition, at which commit, a turn ran. */
+    public String qualifiedName() {
+        return definition.id() + "@" + repo.version();
+    }
+
+    public String model() {
+        return definition.model() != null ? definition.model() : repo.defaultModel();
+    }
+
+    /** Why the agent cannot run right now, if it cannot. */
+    public Optional<String> unavailable() {
+        return unavailable;
+    }
+
+    /** Whether {@code principal} is in the agent's audience. */
+    public boolean admits(Principal principal) {
+        return principal.org().equals(repo.org()) && (definition.audience().contains(AgentDefinition.EVERYONE)
+                || definition.audience().stream().anyMatch(principal.groups()::contains));
+    }
+
+    /** The agent's tools for one person: each with its declaration, and bound arguments filled from them. */
+    public DeclaredTools tools(Principal principal) {
+        DeclaredTools tools = new DeclaredTools();
+        for (Selected s : selected) {
+            Tool tool = s.bindings().isEmpty() ? s.entry().tool() : new BoundTool(s.entry().tool(), s.bindings(), principal);
+            tools.add(tool, s.entry().declaration());
+        }
+        return tools;
+    }
+
+    /** The names of tools that stop for the person's confirmation. */
+    public Set<String> confirmed() {
+        return confirmed;
+    }
+
+    /** Stops the confirmed tools for {@code approver}'s decision. */
+    public ToolGate gate(Approver approver) {
+        return ToolGates.requireApproval(invocation -> confirmed.contains(invocation.name()), approver);
+    }
+
+    /**
+     * The system prompt for a turn: the operator's prompt and policy, then who the agent is talking to — their
+     * directory record, fenced, since people type what is in it — and the time.
+     */
+    public String systemPrompt(Principal principal, Instant now) {
+        StringBuilder record = new StringBuilder("- email: ").append(principal.email()).append('\n');
+        new TreeMap<>(principal.facts()).forEach((field, value) -> {
+            if (!field.equals("email")) {
+                record.append("- ").append(OneLine.of(field)).append(": ").append(OneLine.of(value)).append('\n');
+            }
+        });
+        StringBuilder prompt = new StringBuilder(definition.systemPrompt());
+        if (!definition.policy().isBlank()) {
+            prompt.append("\n\n").append(definition.policy());
+        }
+        prompt.append("\n\nYou are talking to one person, and you act only as them. Their record in the directory:\n")
+                .append(Spotlight.wrap(Spotlight.Kind.EVIDENCE, Source.of("directory", principal.email()),
+                        record.toString()))
+                .append("\n\nThe time now is ").append(now).append(" (UTC).");
+        return prompt.toString();
+    }
+
+    public AgentConfig config(String systemPrompt) {
+        return AgentConfig.builder(model()).systemPrompt(systemPrompt).maxSteps(definition.maxSteps())
+                .maxTokens(definition.maxTokens()).build();
+    }
+
+    /**
+     * How a chat runtime builds this agent for a turn.
+     *
+     * @param principals who a conversation's tenant is; empty for someone the organization does not know
+     * @param runtime    the runtime being built around this, for asking the person a question
+     */
+    public ChatRuntime.Agents chatAgents(Optional<LlmClient> llm, Function<String, Optional<Principal>> principals,
+                                         Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
+        Objects.requireNonNull(llm, "llm");
+        Objects.requireNonNull(principals, "principals");
+        Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(runtime, "runtime");
+        return session -> {
+            if (llm.isEmpty()) {
+                throw new ChatUnavailable("No model is configured for " + definition.name() + ".");
+            }
+            if (unavailable.isPresent()) {
+                throw new ChatUnavailable(definition.name() + " is unavailable. " + unavailable.get());
+            }
+            Principal principal = principals.apply(session.tenantId())
+                    .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
+            if (!admits(principal)) {
+                throw new ChatUnavailable(definition.name() + " is not available to you.");
+            }
+            List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
+            tools.add(ChatTools.askPerson(runtime.get(), session));
+            Agent.Builder builder = session.agent(llm.get(), new SimpleToolRegistry(tools),
+                    config(systemPrompt(principal, clock.get())));
+            return builder.name(definition.id()).toolGate(gate(session.approver())).build();
+        };
+    }
+}

@@ -1,0 +1,8 @@
+name: Security Desk
+description: Looks people up for the security team.
+audience: [security]
+prompt:
+  system: system.md
+tools:
+  - connector: helpdesk
+    tools: [directory_lookup]
