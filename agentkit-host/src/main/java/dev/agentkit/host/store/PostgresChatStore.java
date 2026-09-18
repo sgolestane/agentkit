@@ -62,14 +62,24 @@ public final class PostgresChatStore implements ChatStore {
 
     private final Database database;
     private final Clock clock;
+    private final String runner;
 
     public PostgresChatStore(Database database) {
         this(database, Clock.systemUTC());
     }
 
     public PostgresChatStore(Database database, Clock clock) {
+        this(database, clock, null);
+    }
+
+    /**
+     * @param runner the instance of the host whose runtime runs the turns begun through this store, noted with each
+     *               so another instance can tell when one was left behind ({@link Instances}); null for none
+     */
+    public PostgresChatStore(Database database, Clock clock, String runner) {
         this.database = Objects.requireNonNull(database, "database");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.runner = runner;
     }
 
     /** Microseconds, the database's precision, so what is returned is what is read back. */
@@ -196,14 +206,16 @@ public final class PostgresChatStore implements ChatStore {
             }
             Instant now = now();
             Turn turn = Turn.beginning(mint("turn"), conversationId, ordinal, userText, attachmentIds, now);
-            try (PreparedStatement insert = connection.prepareStatement("insert into chat_turn "
-                    + "(id, org_id, tenant_id, conversation_id, ordinal, turn) values (?, ?, ?, ?, ?, ?::json)")) {
+            try (PreparedStatement insert = connection.prepareStatement("insert into chat_turn (id, org_id, tenant_id, "
+                    + "conversation_id, ordinal, turn, state, runner) values (?, ?, ?, ?, ?, ?::json, ?, ?)")) {
                 insert.setString(1, turn.id());
                 insert.setString(2, orgOf(tenantId));
                 insert.setString(3, tenantId);
                 insert.setString(4, conversationId);
                 insert.setLong(5, ordinal);
                 insert.setString(6, json(turn));
+                insert.setString(7, turn.state().name());
+                insert.setString(8, runner);
                 insert.executeUpdate();
             }
             touch(connection, conversationId, now);
@@ -283,9 +295,10 @@ public final class PostgresChatStore implements ChatStore {
             }
             Turn updated = change.apply(connection, current.get());
             try (PreparedStatement update = connection.prepareStatement(
-                    "update chat_turn set turn = ?::json where id = ?")) {
+                    "update chat_turn set turn = ?::json, state = ? where id = ?")) {
                 update.setString(1, json(updated));
-                update.setString(2, turnId);
+                update.setString(2, updated.state().name());
+                update.setString(3, turnId);
                 update.executeUpdate();
             }
             touch(connection, conversationId, now());

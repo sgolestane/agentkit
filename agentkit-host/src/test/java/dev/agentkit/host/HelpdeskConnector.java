@@ -56,6 +56,11 @@ final class HelpdeskConnector implements AutoCloseable {
         return new HelpdeskConnector(name -> true, 0, tools -> callers.guard(tools, java.util.Set.of("requester")));
     }
 
+    /** A helpdesk on {@code port}: for a connector that comes up where the host was told it would be, but later. */
+    static HelpdeskConnector onPort(int port) throws IOException {
+        return new HelpdeskConnector(name -> true, port);
+    }
+
     private HelpdeskConnector(java.util.function.Predicate<String> serves, int port) throws IOException {
         this(serves, port, tools -> tools);
     }

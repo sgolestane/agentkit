@@ -119,6 +119,26 @@ public final class Database implements AutoCloseable {
                 usd           double precision not null,
                 primary key (org_id, day, agent_id, model, host_paid)
             );
+            """, """
+            create table host_session (
+                kind       text not null,
+                key_digest text not null,
+                value      text not null,
+                expires_at timestamptz not null,
+                primary key (kind, key_digest)
+            );
+            create index host_session_by_expiry on host_session (expires_at);
+
+            create table host_instance (
+                id           text primary key,
+                started_at   timestamptz not null,
+                heartbeat_at timestamptz not null
+            );
+
+            alter table chat_turn add column runner text;
+            alter table chat_turn add column state text;
+            update chat_turn set state = turn->>'state';
+            create index chat_turn_live on chat_turn (runner) where state in ('QUEUED', 'RUNNING');
             """);
 
     private final HikariDataSource pool;

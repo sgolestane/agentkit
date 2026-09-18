@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -40,7 +39,8 @@ import org.slf4j.LoggerFactory;
  * <p>Who someone is comes only from an ID token that passed {@link Oidc}'s checks, and only if the organization's
  * directory knows the email it carries: a person the identity provider knows and the directory does not is refused. A
  * session is a random id in an {@code HttpOnly} cookie, {@code Secure} on an https host, and lasts
- * {@link #SESSION_LENGTH}; the host keeps them in memory, so a restart signs everyone out.
+ * {@link #SESSION_LENGTH}. Sessions and sign-ins in progress are kept in a {@link SessionStore}: with a database,
+ * shared by every instance of the host, so a person stays signed in across instances and restarts.
  */
 public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
 
@@ -56,13 +56,21 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
     private final Function<OrgHost, Optional<Oidc>> providers;
     private final URI publicUrl;
     private final Supplier<Instant> clock;
-    private final Map<String, Pending> pending = new ConcurrentHashMap<>();
-    private final Map<String, Session> sessions = new ConcurrentHashMap<>();
+    private final SessionStore store;
 
-    private record Pending(String org, String nonce, String verifier, Instant expires) {
-    }
+    private static final String SESSION = "session";
+    private static final String SIGN_IN = "sign-in";
 
-    private record Session(String tenant, Instant expires) {
+    /** A sign-in waiting for the identity provider to send the person back. */
+    private record Pending(String org, String nonce, String verifier) {
+        String write() {
+            return org + '\n' + nonce + '\n' + verifier;
+        }
+
+        static Pending read(String written) {
+            String[] parts = written.split("\n", 3);
+            return new Pending(parts[0], parts[1], parts[2]);
+        }
     }
 
     /**
@@ -71,6 +79,13 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
      */
     public OidcSignIn(Map<String, OrgHost> orgs, Function<OrgHost, Optional<Oidc>> providers, URI publicUrl,
                       Supplier<Instant> clock) {
+        this(orgs, providers, publicUrl, clock, SessionStore.inMemory());
+    }
+
+    /** @param store where sessions and sign-ins in progress are kept */
+    public OidcSignIn(Map<String, OrgHost> orgs, Function<OrgHost, Optional<Oidc>> providers, URI publicUrl,
+                      Supplier<Instant> clock, SessionStore store) {
+        this.store = Objects.requireNonNull(store, "store");
         this.orgs = Map.copyOf(orgs);
         this.providers = Objects.requireNonNull(providers, "providers");
         this.publicUrl = URI.create(Objects.requireNonNull(publicUrl, "publicUrl").toString().replaceAll("/+$", ""));
@@ -84,17 +99,7 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
 
     @Override
     public Optional<String> of(HttpExchange exchange) {
-        return cookie(exchange, SESSION_COOKIE).flatMap(id -> {
-            Session session = sessions.get(id);
-            if (session == null) {
-                return Optional.empty();
-            }
-            if (!session.expires().isAfter(clock.get())) {
-                sessions.remove(id);
-                return Optional.empty();
-            }
-            return Optional.of(session.tenant());
-        });
+        return cookie(exchange, SESSION_COOKIE).flatMap(id -> store.get(SESSION, id, clock.get()));
     }
 
     @Override
@@ -110,7 +115,7 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
                 case "/sign-in" -> start(exchange);
                 case "/sign-in/callback" -> callback(exchange);
                 case "/sign-out" -> {
-                    cookie(exchange, SESSION_COOKIE).ifPresent(sessions::remove);
+                    cookie(exchange, SESSION_COOKIE).ifPresent(id -> store.remove(SESSION, id));
                     exchange.getResponseHeaders().add("Set-Cookie", clear(SESSION_COOKIE));
                     page(exchange, 200, "Signed out", "<p>You are signed out.</p><p><a href=\"/sign-in\">Sign in again</a></p>");
                 }
@@ -140,7 +145,7 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
         String state = random();
         String nonce = random();
         String verifier = random() + random();
-        pending.put(state, new Pending(org, nonce, verifier, clock.get().plus(SIGN_IN_LENGTH)));
+        store.put(SIGN_IN, state, new Pending(org, nonce, verifier).write(), clock.get().plus(SIGN_IN_LENGTH));
         URI to;
         try {
             to = provider.get().authorizeUrl(redirect(), state, nonce, challenge(verifier));
@@ -160,10 +165,11 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
         Map<String, String> query = query(exchange);
         exchange.getResponseHeaders().add("Set-Cookie", clear(STATE_COOKIE));
         String state = query.getOrDefault("state", "");
-        Pending started = state.isEmpty() ? null : pending.remove(state);
+        Pending started = state.isEmpty() ? null
+                : store.take(SIGN_IN, state, clock.get()).map(Pending::read).orElse(null);
         Optional<String> browserState = cookie(exchange, STATE_COOKIE);
         if (started == null || browserState.isEmpty() || !MessageDigest.isEqual(state.getBytes(StandardCharsets.UTF_8),
-                browserState.get().getBytes(StandardCharsets.UTF_8)) || !started.expires().isAfter(clock.get())) {
+                browserState.get().getBytes(StandardCharsets.UTF_8))) {
             refuse(exchange, "This sign-in was not started here, or took too long.");
             return;
         }
@@ -199,7 +205,7 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
             return;
         }
         String session = random();
-        sessions.put(session, new Session(new Tenant(org.org(), email.get()).id(), clock.get().plus(SESSION_LENGTH)));
+        store.put(SESSION, session, new Tenant(org.org(), email.get()).id(), clock.get().plus(SESSION_LENGTH));
         exchange.getResponseHeaders().add("Set-Cookie", cookie(SESSION_COOKIE, session, SESSION_LENGTH));
         exchange.getResponseHeaders().add("Location", "/");
         exchange.sendResponseHeaders(302, -1);
@@ -208,9 +214,7 @@ public final class OidcSignIn implements ChatServer.Tenants, HttpHandler {
     // ---------------------------------------------------------------- helpers
 
     private void prune() {
-        Instant now = clock.get();
-        pending.values().removeIf(p -> !p.expires().isAfter(now));
-        sessions.values().removeIf(s -> !s.expires().isAfter(now));
+        store.prune(clock.get());
     }
 
     /** Refuses a sign-in, saying why: escaped, since part of it can come from the identity provider's redirect. */

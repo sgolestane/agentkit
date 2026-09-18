@@ -148,6 +148,11 @@ public final class OrgConnectors implements AutoCloseable {
         return Optional.ofNullable(failed.get(connector));
     }
 
+    /** Every connector not connected, with why. */
+    public Map<String, String> failures() {
+        return failed;
+    }
+
     public boolean isAuthoritative(String connector) {
         ConnectorSpec spec = specs.get(connector);
         return spec != null && spec.authoritative();

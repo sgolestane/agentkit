@@ -5,6 +5,7 @@ import dev.agentkit.host.repo.GitVersion;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,6 +35,15 @@ import org.slf4j.LoggerFactory;
  * host loads the checkout as usual, then loads again the most recent earlier versions the log names — each from its
  * commit, taken out of the repository's history — so conversations pinned to them go on as before. A version that
  * was never committed (a working tree with changes) cannot be taken out again, and is let go.
+ *
+ * <p><strong>Across instances.</strong> Each instance of the host serves its own checkout, and they do not change
+ * version at the same moment. A conversation pinned by one instance to a version another has not loaded is served by
+ * the other all the same ({@link #serving}): it looks at its checkout again, and failing that takes the version out
+ * of the repository's history, if the log says some instance served it.
+ *
+ * <p><strong>Letting go.</strong> A version let go is closed after {@link #GRACE}, not at once, so a turn already
+ * using its connectors can finish. A connector that could not be reached when a version loaded is tried again
+ * ({@link #reconnect}), and the version is loaded afresh once it answers.
  */
 public final class OrgHost implements AutoCloseable {
 
@@ -42,6 +52,12 @@ public final class OrgHost implements AutoCloseable {
     /** How many versions stay loaded, the current one included. */
     public static final int RETAINED = 3;
 
+    /** How long a version let go stays open, so a turn already using it can finish. */
+    public static final Duration GRACE = Duration.ofMinutes(5);
+
+    /** How long a version that could not be served on demand is not tried again. */
+    static final Duration MISS_REMEMBERED = Duration.ofSeconds(30);
+
     private final Path checkout;
     private final Function<Path, AgentHost> loader;
     private final Function<Path, String> versionOf;
@@ -49,7 +65,13 @@ public final class OrgHost implements AutoCloseable {
     private final Function<String, Optional<Past>> past;
     private final LinkedHashMap<String, AgentHost> versions = new LinkedHashMap<>();
     private final Map<String, Runnable> cleanups = new HashMap<>();
+    private final List<Retiring> retiring = new ArrayList<>();
+    private final Map<String, Instant> misses = new HashMap<>();
     private AgentHost current;
+
+    /** A version let go, closed once its grace is over. */
+    private record Retiring(AgentHost host, Runnable cleanup, Instant at) {
+    }
 
     /** An earlier version loaded again, and what to do once it is let go. */
     record Past(AgentHost host, Runnable cleanup) {
@@ -175,6 +197,7 @@ public final class OrgHost implements AutoCloseable {
      * @throws DefinitionException if the new version does not load; the current one goes on serving
      */
     public synchronized String reload() {
+        closeRetired(Instant.now());
         String version = versionOf.apply(checkout);
         if (current != null && current.repo().version().equals(version)) {
             return version;
@@ -187,21 +210,118 @@ public final class OrgHost implements AutoCloseable {
         }
         AgentHost replaced = versions.put(loaded.repo().version(), loaded);
         if (replaced != null && replaced != loaded) {
-            replaced.close();
+            retire(replaced, null);
         }
         current = loaded;
         log.loaded(loaded.repo().org(), loaded.repo().version(), Instant.now());
-        List<String> retired = new ArrayList<>();
-        while (versions.size() > RETAINED) {
-            Map.Entry<String, AgentHost> oldest = versions.entrySet().iterator().next();
-            versions.remove(oldest.getKey());
-            oldest.getValue().close();
-            Optional.ofNullable(cleanups.remove(oldest.getKey())).ifPresent(Runnable::run);
-            retired.add(oldest.getKey());
-        }
+        List<String> retired = trim(loaded.repo().version());
         LOG.info("{} is now at {}{}", loaded.repo().org(), loaded.repo().version(),
                 retired.isEmpty() ? "" : "; let go of " + retired);
         return loaded.repo().version();
+    }
+
+    /** Lets go of the oldest versions beyond {@link #RETAINED}, never the current one or {@code keep}. */
+    private List<String> trim(String keep) {
+        List<String> retired = new ArrayList<>();
+        while (versions.size() > RETAINED) {
+            String oldest = versions.keySet().stream()
+                    .filter(v -> !v.equals(keep) && versions.get(v) != current).findFirst().orElse(null);
+            if (oldest == null) {
+                break;
+            }
+            retire(versions.remove(oldest), cleanups.remove(oldest));
+            retired.add(oldest);
+        }
+        return retired;
+    }
+
+    private void retire(AgentHost host, Runnable cleanup) {
+        retiring.add(new Retiring(host, cleanup, Instant.now()));
+    }
+
+    private void closeRetired(Instant now) {
+        retiring.removeIf(r -> {
+            if (r.at().plus(GRACE).isAfter(now)) {
+                return false;
+            }
+            r.host().close();
+            Optional.ofNullable(r.cleanup()).ifPresent(Runnable::run);
+            return true;
+        });
+    }
+
+    /**
+     * {@code version}, if this instance serves it or can: one loaded, or — for a conversation another instance pinned
+     * to a version this one has not loaded — the checkout looked at again, and failing that the version taken out of the
+     * repository's history, if it is among the {@link #RETAINED} the log says were served most recently. A version
+     * that cannot be served is not tried again for a while.
+     */
+    public synchronized Optional<AgentHost> serving(String version) {
+        Optional<AgentHost> loaded = version(version);
+        if (loaded.isPresent()) {
+            return loaded;
+        }
+        Instant now = Instant.now();
+        Instant missed = misses.get(version);
+        if (missed != null && missed.plus(MISS_REMEMBERED).isAfter(now)) {
+            return Optional.empty();
+        }
+        try {
+            reload();
+        } catch (RuntimeException e) {
+            LOG.warn("Looking at {} again for {} failed: {}", checkout, version, e.getMessage());
+        }
+        if (versions.containsKey(version)) {
+            return version(version);
+        }
+        String org = current.repo().org();
+        // Only a version still among the organization's most recent: one let go everywhere stays let go.
+        Optional<Past> restored = log.recent(org, RETAINED).contains(version) ? past.apply(version) : Optional.empty();
+        if (restored.isEmpty() || !restored.get().host().repo().org().equals(org)) {
+            restored.ifPresent(p -> {
+                p.host().close();
+                p.cleanup().run();
+            });
+            misses.put(version, now);
+            return Optional.empty();
+        }
+        versions.put(version, restored.get().host());
+        cleanups.put(version, restored.get().cleanup());
+        List<String> retired = trim(version);
+        LOG.info("{} serves {} again, for a conversation pinned to it{}", org, version,
+                retired.isEmpty() ? "" : "; let go of " + retired);
+        return Optional.of(restored.get().host());
+    }
+
+    /**
+     * Loads the current version afresh if a connector could not be reached when it was loaded and now can, so its
+     * agents stop being unavailable without a new commit or a restart.
+     *
+     * @return whether the current version was loaded afresh
+     */
+    public synchronized boolean reconnect() {
+        Map<String, String> failed = current.connectors().failures();
+        if (failed.isEmpty() || !versionOf.apply(checkout).equals(current.repo().version())) {
+            return false;
+        }
+        AgentHost fresh;
+        try {
+            fresh = loader.apply(checkout);
+        } catch (RuntimeException e) {
+            LOG.warn("Loading {} afresh to reach {} failed: {}", current.repo().version(), failed.keySet(),
+                    e.getMessage());
+            return false;
+        }
+        if (!fresh.repo().version().equals(current.repo().version())
+                || fresh.connectors().failures().size() >= failed.size()) {
+            fresh.close();
+            return false;
+        }
+        LOG.info("{} reached {} it could not before", current.repo().org(),
+                failed.keySet().stream().filter(c -> !fresh.connectors().failures().containsKey(c)).toList());
+        retire(versions.put(fresh.repo().version(), fresh), null);
+        current = fresh;
+        return true;
     }
 
     /** The directory the organization's repository is checked out in: what the current version was loaded from. */
@@ -230,6 +350,7 @@ public final class OrgHost implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        closeRetired(Instant.MAX);
         versions.values().forEach(AgentHost::close);
         versions.clear();
         cleanups.values().forEach(Runnable::run);

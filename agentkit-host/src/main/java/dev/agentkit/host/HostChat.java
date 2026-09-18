@@ -145,7 +145,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
                 .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
         HostedAgent agent = pinned(tenant, conversation);
-        AgentHost version = orgs.get(tenant.org()).version(conversation.agent().version()).orElseThrow();
+        AgentHost version = orgs.get(tenant.org()).serving(conversation.agent().version()).orElseThrow();
         Principal principal = version.principal(tenant.email())
                 .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
         List<dev.agentkit.core.tool.Tool> scheduler = Optional.ofNullable(deferred.get(tenant.org()))
@@ -170,7 +170,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                 .orElseThrow(() -> new ChatUnavailable("Your organization has no agents here."));
         Conversation.Pin pin = Optional.ofNullable(conversation.agent())
                 .orElseThrow(() -> new ChatUnavailable("This conversation is not with any agent. Start a new one."));
-        AgentHost version = org.version(pin.version()).orElseThrow(() -> new ChatUnavailable(
+        AgentHost version = org.serving(pin.version()).orElseThrow(() -> new ChatUnavailable(
                 "This conversation was with a version of " + pin.id() + " this host no longer runs. Start a new "
                         + "conversation to talk to the current one."));
         return version.agent(pin.id()).orElseThrow(() -> new ChatUnavailable(

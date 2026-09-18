@@ -246,7 +246,7 @@ public final class HostMcp {
         String title = conversationTitle(agent);
         return chats.store().conversations(tenant.id()).stream()
                 .filter(c -> title.equals(c.title()) && c.agent() != null && c.agent().id().equals(agentId)
-                        && org.version(c.agent().version()).isPresent())
+                        && org.serving(c.agent().version()).isPresent())
                 .findFirst()
                 .orElseGet(() -> chats.store().create(tenant.id(), title, chat.pin(tenant.id(), agentId)));
     }

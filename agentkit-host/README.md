@@ -278,6 +278,37 @@ keys that check it at `/.well-known/jwks.json`.
 - As a library, `AgentHost.Options.signedBy(CallerSigner)` signs; without it, calls carry no
   assertion.
 
+### More than one instance
+
+Several instances of the host can serve the same organizations behind one address, sharing one
+Postgres database (`AGENTKIT_HOST_DATABASE_URL`) and one signing key (`AGENTKIT_HOST_SIGNING_KEY`).
+Each has its own checkout of every organization's repository, which the deployment keeps pulled.
+
+- **Signing in holds on every instance.** Console sessions, and sign-ins waiting for the identity
+  provider, are in `host_session`. A sign-in begun on one instance finishes on another, and a
+  restart signs nobody out. Only digests of the ids browsers hold are stored.
+- **Versions.** Instances don't change version at the same moment. A conversation one instance
+  pinned to a version another hasn't loaded is still served by the other. That instance looks at
+  its checkout again, and failing that takes the version out of its repository's history. That
+  only happens if the version is among the three the version log says were served most recently.
+  A version let go everywhere stays let go. A version that can't be served is not tried
+  again for 30 seconds.
+- **Deferred actions** are claimed with one conditional update, so however many instances sweep,
+  one runs each action.
+- **Turns left behind.** A turn runs in the instance that began it, and `chat_turn.runner` says
+  which one. Every instance says it is running every 15 seconds (`host_instance`). If an instance
+  has been silent for a minute, another ends its queued and running turns as failed. The message says
+  the host running them stopped, and that a step it was in the middle of may have happened. Nothing
+  is resumed halfway.
+- **Stay on one instance while a turn runs.** A running turn's live stream, a confirmation it
+  is waiting for, and an MCP client's session are in the process that holds them. Route a
+  person's requests to one instance (sticky sessions on the `agentkit-session` cookie). An MCP
+  client that reaches another instance is told its session is unknown, and starts a new one.
+- **Connectors that were down.** A connector that couldn't be reached when a version loaded is
+  tried again on every reload. Once it answers, the version is loaded afresh and its agents
+  become available. A version let go stays open for five minutes, so a turn already using it
+  can finish.
+
 ## Models, budgets and limits
 
 Each organization's model calls are its own:
@@ -333,7 +364,8 @@ its `org.yaml` names under `signIn`.
   - the organization's directory must know it. Someone the provider knows and the directory
     does not is refused.
   - A session is then a random id in an `HttpOnly` cookie (`Secure` on https), for 8 hours.
-  - Sessions are kept in memory, so a restart signs everyone out.
+  - With a database, sessions are kept there, shared by every instance and kept across a
+    restart. Without one, they are in memory, so a restart signs everyone out.
 - **Registering the host.** Create a client with the provider, with
   `<AGENTKIT_HOST_PUBLIC_URL>/sign-in/callback` as its redirect URI. The client secret, if it has
   one, is the org's `OIDC_CLIENT_SECRET` secret.
@@ -529,12 +561,10 @@ service container.
 
 ## Not yet
 
-- **A turn cut off by a restart.** Conversations and their turns are kept, but a turn that was
-  running or waiting for a confirmation when the host stopped is not resumed. Its live stream
-  and pending confirmations are in the process that ran it, so a person should also stay on one
-  instance while a turn runs.
-- **Sessions across instances.** Console sessions are kept in the process, so each instance of
-  the host signs people in separately, and a restart signs everyone out.
+- **A turn cut off by a stop is ended, not resumed.** With Postgres, another instance ends it
+  as failed within about a minute. With files, it stays "running" after a restart.
+- **Live streams and confirmations are per instance.** See
+  [More than one instance](#more-than-one-instance).
 - **Rehearsals are not counted.** `rehearse` runs in CI on the CI's own key, so a pull
   request's rehearsal is not in the organization's model use or budgets.
 - **Who scheduled a deferred action, to its connectors.** A deferred action's calls say

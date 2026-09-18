@@ -21,6 +21,7 @@ import dev.agentkit.host.auth.CallerSigner;
 import dev.agentkit.host.auth.Oidc;
 import dev.agentkit.host.auth.OidcSignIn;
 import dev.agentkit.host.auth.OrgMcp;
+import dev.agentkit.host.auth.SessionStore;
 import dev.agentkit.host.change.GitHubProposer;
 import dev.agentkit.host.change.LocalBranchProposer;
 import dev.agentkit.host.change.Proposals;
@@ -30,9 +31,11 @@ import dev.agentkit.host.models.UsageLedger;
 import dev.agentkit.host.repo.DefinitionException;
 import dev.agentkit.host.repo.OrgRepo;
 import dev.agentkit.host.store.Database;
+import dev.agentkit.host.store.Instances;
 import dev.agentkit.host.store.PostgresChatStore;
 import dev.agentkit.host.store.PostgresDeferredActionStore;
 import dev.agentkit.host.store.PostgresRehearsalLog;
+import dev.agentkit.host.store.PostgresSessionStore;
 import dev.agentkit.host.store.PostgresUsageLedger;
 import dev.agentkit.host.store.PostgresVersionLog;
 import dev.agentkit.chat.store.ChatStore;
@@ -169,14 +172,20 @@ public final class AgentHostApp {
         });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
         HostChat chat = new HostChat(orgs, deferred, models, Instant::now, self::get);
-        ChatStore store = database.<ChatStore>map(PostgresChatStore::new)
+        // With a database, several instances may share it: each notes the turns it runs, says it is running, and ends
+        // the turns an instance that stopped left behind.
+        Optional<Instances> instances = database.map(db -> new Instances(db, Instant::now));
+        ChatStore store = database.<ChatStore>map(db -> new PostgresChatStore(db, java.time.Clock.systemUTC(),
+                        instances.get().id()))
                 .orElseGet(() -> new FileChatStore(dataDir.resolve("chat")));
         ChatRuntime runtime = new ChatRuntime(store, new ChatEvents(), chat);
         self.set(runtime);
+        instances.ifPresent(i -> i.start(store));
 
         // Development sign-in trusts whoever says who they are, so a host running it answers this machine only.
         DevSignIn devSignInPage = new DevSignIn(orgs);
-        OidcSignIn oidcSignIn = new OidcSignIn(orgs, providers, publicUrl, Instant::now);
+        OidcSignIn oidcSignIn = new OidcSignIn(orgs, providers, publicUrl, Instant::now,
+                database.<SessionStore>map(PostgresSessionStore::new).orElseGet(SessionStore::inMemory));
         ChatServer.Tenants tenants = devSignIn ? devSignInPage : oidcSignIn;
         java.net.InetSocketAddress address = devSignIn
                 ? new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port)
@@ -227,6 +236,7 @@ public final class AgentHostApp {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             reloader.shutdownNow();
+            instances.ifPresent(Instances::close);
             deferred.values().forEach(DeferredWork::close);
             server.close();
             runtime.close();
@@ -261,7 +271,8 @@ public final class AgentHostApp {
                     .append(" (OAuth with ").append(org.current().repo().signIn().get().issuer()).append(")\n"));
         }
         banner.append("  data: ").append(database.isPresent() ? "Postgres (schema version "
-                + database.get().schemaVersion() + ")" : dataDir.toString()).append('\n');
+                + database.get().schemaVersion() + "), shared with any other instance; this one is "
+                + instances.get().id() : dataDir.toString() + ", for this instance alone").append('\n');
         System.out.println(banner);
         Thread.currentThread().join();
     }
@@ -302,6 +313,7 @@ public final class AgentHostApp {
     private static void reload(OrgHost org) {
         try {
             org.reload();
+            org.reconnect();
         } catch (DefinitionException e) {
             System.err.println("A new version of " + org.org() + " was not loaded; still serving "
                     + org.current().repo().version() + ". It has " + e.getMessage());
