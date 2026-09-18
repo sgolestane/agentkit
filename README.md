@@ -1023,6 +1023,73 @@ output, and silently no-ops below the model's minimum cacheable size. `EPHEMERAL
 trades a higher write premium for a longer TTL. Verify hits via
 `usage.cache_read_input_tokens`. Works on the first-party API and Bedrock.
 
+### Work that settles stops paying a model
+
+The third run of a job usually costs what the first one did: a model call per step to work out
+what it worked out last time. `dev.agentkit.core.routine` watches instead. Every clean run is
+recorded — the tools it called, in order, with the task's own values taken out and left as
+placeholders — and once the last few runs have agreed on exactly the same sequence, the next one
+is **replayed**: same tools, same order, this task's values, no model call.
+
+```java
+RoutineBook book = new RoutineBook();          // three clean runs in a row that agree, by default
+
+RoutineAgent agent = RoutineAgent.builder(
+                (observer, floor) -> Agent.builder(llm, tools, config)
+                        .observer(observer).trustFloor(floor).build(),
+                book, TaskShape.ofGoalParameters(), () -> tools, () -> TrustFloor.none(gate))
+        .observer(tracing)
+        .build();
+
+Goal hire = new Goal("Give a new hire their accounts", Map.of("work_email", "dev@acme.example"));
+agent.run(hire);
+agent.routineFor(hire);   // "...: create_account → add_to_group → send_welcome (seen 3 times)"
+```
+
+`TaskShape` is the one piece a deployment writes: which part of a goal is the job and which part
+is this week's values. `ofGoalParameters()` covers the case where a `Goal` already separates them.
+Values are put back in one pass, longest first and only as whole words, so `eng` is never found
+inside `engineering`; a value two parameters share is left alone, which keeps the job from settling
+rather than guessing.
+
+What makes it safe enough to leave on:
+
+- **One policy, for both paths, fresh each run.** The factory is handed the `TrustFloor` to install
+  and a replay is held to the same one, so they cannot drift apart. A floor is asked for per run,
+  because policies such as `callableOnce` are bound to one; a supplier that hands out the same
+  run-bound floor twice is refused. A refusal stops a replay rather than being worked around.
+- **It stops at the first surprise** — a missing tool, a refusal, an error, an unfilled placeholder —
+  forgets the job, and hands the work to the model *with what already ran quoted to it as
+  evidence*, so a job that granted access and failed to announce it does not grant it twice. If a
+  replayed step returned somebody else's words, the model continues under the tightened policy.
+  That continuation did part of a job, so it teaches the book nothing.
+- **Only clean runs teach it.** A run that failed, stopped early, or completed after any call was
+  refused or errored resets the job instead of being learned minus the call that went wrong.
+- **A settled job is still checked.** One run in ten (`recheckEvery`) goes to the model anyway, so a
+  routine that has quietly become wrong can be found out.
+- **A replay is visible.** It is a run of its own, named `routine`: observers see it start, see every
+  call with its `Disposition`, and see it finish.
+
+`agentkit-examples`' `routine.UnlockDeskApp` runs it against a live model: ten account unlocks,
+three worked out, three replayed with no model call, one handed back mid-replay, three re-learned.
+
+It holds no results: a replay talks to the same systems and gets whatever they say now. What it
+removes is the deliberation, which is the part that is charged per token. The book lives in
+memory, for one process — a fresh process starts by watching again.
+
+Repeated **reads** have their own saving, one level down:
+
+```java
+ToolMemo memo = new ToolMemo(Duration.ofSeconds(30));
+ToolRegistry cached = new SimpleToolRegistry(memo.wrapAll(List.of(lookup, listAccess, grantAccess)));
+memo.hits();   // reads that cost nothing
+```
+
+Only `SideEffects.NONE` tools are remembered, errors never are, and there is no unbounded time to
+live. `wrapAll` also makes every other tool clear the memo once it runs, so the lookup after a
+create sees the create. Give each run, session or tenant its own memo: entries are keyed by tool and
+arguments and by nothing else, so a shared one would show one person what another asked for.
+
 ### Knowing what a run cost
 
 `AgentResult.usage()` reports the **loop's own turns**, not the whole run. The

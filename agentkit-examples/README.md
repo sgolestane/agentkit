@@ -14,6 +14,7 @@ show one way of doing it.
 | `WebResearchAgent` | A client-executed search tool, so it works on any backend including Bedrock. |
 | `TemporalWorkerExample` | The loop running durably as a Temporal workflow. |
 | `onboarding.OnboardingApp` | `PlanningAgent` resolving a branching policy into a flat plan, over fake Okta/Slack/GitHub tools, with evals scored on system state. |
+| `routine.UnlockDeskApp` | `RoutineAgent` learning a recurring job from the model, then replaying it with no model call, and handing back what does not fit. |
 
 ## Running one
 
@@ -125,3 +126,52 @@ ONBOARDING_SCENARIOS="github-found rehire" \
 
 Leave out `ONBOARDING_SCENARIOS` to run all seven: `engineer`, `contractor`, `rehire`,
 `github-found`, `github-asked`, `github-guessed` and `github-missing`.
+
+## Account unlock desk (`routine.UnlockDeskApp`)
+
+An IT desk unlocks ten locked-out accounts: look the person up, unlock Okta, reset MFA, tell
+them, tell their manager. The same five steps every time — which is exactly the work a model
+should stop being paid to rediscover. `UnlockDesk` wraps the agent in core's `RoutineAgent`:
+
+- **The first tickets go to the model** and are recorded, with the employee's and manager's
+  emails taken out as placeholders.
+- **Once three in a row agree**, the rest are replayed: the same tools, in the same order, with
+  this ticket's values, and no model call.
+- **A ticket that does not fit stops the replay.** Gus has a hardware token, so the MFA reset
+  fails; the model is handed the job *with what already ran*, opens an IT ticket and sends the
+  notices without unlocking him twice. The desk then goes back to learning.
+
+A live run against `anthropic/claude-sonnet-5`:
+
+```
+Ticket                     Path                Model calls   Tokens in/out
+ana.silva@acme.example     MODEL                         5   10,367 / 476
+ben.cho@acme.example       MODEL                         5   10,367 / 470
+cara.nwosu@acme.example    MODEL                         5   10,410 / 483
+dev.patel@acme.example     REPLAYED                      0   0 / 0
+eve.martin@acme.example    REPLAYED                      0   0 / 0
+finn.berg@acme.example     REPLAYED                      0   0 / 0
+gus.reyes@acme.example     REPLAY_THEN_MODEL             3   6,820 / 587
+hana.ito@acme.example      MODEL                         5   10,345 / 468
+ivan.petrov@acme.example   MODEL                         5   10,410 / 509
+jo.adams@acme.example      MODEL                         5   10,367 / 498
+
+Model calls: 33 for 10 tickets (about 50 if every ticket had gone to the model)
+```
+
+One design choice makes it work: **the tools take structured arguments**. A notification names a
+template and an address rather than carrying a sentence the model wrote. Prose differs every time
+a model writes it, so a run with prose in its arguments never agrees exactly with the last one and
+is never replayed — the safe outcome, and the reason to shape tools this way where the saving matters.
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+./mvnw install -DskipTests          # once, from the repo root
+./mvnw -q -f agentkit-examples/pom.xml exec:exec \
+    -Dexec.mainClass=dev.agentkit.examples.routine.UnlockDeskApp
+```
+
+`UNLOCK_DESK_MODEL` picks another OpenRouter model. `UnlockDeskTest` runs the same queue offline
+with a scripted model and checks the accounts themselves: everyone unlocked exactly once, nine MFA
+resets, one IT ticket, twenty notices, and forty model calls instead of sixty.
+
