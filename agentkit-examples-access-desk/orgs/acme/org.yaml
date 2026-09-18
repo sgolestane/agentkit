@@ -1,0 +1,9 @@
+# Acme's agents on the agent host. A change here is a pull request; the host runs the merged commit.
+org: acme
+model: anthropic/claude-sonnet-5
+
+# Who someone is: the company directory.
+directory:
+  connector: company
+  tool: directory_lookup
+  argument: email

@@ -129,6 +129,32 @@ class ARepositoryIsReadWholeOrRefusedWholeTest {
     }
 
     @Test
+    void deferredWorkNamesItsPromptItsActorAndHowEachSubjectIsLookedUp() {
+        RepoFixture repo = RepoFixture.copyInto(dir)
+                .write("agents/helpdesk/deferred.md", "Carry out one deferred action.")
+                .edit("agents/helpdesk/agent.yaml", "limits:", """
+                        deferred:
+                          prompt: deferred.md
+                          actor: helpdesk
+                          subjects:
+                            ticket: {tool: helpdesk/get_ticket, argument: ticket_id}
+                        limits:""");
+        AgentDefinition.Deferred deferred = RepoLoader.load(repo.root(), "v").agents().get("helpdesk").deferred();
+        assertThat(deferred.prompt()).isEqualTo("Carry out one deferred action.");
+        assertThat(deferred.actor()).isEqualTo("helpdesk");
+        assertThat(deferred.subjects()).containsEntry("ticket",
+                new AgentDefinition.Subject(new ToolRef("helpdesk", "get_ticket"), "ticket_id"));
+
+        repo.edit("agents/helpdesk/agent.yaml", "actor: helpdesk", "actor: bot@acme.example")
+                .edit("agents/helpdesk/agent.yaml", "helpdesk/get_ticket", "crm/get_ticket");
+        assertThatThrownBy(() -> RepoLoader.load(repo.root(), "v"))
+                .isInstanceOfSatisfying(DefinitionException.class, e -> assertThat(e.problems())
+                        .extracting(Object::toString).containsExactlyInAnyOrder(
+                                "agents/helpdesk/agent.yaml deferred.actor: is the agent's own identity, not a person's email",
+                                "agents/helpdesk/agent.yaml deferred.subjects.ticket.tool: no connector named crm"));
+    }
+
+    @Test
     void theVersionIsTheCommitAndSaysSoWhenTheCheckoutHasChanged() throws Exception {
         RepoFixture repo = RepoFixture.copyInto(dir);
         assertThat(GitVersion.of(repo.root())).isEqualTo(GitVersion.UNVERSIONED);

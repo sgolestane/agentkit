@@ -26,11 +26,12 @@ import java.util.Set;
  * @param bind         arguments filled from the person asking, hidden from the model, by tool
  * @param maxSteps     how many steps one turn may take
  * @param maxTokens    the most a model call may produce
+ * @param deferred     how the agent schedules work for later, or null when it does not
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
-                              int maxTokens) {
+                              int maxTokens, Deferred deferred) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
@@ -52,6 +53,36 @@ public record AgentDefinition(String id, String name, String description, Patter
         tools = List.copyOf(tools);
         confirm = List.copyOf(confirm);
         bind = Map.copyOf(bind);
+    }
+
+    /**
+     * Work the agent schedules to be carried out later — a reminder before access expires, the revocation when it
+     * does. The agent gets {@code schedule_deferred_action}; when an action comes due the host runs it with the
+     * framework's bounds (read, revoke, notify and request only, about that one subject), as {@code actor}.
+     *
+     * @param prompt   the system prompt a deferred action runs with
+     * @param actor    who a deferred action acts as: the value its bindings get for {@code principal.email}, which a
+     *                 connector must recognise as the agent itself rather than a person
+     * @param subjects each kind of subject the agent may schedule work about, and how to look one up
+     */
+    public record Deferred(String prompt, String actor, Map<String, Subject> subjects) {
+        public Deferred {
+            Objects.requireNonNull(prompt, "prompt");
+            Objects.requireNonNull(actor, "actor");
+            subjects = Map.copyOf(subjects);
+        }
+    }
+
+    /**
+     * How to look up one kind of subject: a connector tool, called with the subject's id in {@code argument}, that
+     * answers with the subject's record — {@code identifiers}, {@code contacts}, {@code facts} and optionally
+     * {@code holdings} — as {@code docs/MCP-CONNECTORS.md} describes.
+     */
+    public record Subject(ToolRef tool, String argument) {
+        public Subject {
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(argument, "argument");
+        }
     }
 
     /**

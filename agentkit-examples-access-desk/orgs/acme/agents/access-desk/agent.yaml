@@ -1,0 +1,35 @@
+name: Access Desk
+description: Temporary access under the company's access policy, and every grant ends on its own.
+audience: [everyone]
+
+prompt:
+  system: system-prompt.md
+  policy: policy.md
+
+tools:
+  # The desk's own tools. Access changes only through these, under the ledger's rules.
+  - connector: ledger
+    tools: [grant_low_risk_access, submit_access_request, pending_approvals, decide_request,
+            my_access, my_requests, revoke_grant, audit_log]
+  # The company's reads and messages; never its raw grant and revoke.
+  - connector: company
+    effects: [read, notify]
+
+# An approver's decision grants access, so it goes through a confirmation card.
+confirm:
+  - ledger/decide_request
+
+# The desk acts only as the person asking, whatever the model writes.
+bind:
+  ledger/*: {acting_as: principal.email}
+
+# Reminders before a grant expires, and its revocation when it does.
+deferred:
+  prompt: deferred-prompt.md
+  actor: access-desk
+  subjects:
+    grant: {tool: ledger/get_grant, argument: grant_id}
+
+limits:
+  maxSteps: 20
+  maxTokens: 2048

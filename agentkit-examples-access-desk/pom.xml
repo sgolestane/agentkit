@@ -58,6 +58,11 @@
             <artifactId>agentkit-eval</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-host</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

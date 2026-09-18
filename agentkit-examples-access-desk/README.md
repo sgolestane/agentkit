@@ -44,6 +44,49 @@ claude mcp add --transport http access-desk http://localhost:8100/mcp \
 Then ask Claude to get you access. `ask_access_desk` is a turn with the same agent, policy and
 rules as the console, and it appears in that person's console as "Access Desk over MCP".
 
+## On the agent host
+
+Access Desk also runs on the agent host ([`agentkit-host`](../agentkit-host/README.md)) as
+configuration only. [`orgs/acme`](orgs/acme) is Acme's repository:
+- an `agent.yaml`;
+- the same policy and prompts as this app;
+- two connectors, the company systems and the access ledger.
+
+The desk's rules live in [`AccessLedgerConnector`](src/main/java/dev/agentkit/accessdesk/ledger/AccessLedgerConnector.java),
+an MCP server over HTTP:
+- **Who is asking.** Every desk tool takes `acting_as`, which the host binds to the person asking
+  and hides from the model.
+- **Subject records.** `get_grant` answers with a grant as a subject record, for deferred
+  actions.
+- **Backstop.** The expiry backstop runs inside the connector.
+
+Deferred reminders and revocations are the host's, configured in `agent.yaml`.
+
+Three processes, one terminal each:
+
+```bash
+COMPANY_HTTP_TOKEN=company-secret \
+  ./mvnw -q -pl agentkit-examples-access-desk exec:exec -Dexec.mainClass=dev.agentkit.accessdesk.systems.CompanySystemsServer
+```
+
+```bash
+LEDGER_TOKEN=ledger-secret COMPANY_MCP_URL=http://127.0.0.1:8130/mcp COMPANY_MCP_TOKEN=company-secret \
+  ./mvnw -q -pl agentkit-examples-access-desk exec:exec -Dexec.mainClass=dev.agentkit.accessdesk.ledger.AccessLedgerConnector
+```
+
+```bash
+AGENTKIT_HOST_ORGS=$PWD/agentkit-examples-access-desk/orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
+AGENTKIT_SECRET_ACME_COMPANY_URL=http://127.0.0.1:8130/mcp AGENTKIT_SECRET_ACME_COMPANY_TOKEN=company-secret \
+AGENTKIT_SECRET_ACME_LEDGER_URL=http://127.0.0.1:8120/mcp AGENTKIT_SECRET_ACME_LEDGER_TOKEN=ledger-secret \
+OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
+```
+
+Then open <http://localhost:8400> and sign in as `priya.natarajan@acme.example`.
+
+`AccessDeskOnTheHostEvalTest` runs the same six conversations as `AccessDeskEvalTest`, scored by
+the same checks, against this configuration. `AccessDeskIsConfigurationOnTheHostTest` pins the
+wiring offline.
+
 ## What a customer changes
 
 Everything a customer changes is a file; none of it needs a code change. The defaults live in

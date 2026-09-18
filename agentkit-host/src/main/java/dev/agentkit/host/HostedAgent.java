@@ -5,6 +5,7 @@ import dev.agentkit.chat.ChatTools;
 import dev.agentkit.chat.ChatUnavailable;
 import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.agent.AgentConfig;
+import dev.agentkit.core.deferred.SubjectResolver;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.prompt.Source;
 import dev.agentkit.core.prompt.Spotlight;
@@ -61,19 +62,25 @@ public final class HostedAgent {
     private record Selected(String connector, DeclaredTools.Entry entry, Map<String, String> bindings) {
     }
 
+    /** The most loop turns a deferred action may take, and the most a model call in one may produce. */
+    static final int DEFERRED_MAX_STEPS = 12;
+    static final int DEFERRED_MAX_TOKENS = 1024;
+
     private final OrgRepo repo;
     private final AgentDefinition definition;
     private final List<Selected> selected;
     private final Set<String> confirmed;
     private final Optional<String> unavailable;
+    private final Optional<SubjectResolver> subjects;
 
     private HostedAgent(OrgRepo repo, AgentDefinition definition, List<Selected> selected, Set<String> confirmed,
-                        Optional<String> unavailable) {
+                        Optional<String> unavailable, Optional<SubjectResolver> subjects) {
         this.repo = repo;
         this.definition = definition;
         this.selected = List.copyOf(selected);
         this.confirmed = Set.copyOf(confirmed);
         this.unavailable = unavailable;
+        this.subjects = subjects;
     }
 
     /**
@@ -85,12 +92,15 @@ public final class HostedAgent {
         String file = "agents/" + definition.id() + "/agent.yaml";
         List<Problem> problems = new ArrayList<>();
 
-        List<String> down = definition.tools().stream().map(ToolSelector::connector).distinct()
-                .filter(c -> connectors.catalog(c).isEmpty()).toList();
+        List<String> needed = new ArrayList<>(definition.tools().stream().map(ToolSelector::connector).toList());
+        if (definition.deferred() != null) {
+            definition.deferred().subjects().values().forEach(s -> needed.add(s.tool().connector()));
+        }
+        List<String> down = needed.stream().distinct().filter(c -> connectors.catalog(c).isEmpty()).toList();
         if (!down.isEmpty()) {
             String why = down.stream().map(c -> connectors.failure(c).orElse("The " + c + " connector is not connected."))
                     .collect(Collectors.joining(" "));
-            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why));
+            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why), Optional.empty());
         }
 
         // Which tools, in the order the selectors and each connector list them.
@@ -171,13 +181,30 @@ public final class HostedAgent {
             }
         }
 
+        // Deferred work: every subject is looked up by a tool that exists and takes the argument named.
+        Optional<SubjectResolver> subjects = Optional.empty();
+        if (definition.deferred() != null) {
+            definition.deferred().subjects().forEach((kind, subject) -> {
+                Optional<DeclaredTools.Entry> lookup = connectors.catalog(subject.tool().connector())
+                        .flatMap(c -> c.entry(subject.tool().tool()));
+                if (lookup.isEmpty()) {
+                    problems.add(new Problem(file, "deferred.subjects." + kind + ".tool",
+                            subject.tool().connector() + " has no tool " + subject.tool().tool() + " that declares what it does"));
+                } else if (!BoundTool.hasArgument(lookup.get().tool().inputSchema(), subject.argument())) {
+                    problems.add(new Problem(file, "deferred.subjects." + kind + ".argument",
+                            subject.tool() + " has no argument " + subject.argument()));
+                }
+            });
+            subjects = Optional.of(new ConnectorSubjects(definition.deferred().subjects(), connectors));
+        }
+
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
         List<Selected> tools = byName.values().stream()
                 .map(s -> new Selected(s.connector(), s.entry(), bindings.getOrDefault(s.entry().tool().name(), Map.of())))
                 .toList();
-        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty());
+        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty(), subjects);
     }
 
     public AgentDefinition definition() {
@@ -232,7 +259,8 @@ public final class HostedAgent {
         StringBuilder record = new StringBuilder("- email: ").append(principal.email()).append('\n');
         new TreeMap<>(principal.facts()).forEach((field, value) -> {
             if (!field.equals("email")) {
-                record.append("- ").append(OneLine.of(field)).append(": ").append(OneLine.of(value)).append('\n');
+                record.append("- ").append(OneLine.of(field)).append(": ")
+                        .append(value.isBlank() ? "(none)" : OneLine.of(value)).append('\n');
             }
         });
         StringBuilder prompt = new StringBuilder(definition.systemPrompt());
@@ -244,6 +272,26 @@ public final class HostedAgent {
                         record.toString()))
                 .append("\n\nThe time now is ").append(now).append(" (UTC).");
         return prompt.toString();
+    }
+
+    /** Where this agent's deferred work looks its subjects up, if it schedules any. */
+    public Optional<SubjectResolver> subjects() {
+        return subjects;
+    }
+
+    /**
+     * Who a deferred action runs as: the agent itself, under its {@code deferred.actor} name, with no groups and no
+     * record. Its bindings fill {@code principal.email} with that name, which the connector recognises as the agent.
+     */
+    public Optional<Principal> actor() {
+        return Optional.ofNullable(definition.deferred())
+                .map(d -> new Principal(repo.org(), d.actor(), d.actor(), Set.of(), Map.of()));
+    }
+
+    /** How a deferred action's model is configured: the deferred prompt, and a shorter leash than a conversation. */
+    public Optional<AgentConfig> deferredConfig() {
+        return Optional.ofNullable(definition.deferred()).map(d -> AgentConfig.builder(model()).systemPrompt(d.prompt())
+                .maxSteps(DEFERRED_MAX_STEPS).maxTokens(DEFERRED_MAX_TOKENS).build());
     }
 
     public AgentConfig config(String systemPrompt) {
@@ -258,6 +306,12 @@ public final class HostedAgent {
      * @throws ChatUnavailable with a sentence for the person, when the agent cannot run or is not for them
      */
     public Agent turn(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now, ChatRuntime runtime) {
+        return turn(session, llm, principal, now, runtime, List.of());
+    }
+
+    /** {@link #turn}, with tools the host adds for this turn, such as the scheduler for deferred work. */
+    public Agent turn(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now, ChatRuntime runtime,
+                      List<Tool> alsoGiven) {
         if (unavailable.isPresent()) {
             throw new ChatUnavailable(definition.name() + " is unavailable. " + unavailable.get());
         }
@@ -265,6 +319,7 @@ public final class HostedAgent {
             throw new ChatUnavailable(definition.name() + " is not available to you.");
         }
         List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
+        tools.addAll(alsoGiven);
         tools.add(ChatTools.askPerson(runtime, session));
         return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
                 .name(definition.id())

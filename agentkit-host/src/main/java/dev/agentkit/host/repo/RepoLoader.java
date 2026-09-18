@@ -53,7 +53,9 @@ public final class RepoLoader {
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
     private static final Set<String> AGENT_KEYS = Set.of("name", "description", "pattern", "model", "audience",
-            "prompt", "tools", "confirm", "bind", "limits");
+            "prompt", "tools", "confirm", "bind", "limits", "deferred");
+    private static final Set<String> DEFERRED_KEYS = Set.of("prompt", "actor", "subjects");
+    private static final Set<String> SUBJECT_KEYS = Set.of("tool", "argument");
     private static final Set<String> PROMPT_KEYS = Set.of("system", "policy");
     private static final Set<String> SELECTOR_KEYS = Set.of("connector", "effects", "tools");
     private static final Set<String> LIMIT_KEYS = Set.of("maxSteps", "maxTokens");
@@ -302,11 +304,55 @@ public final class RepoLoader {
             maxTokens = positive(file, "limits.maxTokens", limits.get("maxTokens"), maxTokens);
         }
 
+        AgentDefinition.Deferred deferred = null;
+        JsonNode deferredNode = node.get("deferred");
+        if (deferredNode != null) {
+            deferred = deferred(file, dir, deferredNode, connectors);
+        }
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens));
+                confirm, bind, maxSteps, maxTokens, deferred));
+    }
+
+    private AgentDefinition.Deferred deferred(String file, Path dir, JsonNode node, Set<String> connectors) {
+        if (!node.isObject()) {
+            problem(file, "deferred", "must be a mapping of prompt, actor and subjects");
+            return null;
+        }
+        unknownKeys(file, "deferred.", node, DEFERRED_KEYS);
+        String prompt = promptFile(file, "deferred.prompt", dir, node.get("prompt"), true);
+        String actor = text(file, "deferred.actor", node.get("actor"), true);
+        if (actor != null && actor.contains("@")) {
+            problem(file, "deferred.actor", "is the agent's own identity, not a person's email");
+        }
+        Map<String, AgentDefinition.Subject> subjects = new LinkedHashMap<>();
+        JsonNode subjectsNode = node.get("subjects");
+        if (subjectsNode == null || !subjectsNode.isObject() || subjectsNode.isEmpty()) {
+            problem(file, "deferred.subjects", "is required: each kind of subject and {tool, argument} to look it up");
+        } else {
+            subjectsNode.fields().forEachRemaining(entry -> {
+                String where = "deferred.subjects." + entry.getKey();
+                if (!NAME.matcher(entry.getKey()).matches()) {
+                    problem(file, where, "a subject kind is lowercase letters, digits and dashes");
+                    return;
+                }
+                if (!entry.getValue().isObject()) {
+                    problem(file, where, "must be {tool: connector/tool, argument: name}");
+                    return;
+                }
+                unknownKeys(file, where + ".", entry.getValue(), SUBJECT_KEYS);
+                String tool = text(file, where + ".tool", entry.getValue().get("tool"), true);
+                String argument = text(file, where + ".argument", entry.getValue().get("argument"), true);
+                Optional<ToolRef> ref = tool == null ? Optional.empty() : toolRef(file, where + ".tool", tool, connectors, false);
+                if (ref.isPresent() && argument != null) {
+                    subjects.put(entry.getKey(), new AgentDefinition.Subject(ref.get(), argument));
+                }
+            });
+        }
+        return prompt == null || actor == null ? null : new AgentDefinition.Deferred(prompt, actor, subjects);
     }
 
     private Optional<ToolSelector> selector(String file, String where, JsonNode node, Set<String> connectors) {

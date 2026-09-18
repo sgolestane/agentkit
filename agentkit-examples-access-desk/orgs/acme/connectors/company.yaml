@@ -1,0 +1,5 @@
+# The company's systems: directory, resource catalog, access and direct messages.
+url: ${secret:COMPANY_URL}
+headers:
+  Authorization: Bearer ${secret:COMPANY_TOKEN}
+trustAnnotations: true

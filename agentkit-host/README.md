@@ -88,10 +88,28 @@ bind:                               # hidden from the model, filled from the per
   ledger/*: {acting_as: principal.email}
 
 limits: {maxSteps: 12, maxTokens: 1024}
+
+deferred:                           # optional: work scheduled for later
+  prompt: deferred-prompt.md        # the system prompt a deferred action runs with
+  actor: access-desk                # who it acts as; bindings get this for principal.email
+  subjects:                         # what it may be about, and where each is looked up
+    grant: {tool: ledger/get_grant, argument: grant_id}
 ```
 
 A bound argument disappears from the tool's schema. Anything the model sends under that name
 is replaced. If the person's record has no value for it, the call is refused and not sent.
+
+**Deferred work.** An agent with a `deferred` section is given `schedule_deferred_action` in
+every turn.
+- A person may schedule work only about a subject they are a contact of, because the work runs
+  later as the agent.
+- When the work comes due, it runs with the framework's bounds (`dev.agentkit.core.deferred`):
+  only the agent's tools that read, revoke, notify or request, only about that subject, with the
+  subject's record looked up again at that moment.
+- It runs with the agent as the current version defines it: today's rules, whichever version
+  scheduled it.
+- The subject record a connector returns is described in
+  [`docs/MCP-CONNECTORS.md`](../docs/MCP-CONNECTORS.md).
 
 ## Validation
 
@@ -134,14 +152,17 @@ ChatRuntime runtime = new ChatRuntime(store, events,
 One process serves every organization, in one console:
 
 ```bash
-AGENTKIT_HOST_ORGS=./orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
+AGENTKIT_HOST_ORGS=$PWD/orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
 AGENTKIT_SECRET_ACME_HELPDESK_URL=https://... AGENTKIT_SECRET_ACME_HELPDESK_TOKEN=... \
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
 
-- `AGENTKIT_HOST_ORGS` holds one checkout per organization, each directory named for its org.
+- `AGENTKIT_HOST_ORGS` holds one checkout per organization, each directory named for its org. Give it
+  as an absolute path: `exec:exec` runs from the module's own directory.
 - `AGENTKIT_SECRET_<ORG>_<NAME>` fills `${secret:NAME}` for that organization.
 - The console is at http://localhost:8400 (`AGENTKIT_HOST_PORT` to change it).
+- Due deferred actions run every `AGENTKIT_HOST_DEFERRED_SECONDS` (default 30).
+- Access Desk runs on the host as configuration only: see its README.
 
 - **Who is asking.** A person signs in to an organization, and their conversations are theirs
   within it: the chat tenant is `org/email`. Development sign-in (`/sign-in`) trusts whoever
@@ -169,7 +190,6 @@ AGENTKIT_HOST_LIVE=true OPENROUTER_API_KEY=sk-or-... \
 ## Not yet
 
 - **Real sign-in.** Only development sign-in exists; OIDC per organization comes next.
-- **Deferred actions** aren't configurable per agent yet.
 - **No MCP front door or `validate` CLI** yet.
 - **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller
   assertion in the connector contract comes later.

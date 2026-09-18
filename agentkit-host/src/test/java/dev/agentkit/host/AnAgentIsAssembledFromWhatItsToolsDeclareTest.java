@@ -172,6 +172,41 @@ class AnAgentIsAssembledFromWhatItsToolsDeclareTest {
     }
 
     @Test
+    void aSubjectIsLookedUpByAToolTheConnectorHasWithTheArgumentNamed() {
+        repo.write("agents/helpdesk/deferred.md", "Carry out one deferred action.")
+                .edit("agents/helpdesk/agent.yaml", "limits:", """
+                        deferred:
+                          prompt: deferred.md
+                          actor: helpdesk
+                          subjects:
+                            person: {tool: helpdesk/directory_lookup, argument: email}
+                            ticket: {tool: helpdesk/get_ticket, argument: ticket_id}
+                            account: {tool: helpdesk/delete_account, argument: account}
+                        limits:""");
+
+        assertThatThrownBy(this::open).isInstanceOfSatisfying(DefinitionException.class, e ->
+                assertThat(e.problems()).extracting(Object::toString).containsExactlyInAnyOrder(
+                        "agents/helpdesk/agent.yaml deferred.subjects.ticket.tool: helpdesk has no tool get_ticket that "
+                                + "declares what it does",
+                        "agents/helpdesk/agent.yaml deferred.subjects.account.argument: helpdesk/delete_account has no "
+                                + "argument account"));
+
+        repo.edit("agents/helpdesk/agent.yaml", "    ticket: {tool: helpdesk/get_ticket, argument: ticket_id}\n", "")
+                .edit("agents/helpdesk/agent.yaml", "    account: {tool: helpdesk/delete_account, argument: account}\n", "");
+        try (AgentHost host = open()) {
+            HostedAgent agent = host.agent("helpdesk").orElseThrow();
+            assertThat(agent.actor()).hasValueSatisfying(actor -> assertThat(actor.email()).isEqualTo("helpdesk"));
+            assertThat(agent.deferredConfig()).hasValueSatisfying(c ->
+                    assertThat(c.systemPrompt()).isEqualTo("Carry out one deferred action."));
+            // The connector is asked for the record itself: an object in no particular shape still names its subject,
+            // and a lookup that fails is a subject that does not exist.
+            assertThat(agent.subjects().orElseThrow().resolve("person", HelpdeskConnector.PRIYA)).hasValueSatisfying(r ->
+                    assertThat(r.identifiers()).containsExactly(HelpdeskConnector.PRIYA));
+            assertThat(agent.subjects().orElseThrow().resolve("person", "nobody@acme.example")).isEmpty();
+        }
+    }
+
+    @Test
     void twoConnectorsOfferingTheSameToolNameCannotBothBeSelected() throws Exception {
         try (HelpdeskConnector chat = new HelpdeskConnector(name -> name.equals("send_message"))) {
             repo.write("connectors/chat.yaml", "url: " + chat.url() + "\nheaders: {Authorization: Bearer "

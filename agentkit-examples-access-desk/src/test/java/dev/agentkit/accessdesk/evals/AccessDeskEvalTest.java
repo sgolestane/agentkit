@@ -133,29 +133,73 @@ class AccessDeskEvalTest {
 
         return cases().stream().filter(c -> wanted.isEmpty() || wanted.contains(c.name()))
                 .map(c -> DynamicTest.dynamicTest(c.name(), () -> {
-                    CaseReport report = run(c, llm, model);
+                    CaseReport report = run(c, world -> console(world, llm, model));
                     assertThat(report.failures()).as("failed checks for %s", c.name()).isEmpty();
                 }));
     }
 
-    /** How many turns one case's conversation may take. */
-    static final int MAX_TURNS = 3;
+    /**
+     * Where a case's conversation happens: a chat runtime with Access Desk behind it, and whose conversations are
+     * whose. The console app's and the agent host's differ in how they are wired, and in nothing a case can see.
+     */
+    interface Harness extends AutoCloseable {
+        ChatRuntime runtime();
 
-    private static CaseReport run(Case c, LlmClient llm, String model) throws InterruptedException {
-        World world = new World();
-        c.setup().accept(world);
+        /** The runtime's tenant for a person. */
+        String tenant(String who);
+
+        /** A new conversation of {@code who}'s with Access Desk. */
+        Conversation start(String who, String title);
+
+        @Override
+        void close();
+    }
+
+    /** The console app's wiring: {@link DeskChat}, one tenant per person. */
+    private static Harness console(World world, LlmClient llm, String model) {
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
         ChatRuntime runtime = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(),
                 DeskChat.agents(DeskConfig.from(Map.of()), Optional.of(llm), model, world.company, mcpTools(world.systems),
                         world.ledger, world.scheduler, () -> NOW, List.of(), self));
         self.set(runtime);
-        try {
-            Conversation conversation = runtime.store().create(c.who(), c.name());
+        return new Harness() {
+            @Override
+            public ChatRuntime runtime() {
+                return runtime;
+            }
+
+            @Override
+            public String tenant(String who) {
+                return who;
+            }
+
+            @Override
+            public Conversation start(String who, String title) {
+                return runtime.store().create(who, title);
+            }
+
+            @Override
+            public void close() {
+                runtime.close();
+            }
+        };
+    }
+
+    /** How many turns one case's conversation may take. */
+    static final int MAX_TURNS = 3;
+
+    static CaseReport run(Case c, Function<World, Harness> harnessFor) throws InterruptedException {
+        World world = new World();
+        c.setup().accept(world);
+        try (Harness harness = harnessFor.apply(world)) {
+            ChatRuntime runtime = harness.runtime();
+            String tenant = harness.tenant(c.who());
+            Conversation conversation = harness.start(c.who(), c.name());
             Deque<String> script = new ArrayDeque<>(c.answers());
             String message = c.message();
             Turn last = null;
             for (int turns = 0; turns < MAX_TURNS && message != null; turns++) {
-                last = converse(runtime, world, c.who(), conversation.id(), message, script);
+                last = converse(runtime, world, tenant, conversation.id(), message, script);
                 world.turns.add(last);
                 // The agent asked in its reply, which ends the turn: the person answers in the next message.
                 message = last.state() == Turn.State.COMPLETED && last.answer().strip().endsWith("?") && !script.isEmpty()
@@ -181,8 +225,6 @@ class AccessDeskEvalTest {
             CaseReport report = new CaseReport(c.name(), run, outcomes);
             print(c, world, report);
             return report;
-        } finally {
-            runtime.close();
         }
     }
 

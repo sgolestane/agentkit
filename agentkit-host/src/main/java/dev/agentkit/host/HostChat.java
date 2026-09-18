@@ -26,6 +26,7 @@ import java.util.function.Supplier;
 public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatalog {
 
     private final Map<String, OrgHost> orgs;
+    private final Map<String, DeferredWork> deferred;
     private final Optional<LlmClient> llm;
     private final Supplier<Instant> clock;
     private final Supplier<ChatRuntime> runtime;
@@ -37,7 +38,14 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
      */
     public HostChat(Map<String, OrgHost> orgs, Optional<LlmClient> llm, Supplier<Instant> clock,
                     Supplier<ChatRuntime> runtime) {
+        this(orgs, Map.of(), llm, clock, runtime);
+    }
+
+    /** @param deferred each organization's deferred work, for agents that schedule it */
+    public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, Optional<LlmClient> llm,
+                    Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
         this.orgs = Map.copyOf(orgs);
+        this.deferred = Map.copyOf(deferred);
         this.llm = Objects.requireNonNull(llm, "llm");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
@@ -99,7 +107,13 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                 "There is no agent " + pin.id() + " in that version."));
         Principal principal = version.principal(tenant.email())
                 .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
-        return agent.turn(session, llm.get(), principal, clock.get(), runtime.get());
+        List<dev.agentkit.core.tool.Tool> scheduler = Optional.ofNullable(deferred.get(tenant.org()))
+                .flatMap(work -> work.schedulerFor(agent, principal)).stream().toList();
+        if (scheduler.isEmpty() && agent.subjects().isPresent()) {
+            throw new ChatUnavailable(agent.definition().name() + " schedules work for later, and this host is not "
+                    + "running deferred work for your organization.");
+        }
+        return agent.turn(session, llm.get(), principal, clock.get(), runtime.get(), scheduler);
     }
 
     // ---------------------------------------------------------------- helpers

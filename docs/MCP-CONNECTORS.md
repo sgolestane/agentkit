@@ -163,6 +163,47 @@ the action. A connector decides what that identity may do. Access Desk's equival
 in the connector. The host is the party that authenticated them. Token exchange (RFC 8693) can
 replace the assertion later without changing what a connector checks.
 
+## 5. Subject records, for deferred work
+
+An agent can schedule work for later: a reminder before a grant expires, its revocation when it
+does. When that work runs, the host bounds it by its **subject**: it may act only on what the
+subject's record names, and notify only its contacts. A connector provides the record through a
+read tool that the agent definition names (`deferred.subjects.<kind>: {tool, argument}`). The
+host calls that tool itself, with the subject's id, and it answers with one JSON object:
+
+```json
+{
+  "id": "GR-1001",
+  "identifiers": ["GR-1001", "priya.natarajan@acme.example"],
+  "contacts": ["dana.kim@acme.example"],
+  "facts": {"status": "ACTIVE", "expires_at": "2026-09-16T17:00:00Z", "holder": "priya.natarajan@acme.example"},
+  "holdings": ["GR-1001"]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `identifiers` | Every value a tool argument may use to refer to the subject. A deferred action may act only on these. |
+| `contacts` | The people a deferred action may notify, besides the subject. |
+| `facts` | The record's fields. Scheduling may be relative to a time field (`relative_to: expires_at`). |
+| `holdings` | Optional: what the subject holds, which a removal should cover. The host tells the model about any it left out. |
+
+An error, or anything that is not such an object, means the subject does not exist.
+
+## Until the caller assertion: bound arguments
+
+Until section 4 is implemented, a connector learns who is asking from an argument the agent
+definition binds, for example `bind: {ledger/*: {acting_as: principal.email}}`.
+- The host hides that argument from the model and fills it in on every call, so the model cannot
+  choose it.
+- The connector trusts it only because the caller presented the connector's bearer token, which
+  only the host holds.
+- A deferred action fills it with the agent's `deferred.actor` (for example `access-desk`),
+  which the connector recognises as the agent itself rather than a person.
+
+The Access Desk ledger (`agentkit-examples-access-desk`, `AccessLedgerConnector`) is a
+complete connector built this way.
+
 ## Where this is going
 
 These are the extension points of the agent host. It is one application with a web console and

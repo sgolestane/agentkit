@@ -5,7 +5,9 @@ import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.store.FileChatStore;
 import dev.agentkit.chat.web.ChatServer;
 import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.host.AgentHost;
+import dev.agentkit.host.DeferredWork;
 import dev.agentkit.host.HostChat;
 import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Secrets;
@@ -32,7 +34,7 @@ import java.util.stream.Stream;
  * The agent host: every organization's agents, in one console, from their repositories.
  *
  * <pre>
- * AGENTKIT_HOST_ORGS=./orgs AGENTKIT_HOST_DEV_SIGN_IN=true OPENROUTER_API_KEY=sk-or-... \
+ * AGENTKIT_HOST_ORGS=$PWD/orgs AGENTKIT_HOST_DEV_SIGN_IN=true OPENROUTER_API_KEY=sk-or-... \
  *   ./mvnw -q -pl agentkit-host exec:exec
  * # then open http://localhost:8400
  * </pre>
@@ -45,7 +47,8 @@ import java.util.stream.Stream;
  * <p>Configuration: {@code OPENROUTER_API_KEY}; {@code AGENTKIT_HOST_PORT} (default 8400);
  * {@code AGENTKIT_HOST_DATA_DIR} (default {@code data/agentkit-host}); {@code AGENTKIT_SECRET_<ORG>_<NAME>} for each
  * {@code ${secret:NAME}}; {@code AGENTKIT_HOST_ALLOW_LOCAL_CONNECTORS=true} for connectors run as local commands;
- * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which is the only sign-in so far.
+ * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which is the only sign-in so far;
+ * {@code AGENTKIT_HOST_DEFERRED_SECONDS} (default 30), how often due deferred actions are run.
  */
 public final class AgentHostApp {
 
@@ -64,6 +67,11 @@ public final class AgentHostApp {
         Optional<LlmClient> llm = key == null || key.isBlank() ? Optional.empty()
                 : Optional.of(OpenRouterLlmClient.builder(key).title("agentkit host").build());
 
+        if (!Files.isDirectory(orgsDir)) {
+            System.err.println("AGENTKIT_HOST_ORGS is " + orgsDir + ", which is not a directory. Point it at a "
+                    + "directory holding one checkout per organization, as an absolute path.");
+            System.exit(2);
+        }
         Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal);
         if (orgs.isEmpty()) {
             System.err.println("No organization loaded from " + orgsDir + "; nothing to serve.");
@@ -75,8 +83,16 @@ public final class AgentHostApp {
         }
 
         Files.createDirectories(dataDir);
+        long deferredSeconds = Long.parseLong(env.getOrDefault("AGENTKIT_HOST_DEFERRED_SECONDS", "30").strip());
+        Map<String, DeferredWork> deferred = new LinkedHashMap<>();
+        orgs.forEach((name, org) -> {
+            DeferredWork work = new DeferredWork(org, agent -> DeferredActionStore.inDirectory(
+                    dataDir.resolve("deferred").resolve(name).resolve(agent)), Instant::now, llm);
+            work.start(java.time.Duration.ofSeconds(deferredSeconds));
+            deferred.put(name, work);
+        });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
-        HostChat chat = new HostChat(orgs, llm, Instant::now, self::get);
+        HostChat chat = new HostChat(orgs, deferred, llm, Instant::now, self::get);
         ChatRuntime runtime = new ChatRuntime(new FileChatStore(dataDir.resolve("chat")), new ChatEvents(), chat);
         self.set(runtime);
 
@@ -99,6 +115,7 @@ public final class AgentHostApp {
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             reloader.shutdownNow();
+            deferred.values().forEach(DeferredWork::close);
             server.close();
             runtime.close();
             orgs.values().forEach(OrgHost::close);
