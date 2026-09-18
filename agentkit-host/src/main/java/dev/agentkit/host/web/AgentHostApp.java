@@ -1,0 +1,176 @@
+package dev.agentkit.host.web;
+
+import dev.agentkit.chat.ChatEvents;
+import dev.agentkit.chat.ChatRuntime;
+import dev.agentkit.chat.store.FileChatStore;
+import dev.agentkit.chat.web.ChatServer;
+import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.host.AgentHost;
+import dev.agentkit.host.HostChat;
+import dev.agentkit.host.OrgHost;
+import dev.agentkit.host.Secrets;
+import dev.agentkit.host.Tenant;
+import dev.agentkit.host.repo.DefinitionException;
+import dev.agentkit.openrouter.OpenRouterLlmClient;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+
+/**
+ * The agent host: every organization's agents, in one console, from their repositories.
+ *
+ * <pre>
+ * AGENTKIT_HOST_ORGS=./orgs AGENTKIT_HOST_DEV_SIGN_IN=true OPENROUTER_API_KEY=sk-or-... \
+ *   ./mvnw -q -pl agentkit-host exec:exec
+ * # then open http://localhost:8400
+ * </pre>
+ *
+ * <p>{@code AGENTKIT_HOST_ORGS} is a directory with one checkout per organization. Each is loaded at the commit it
+ * holds and looked at again every {@code AGENTKIT_HOST_RELOAD_SECONDS} (default 30): a new commit becomes the version
+ * new conversations start on, and a commit that does not load is logged and left unserved. Keeping the checkouts up
+ * to date — a pull on merge — is the deployment's.
+ *
+ * <p>Configuration: {@code OPENROUTER_API_KEY}; {@code AGENTKIT_HOST_PORT} (default 8400);
+ * {@code AGENTKIT_HOST_DATA_DIR} (default {@code data/agentkit-host}); {@code AGENTKIT_SECRET_<ORG>_<NAME>} for each
+ * {@code ${secret:NAME}}; {@code AGENTKIT_HOST_ALLOW_LOCAL_CONNECTORS=true} for connectors run as local commands;
+ * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which is the only sign-in so far.
+ */
+public final class AgentHostApp {
+
+    private AgentHostApp() {
+    }
+
+    public static void main(String[] args) throws Exception {
+        Map<String, String> env = System.getenv();
+        Path orgsDir = Path.of(env.getOrDefault("AGENTKIT_HOST_ORGS", "orgs")).toAbsolutePath();
+        Path dataDir = Path.of(env.getOrDefault("AGENTKIT_HOST_DATA_DIR", "data/agentkit-host")).toAbsolutePath();
+        int port = Integer.parseInt(env.getOrDefault("AGENTKIT_HOST_PORT", "8400").strip());
+        long reloadSeconds = Long.parseLong(env.getOrDefault("AGENTKIT_HOST_RELOAD_SECONDS", "30").strip());
+        boolean allowLocal = "true".equalsIgnoreCase(env.get("AGENTKIT_HOST_ALLOW_LOCAL_CONNECTORS"));
+        boolean devSignIn = "true".equalsIgnoreCase(env.get("AGENTKIT_HOST_DEV_SIGN_IN"));
+        String key = env.get(OpenRouterLlmClient.API_KEY_ENV);
+        Optional<LlmClient> llm = key == null || key.isBlank() ? Optional.empty()
+                : Optional.of(OpenRouterLlmClient.builder(key).title("agentkit host").build());
+
+        Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal);
+        if (orgs.isEmpty()) {
+            System.err.println("No organization loaded from " + orgsDir + "; nothing to serve.");
+            System.exit(2);
+        }
+        if (!devSignIn) {
+            System.err.println("No sign-in is configured, so every request will be refused. Set "
+                    + "AGENTKIT_HOST_DEV_SIGN_IN=true for development.");
+        }
+
+        Files.createDirectories(dataDir);
+        AtomicReference<ChatRuntime> self = new AtomicReference<>();
+        HostChat chat = new HostChat(orgs, llm, Instant::now, self::get);
+        ChatRuntime runtime = new ChatRuntime(new FileChatStore(dataDir.resolve("chat")), new ChatEvents(), chat);
+        self.set(runtime);
+
+        DevSignIn signIn = new DevSignIn(orgs);
+        ChatServer.Tenants tenants = devSignIn ? signIn : exchange -> Optional.empty();
+        ChatServer server = new ChatServer(port, runtime, tenants, tenant -> overview(tenant, orgs, llm), chat, null);
+        if (devSignIn) {
+            server.mount("/sign-in", signIn);
+            server.mount("/sign-out", signIn);
+        }
+        server.start();
+
+        ScheduledExecutorService reloader = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "agentkit-host-reload");
+            thread.setDaemon(true);
+            return thread;
+        });
+        reloader.scheduleWithFixedDelay(() -> orgs.values().forEach(AgentHostApp::reload), reloadSeconds,
+                reloadSeconds, TimeUnit.SECONDS);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            reloader.shutdownNow();
+            server.close();
+            runtime.close();
+            orgs.values().forEach(OrgHost::close);
+        }));
+
+        StringBuilder banner = new StringBuilder("\nAgentKit host is running on http://localhost:" + port + "\n");
+        orgs.forEach((name, org) -> banner.append("  ").append(name).append(" @ ").append(org.current().repo().version())
+                .append(": ").append(String.join(", ", org.current().agents().keySet())).append('\n'));
+        banner.append("  model: ").append(llm.isPresent() ? "OpenRouter" : "not configured — set OPENROUTER_API_KEY")
+                .append('\n');
+        banner.append("  sign-in: ").append(devSignIn ? "DEVELOPMENT (unauthenticated) at /sign-in" : "none").append('\n');
+        banner.append("  data: ").append(dataDir).append('\n');
+        System.out.println(banner);
+        Thread.currentThread().join();
+    }
+
+    static Map<String, OrgHost> openOrgs(Path orgsDir, boolean allowLocal) throws IOException {
+        Map<String, OrgHost> orgs = new LinkedHashMap<>();
+        List<Path> checkouts;
+        try (Stream<Path> entries = Files.list(orgsDir)) {
+            checkouts = entries.filter(Files::isDirectory).filter(p -> !p.getFileName().toString().startsWith("."))
+                    .sorted().toList();
+        }
+        for (Path checkout : checkouts) {
+            String name = checkout.getFileName().toString();
+            try {
+                OrgHost org = OrgHost.open(checkout, new AgentHost.Options(secretsFor(name), Map.of(), allowLocal));
+                if (!org.org().equals(name)) {
+                    System.err.println("Skipping " + checkout + ": its org.yaml says " + org.org()
+                            + ", and the directory must be named for the organization.");
+                    org.close();
+                    continue;
+                }
+                orgs.put(name, org);
+            } catch (DefinitionException e) {
+                System.err.println("Not serving " + name + ", whose repository has " + e.getMessage());
+            }
+        }
+        return orgs;
+    }
+
+    /** {@code ${secret:NAME}} for organization {@code org} is the variable {@code AGENTKIT_SECRET_<ORG>_<NAME>}. */
+    static Secrets secretsFor(String org) {
+        return Secrets.fromEnv("AGENTKIT_SECRET_" + org.toUpperCase(Locale.ROOT).replace('-', '_') + "_");
+    }
+
+    private static void reload(OrgHost org) {
+        try {
+            org.reload();
+        } catch (DefinitionException e) {
+            System.err.println("A new version of " + org.org() + " was not loaded; still serving "
+                    + org.current().repo().version() + ". It has " + e.getMessage());
+        } catch (RuntimeException e) {
+            System.err.println("Reloading " + org.org() + " failed: " + e.getMessage());
+        }
+    }
+
+    static Map<String, Object> overview(String tenantId, Map<String, OrgHost> orgs, Optional<LlmClient> llm) {
+        Map<String, Object> described = new LinkedHashMap<>();
+        described.put("product", "AgentKit");
+        Optional<Tenant> tenant = Tenant.parse(tenantId);
+        tenant.ifPresent(t -> {
+            described.put("user", t.email());
+            described.put("org", t.org());
+            Optional.ofNullable(orgs.get(t.org())).ifPresent(org -> described.put("version", org.current().repo().version()));
+        });
+        List<String> problems = new ArrayList<>();
+        if (llm.isEmpty()) {
+            problems.add("No model is configured. Set OPENROUTER_API_KEY, then restart.");
+        }
+        described.put("ready", problems.isEmpty());
+        described.put("problems", problems);
+        return described;
+    }
+}

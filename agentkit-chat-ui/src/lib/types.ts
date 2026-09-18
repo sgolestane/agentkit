@@ -122,6 +122,19 @@ export interface Conversation {
   title: string
   createdAt: string
   updatedAt: string
+  /** The agent, at a version, this conversation is with; absent in a single-agent console. */
+  agent?: { id: string; version: string }
+}
+
+/**
+ * An agent this person may start a conversation with, in a console that offers more than one.
+ * `unavailable` says why it cannot answer right now, when it cannot.
+ */
+export interface AgentInfo {
+  id: string
+  name: string
+  description: string
+  unavailable?: string
 }
 
 export interface ConversationDetail extends Conversation {
@@ -173,5 +186,7 @@ export interface Overview {
   ready?: boolean
   model?: string
   problems?: string[]
+  /** The agents on offer; absent in a single-agent console. */
+  agents?: AgentInfo[]
   [key: string]: unknown
 }

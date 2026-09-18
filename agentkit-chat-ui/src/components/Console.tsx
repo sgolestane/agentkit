@@ -94,7 +94,8 @@ export function Console() {
         working={conversation.working}
         onFilter={threads.setFilter}
         onOpen={threads.open}
-        onCreate={() => void threads.create()}
+        agents={overview?.agents ?? []}
+        onCreate={(agent) => void threads.create(agent)}
         onRename={(id, title) => void threads.rename(id, title)}
         onForget={(id) => void threads.forget(id)}
       />

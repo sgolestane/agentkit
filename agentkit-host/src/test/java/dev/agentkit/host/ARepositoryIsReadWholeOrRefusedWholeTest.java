@@ -140,7 +140,12 @@ class ARepositoryIsReadWholeOrRefusedWholeTest {
         assertThat(head).matches("[0-9a-f]{40}");
 
         repo.edit("agents/helpdesk/policy.md", "Helpdesk policy:", "Helpdesk policy (draft):");
-        assertThat(GitVersion.of(repo.root())).isEqualTo(head + "-dirty");
+        String dirty = GitVersion.of(repo.root());
+        assertThat(dirty).matches(head + "-dirty-[0-9a-f]{12}");
+        assertThat(GitVersion.of(repo.root())).as("the same changes are the same version").isEqualTo(dirty);
+
+        repo.write("agents/helpdesk/notes.md", "an untracked file is a change too");
+        assertThat(GitVersion.of(repo.root())).startsWith(head + "-dirty-").isNotEqualTo(dirty);
     }
 
     private void git(String... args) throws Exception {

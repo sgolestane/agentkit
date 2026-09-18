@@ -28,6 +28,7 @@ final class HelpdeskConnector implements AutoCloseable {
     static final String TOKEN = "helpdesk-token";
     static final String PRIYA = "priya.natarajan@acme.example";
     static final String DANA = "dana.kim@acme.example";
+    static final String SAM = "sam.okafor@acme.example";
 
     /** One call that reached the connector. */
     record Call(String tool, Map<String, Object> arguments) {
@@ -43,13 +44,24 @@ final class HelpdeskConnector implements AutoCloseable {
 
     /** @param serves which of the helpdesk's tools this instance serves */
     HelpdeskConnector(java.util.function.Predicate<String> serves) throws IOException {
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        this(serves, 0);
+    }
+
+    private HelpdeskConnector(java.util.function.Predicate<String> serves, int port) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         DeclaredTools all = catalog();
         DeclaredTools served = new DeclaredTools(all.entries().stream().filter(e -> serves.test(e.tool().name())).toList());
         server.createContext("/mcp", new HttpMcpEndpoint(new McpServer("helpdesk", "1", ""),
                 HttpMcpEndpoint.Callers.header("Authorization"),
                 caller -> caller.equals("Bearer " + TOKEN) ? Optional.of(served) : Optional.empty()));
         server.start();
+    }
+
+    /** Serves the helpdesk on a fixed port until stopped, for trying the host by hand: {@code args[0]} is the port. */
+    public static void main(String[] args) throws Exception {
+        HelpdeskConnector helpdesk = new HelpdeskConnector(name -> true, Integer.parseInt(args[0]));
+        System.out.println("helpdesk connector at " + helpdesk.url() + " (token " + TOKEN + ")");
+        Thread.currentThread().join();
     }
 
     String url() {
@@ -78,6 +90,9 @@ final class HelpdeskConnector implements AutoCloseable {
                                 case DANA -> ToolResult.ok("{\"email\":\"" + DANA + "\",\"name\":\"Dana Kim\","
                                         + "\"title\":\"Engineering Manager\",\"department\":\"Payments\","
                                         + "\"manager\":\"\",\"groups\":[\"engineering\",\"managers\"]}");
+                                case SAM -> ToolResult.ok("{\"email\":\"" + SAM + "\",\"name\":\"Sam Okafor\","
+                                        + "\"title\":\"Head of Security\",\"department\":\"Security\","
+                                        + "\"manager\":\"\",\"groups\":[\"security\"]}");
                                 default -> ToolResult.error("Nobody in the directory has the email " + email);
                             };
                         }), new ToolDeclaration("directory", ToolEffect.READ, "email"))

@@ -112,7 +112,7 @@ field. That makes the list usable as a pull-request check.
 - confirmations and bindings that don't fit their tool
 - a tool with the effect `grant` that is neither confirmed nor from an authoritative connector
 
-## Using it
+## Using it as a library
 
 ```java
 AgentHost host = AgentHost.open(checkout, AgentHost.Options.hosted(secrets));   // version = the commit
@@ -129,6 +129,35 @@ ChatRuntime runtime = new ChatRuntime(store, events,
 - it builds the system prompt from the prompt file, the policy file, the person's record
   (fenced) and the time.
 
+## Running the host
+
+One process serves every organization, in one console:
+
+```bash
+AGENTKIT_HOST_ORGS=./orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
+AGENTKIT_SECRET_ACME_HELPDESK_URL=https://... AGENTKIT_SECRET_ACME_HELPDESK_TOKEN=... \
+OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
+```
+
+- `AGENTKIT_HOST_ORGS` holds one checkout per organization, each directory named for its org.
+- `AGENTKIT_SECRET_<ORG>_<NAME>` fills `${secret:NAME}` for that organization.
+- The console is at http://localhost:8400 (`AGENTKIT_HOST_PORT` to change it).
+
+- **Who is asking.** A person signs in to an organization, and their conversations are theirs
+  within it: the chat tenant is `org/email`. Development sign-in (`/sign-in`) trusts whoever
+  says who they are. It stands in for each organization's identity provider and is off
+  unless enabled.
+- **Which agent.** The console offers the agents of the organization's current version whose
+  audience includes the person. A new conversation is pinned to the agent chosen and that
+  version (`Conversation.Pin`).
+- **Which version.** Each checkout is looked at every `AGENTKIT_HOST_RELOAD_SECONDS`
+  (default 30), and a new commit becomes current.
+  - A commit that doesn't load is logged, and the previous version keeps serving.
+  - The last `OrgHost.RETAINED` versions stay loaded, so conversations continue with the prompt,
+    policy and tools they started with.
+  - A conversation whose version was let go is told to start a new one. It is never moved.
+  - Pulling the checkout on merge is the deployment's job.
+
 ## Tests
 
 ```bash
@@ -139,9 +168,7 @@ AGENTKIT_HOST_LIVE=true OPENROUTER_API_KEY=sk-or-... \
 
 ## Not yet
 
-- **One agent per runtime.** A conversation is not yet pinned to an agent and a version, so one
-  `ChatRuntime` serves one agent.
-- **Tenants.** Chat's tenant is still the person, not the organization plus the person.
+- **Real sign-in.** Only development sign-in exists; OIDC per organization comes next.
 - **Deferred actions** aren't configurable per agent yet.
 - **No MCP front door or `validate` CLI** yet.
 - **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller

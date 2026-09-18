@@ -61,6 +61,34 @@ final class RepoFixture {
         }
     }
 
+    /** Commits everything in the checkout, making it a Git repository first if it is not one; returns the commit. */
+    String commit(String message) {
+        if (!java.nio.file.Files.isDirectory(root.resolve(".git"))) {
+            git("init", "-q");
+        }
+        git("add", "-A", ".");
+        git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", message);
+        return git("rev-parse", "HEAD").strip();
+    }
+
+    private String git(String... args) {
+        java.util.List<String> command = new java.util.ArrayList<>(java.util.List.of("git", "-C", root.toString()));
+        command.addAll(java.util.List.of(args));
+        try {
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            if (process.waitFor() != 0) {
+                throw new IllegalStateException("git " + String.join(" ", args) + " failed: " + output);
+            }
+            return output;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** Replaces the first occurrence of {@code from} in a file. */
     RepoFixture edit(String relative, String from, String to) {
         String content = read(relative);

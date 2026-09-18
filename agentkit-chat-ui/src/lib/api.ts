@@ -1,4 +1,5 @@
 import type {
+  AgentInfo,
   Attachment,
   Conversation,
   ConversationDetail,
@@ -45,6 +46,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await response.text()
   const body: unknown = text ? JSON.parse(text) : null
   if (!response.ok) {
+    // Nobody is signed in and the console says where to: go there rather than show a page that
+    // can do nothing.
+    if (response.status === 401 && body && typeof body === 'object' && 'signIn' in body) {
+      globalThis.location?.assign(String((body as { signIn: unknown }).signIn))
+    }
     const stated =
       body && typeof body === 'object' && 'error' in body
         ? String((body as { error: unknown }).error)
@@ -59,10 +65,15 @@ export const api = {
 
   conversations: () => call<Conversation[]>('/conversations'),
 
+  agents: () => call<AgentInfo[]>('/agents'),
+
   conversation: (id: string) => call<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`),
 
-  create: (title = '') =>
-    call<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ title }) }),
+  create: (title = '', agent?: string) =>
+    call<Conversation>('/conversations', {
+      method: 'POST',
+      body: JSON.stringify(agent ? { title, agent } : { title }),
+    }),
 
   say: (id: string, text: string, attachments: string[] = []) =>
     call<Turn>(`/conversations/${encodeURIComponent(id)}/messages`, {

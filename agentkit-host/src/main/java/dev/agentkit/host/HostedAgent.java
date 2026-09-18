@@ -252,7 +252,28 @@ public final class HostedAgent {
     }
 
     /**
-     * How a chat runtime builds this agent for a turn.
+     * The agent for one chat turn, acting as {@code principal}: its tools bound to them, confirmed tools stopping for
+     * them through the session's approver, and a question for them through {@code runtime}.
+     *
+     * @throws ChatUnavailable with a sentence for the person, when the agent cannot run or is not for them
+     */
+    public Agent turn(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now, ChatRuntime runtime) {
+        if (unavailable.isPresent()) {
+            throw new ChatUnavailable(definition.name() + " is unavailable. " + unavailable.get());
+        }
+        if (!admits(principal)) {
+            throw new ChatUnavailable(definition.name() + " is not available to you.");
+        }
+        List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
+        tools.add(ChatTools.askPerson(runtime, session));
+        return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
+                .name(definition.id())
+                .toolGate(gate(session.approver()))
+                .build();
+    }
+
+    /**
+     * How a chat runtime that serves only this agent builds it for a turn.
      *
      * @param principals who a conversation's tenant is; empty for someone the organization does not know
      * @param runtime    the runtime being built around this, for asking the person a question
@@ -267,19 +288,9 @@ public final class HostedAgent {
             if (llm.isEmpty()) {
                 throw new ChatUnavailable("No model is configured for " + definition.name() + ".");
             }
-            if (unavailable.isPresent()) {
-                throw new ChatUnavailable(definition.name() + " is unavailable. " + unavailable.get());
-            }
             Principal principal = principals.apply(session.tenantId())
                     .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
-            if (!admits(principal)) {
-                throw new ChatUnavailable(definition.name() + " is not available to you.");
-            }
-            List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
-            tools.add(ChatTools.askPerson(runtime.get(), session));
-            Agent.Builder builder = session.agent(llm.get(), new SimpleToolRegistry(tools),
-                    config(systemPrompt(principal, clock.get())));
-            return builder.name(definition.id()).toolGate(gate(session.approver())).build();
+            return turn(session, llm.get(), principal, clock.get(), runtime.get());
         };
     }
 }

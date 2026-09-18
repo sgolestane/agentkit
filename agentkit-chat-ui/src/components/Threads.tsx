@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Conversation } from '../lib/types'
+import type { AgentInfo, Conversation } from '../lib/types'
 
 /**
  * Every conversation, and which one is open.
@@ -13,6 +13,7 @@ export function Threads({
   current,
   filter,
   working,
+  agents = [],
   onFilter,
   onOpen,
   onCreate,
@@ -23,9 +24,11 @@ export function Threads({
   current: string | null
   filter: string
   working: boolean
+  /** The agents on offer. With more than one, "+" asks which; with one or none it just starts. */
+  agents?: AgentInfo[]
   onFilter: (value: string) => void
   onOpen: (id: string) => void
-  onCreate: () => void
+  onCreate: (agent?: string) => void
   onRename: (id: string, title: string) => void
   onForget: (id: string) => void
 }) {
@@ -33,15 +36,7 @@ export function Threads({
     <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-panel md:flex">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
         <h1 className="text-sm font-semibold">AgentKit</h1>
-        <button
-          type="button"
-          onClick={onCreate}
-          aria-label="Start a new conversation"
-          title="Start a new conversation"
-          className="ml-auto rounded border border-line px-2 py-0.5 text-sm text-muted hover:text-ink"
-        >
-          +
-        </button>
+        <NewConversation agents={agents} onCreate={onCreate} />
       </div>
 
       <div className="px-2 pt-2">
@@ -62,6 +57,7 @@ export function Threads({
             thread={thread}
             open={thread.id === current}
             working={working && thread.id === current}
+            agent={agents.length > 1 ? agents.find((one) => one.id === thread.agent?.id)?.name ?? thread.agent?.id : undefined}
             onOpen={() => onOpen(thread.id)}
             onRename={(title) => onRename(thread.id, title)}
             onForget={() => onForget(thread.id)}
@@ -75,10 +71,80 @@ export function Threads({
   )
 }
 
+/**
+ * "+", which starts a conversation — with the one agent there is, or, when there is a choice, with
+ * the one picked from a short list. A list rather than a dialog: it is one decision, and the
+ * names and one-line descriptions are all it takes to make it.
+ */
+function NewConversation({
+  agents,
+  onCreate,
+}: {
+  agents: AgentInfo[]
+  onCreate: (agent?: string) => void
+}) {
+  const [choosing, setChoosing] = useState(false)
+  if (agents.length <= 1) {
+    return (
+      <button
+        type="button"
+        onClick={() => onCreate(agents[0]?.id)}
+        aria-label="Start a new conversation"
+        title="Start a new conversation"
+        className="ml-auto rounded border border-line px-2 py-0.5 text-sm text-muted hover:text-ink"
+      >
+        +
+      </button>
+    )
+  }
+  return (
+    <div className="relative ml-auto">
+      <button
+        type="button"
+        onClick={() => setChoosing((open) => !open)}
+        aria-label="Start a new conversation"
+        aria-expanded={choosing}
+        aria-haspopup="menu"
+        title="Start a new conversation"
+        className="rounded border border-line px-2 py-0.5 text-sm text-muted hover:text-ink"
+      >
+        +
+      </button>
+      {choosing ? (
+        <ul
+          role="menu"
+          aria-label="Which agent"
+          className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-line bg-panel p-1 shadow-lg"
+        >
+          {agents.map((agent) => (
+            <li key={agent.id} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setChoosing(false)
+                  onCreate(agent.id)
+                }}
+                className="w-full rounded px-2 py-1.5 text-left hover:bg-canvas"
+              >
+                <span className="block text-sm text-ink">{agent.name}</span>
+                {agent.unavailable ?? agent.description ? (
+                  <span className="block text-xs text-muted">{agent.unavailable ?? agent.description}</span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 function ThreadRow({
   thread,
   open,
   working,
+  agent,
   onOpen,
   onRename,
   onForget,
@@ -86,6 +152,8 @@ function ThreadRow({
   thread: Conversation
   open: boolean
   working: boolean
+  /** Which agent it is with, when the console offers more than one. */
+  agent?: string
   onOpen: () => void
   onRename: (title: string) => void
   onForget: () => void
@@ -144,6 +212,7 @@ function ThreadRow({
           />
         ) : null}
         {thread.title || 'New conversation'}
+        {agent ? <span className="block truncate text-xs text-muted">{agent}</span> : null}
       </button>
 
       <button

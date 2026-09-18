@@ -17,6 +17,10 @@
         person asking), validated, pinned to a commit, and assembled into a running agent per
         turn over MCP connectors.</description>
 
+    <properties>
+        <exec.mainClass>dev.agentkit.host.web.AgentHostApp</exec.mainClass>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>dev.agentkit</groupId>
@@ -41,7 +45,30 @@
         <dependency>
             <groupId>dev.agentkit</groupId>
             <artifactId>agentkit-llm-openrouter</artifactId>
-            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>runtime</classpathScope>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${exec.mainClass}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
