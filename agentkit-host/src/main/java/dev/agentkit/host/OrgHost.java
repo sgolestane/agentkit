@@ -2,8 +2,14 @@ package dev.agentkit.host;
 
 import dev.agentkit.host.repo.DefinitionException;
 import dev.agentkit.host.repo.GitVersion;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +29,11 @@ import org.slf4j.LoggerFactory;
  * that has since been let go is told so, and not quietly moved.
  *
  * <p>A version that does not load leaves the current one serving: a bad merge is reported, not deployed.
+ *
+ * <p><strong>Across a restart.</strong> Every version made current is noted in a {@link VersionLog}. On opening, the
+ * host loads the checkout as usual, then loads again the most recent earlier versions the log names — each from its
+ * commit, taken out of the repository's history — so conversations pinned to them go on as before. A version that
+ * was never committed (a working tree with changes) cannot be taken out again, and is let go.
  */
 public final class OrgHost implements AutoCloseable {
 
@@ -34,13 +45,30 @@ public final class OrgHost implements AutoCloseable {
     private final Path checkout;
     private final Function<Path, AgentHost> loader;
     private final Function<Path, String> versionOf;
+    private final VersionLog log;
+    private final Function<String, Optional<Past>> past;
     private final LinkedHashMap<String, AgentHost> versions = new LinkedHashMap<>();
+    private final Map<String, Runnable> cleanups = new HashMap<>();
     private AgentHost current;
 
+    /** An earlier version loaded again, and what to do once it is let go. */
+    record Past(AgentHost host, Runnable cleanup) {
+    }
+
     OrgHost(Path checkout, Function<Path, AgentHost> loader, Function<Path, String> versionOf) {
+        this(checkout, loader, versionOf, VersionLog.inMemory(), version -> Optional.empty());
+    }
+
+    /**
+     * @param past loads an earlier version again, by its id; empty when it cannot be
+     */
+    OrgHost(Path checkout, Function<Path, AgentHost> loader, Function<Path, String> versionOf, VersionLog log,
+            Function<String, Optional<Past>> past) {
         this.checkout = Objects.requireNonNull(checkout, "checkout");
         this.loader = Objects.requireNonNull(loader, "loader");
         this.versionOf = Objects.requireNonNull(versionOf, "versionOf");
+        this.log = Objects.requireNonNull(log, "log");
+        this.past = Objects.requireNonNull(past, "past");
     }
 
     /**
@@ -49,9 +77,95 @@ public final class OrgHost implements AutoCloseable {
      * @throws DefinitionException listing every problem with it
      */
     public static OrgHost open(Path checkout, AgentHost.Options options) {
-        OrgHost host = new OrgHost(checkout, dir -> AgentHost.open(dir, GitVersion.of(dir), options), GitVersion::of);
+        return open(checkout, options, VersionLog.inMemory());
+    }
+
+    /**
+     * Opens the repository checked out in {@code checkout}, and the earlier versions {@code log} says were serving.
+     *
+     * @throws DefinitionException listing every problem with the checkout's version
+     */
+    public static OrgHost open(Path checkout, AgentHost.Options options, VersionLog log) {
+        OrgHost host = new OrgHost(checkout, dir -> AgentHost.open(dir, GitVersion.of(dir), options), GitVersion::of,
+                log, version -> extracted(checkout, version, options));
         host.reload();
+        host.restore();
         return host;
+    }
+
+    /** {@code version} of the repository, taken out of its history into a directory of its own and loaded. */
+    private static Optional<Past> extracted(Path checkout, String version, AgentHost.Options options) {
+        if (!GitVersion.isCommit(version)) {
+            return Optional.empty();
+        }
+        Path dir;
+        try {
+            dir = Files.createTempDirectory("agentkit-version-");
+        } catch (IOException e) {
+            LOG.warn("Could not make a directory to load {} into", version, e);
+            return Optional.empty();
+        }
+        Runnable cleanup = () -> delete(dir);
+        try {
+            if (!GitVersion.extract(checkout, version, dir)) {
+                LOG.warn("{} is not in the history of {}; conversations pinned to it will be told so", version, checkout);
+                cleanup.run();
+                return Optional.empty();
+            }
+            return Optional.of(new Past(AgentHost.open(dir, version, options), cleanup));
+        } catch (RuntimeException e) {
+            LOG.warn("{} could not be loaded again: {}", version, e.getMessage());
+            cleanup.run();
+            return Optional.empty();
+        }
+    }
+
+    private static void delete(Path dir) {
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Litter in the temporary directory, at worst.
+                }
+            });
+        } catch (IOException ignored) {
+            // As above.
+        }
+    }
+
+    /**
+     * Loads again the earlier versions the log names, most recent first, until {@link #RETAINED} are loaded. They go
+     * before the current one: they are older.
+     */
+    synchronized void restore() {
+        String org = current.repo().org();
+        List<String> wanted = new ArrayList<>();
+        for (String version : log.recent(org, RETAINED + 1)) {
+            if (!versions.containsKey(version) && versions.size() + wanted.size() < RETAINED) {
+                wanted.add(version);
+            }
+        }
+        Collections.reverse(wanted);
+        LinkedHashMap<String, AgentHost> rebuilt = new LinkedHashMap<>();
+        for (String version : wanted) {
+            past.apply(version).ifPresent(loaded -> {
+                if (loaded.host().repo().org().equals(org)) {
+                    rebuilt.put(version, loaded.host());
+                    cleanups.put(version, loaded.cleanup());
+                } else {
+                    loaded.host().close();
+                    loaded.cleanup().run();
+                }
+            });
+        }
+        if (!rebuilt.isEmpty()) {
+            rebuilt.putAll(versions);
+            versions.clear();
+            versions.putAll(rebuilt);
+            LOG.info("{} serves {} again, from before the restart", org, List.copyOf(rebuilt.keySet()).subList(0,
+                    rebuilt.size() - 1));
+        }
     }
 
     /**
@@ -76,11 +190,13 @@ public final class OrgHost implements AutoCloseable {
             replaced.close();
         }
         current = loaded;
+        log.loaded(loaded.repo().org(), loaded.repo().version(), Instant.now());
         List<String> retired = new ArrayList<>();
         while (versions.size() > RETAINED) {
             Map.Entry<String, AgentHost> oldest = versions.entrySet().iterator().next();
             versions.remove(oldest.getKey());
             oldest.getValue().close();
+            Optional.ofNullable(cleanups.remove(oldest.getKey())).ifPresent(Runnable::run);
             retired.add(oldest.getKey());
         }
         LOG.info("{} is now at {}{}", loaded.repo().org(), loaded.repo().version(),
@@ -111,5 +227,7 @@ public final class OrgHost implements AutoCloseable {
     public synchronized void close() {
         versions.values().forEach(AgentHost::close);
         versions.clear();
+        cleanups.values().forEach(Runnable::run);
+        cleanups.clear();
     }
 }

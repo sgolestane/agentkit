@@ -223,6 +223,31 @@ OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
   - A conversation whose version was let go is told to start a new one. It is never moved.
   - Pulling the checkout on merge is the deployment's job.
 
+### Where it keeps things
+
+By default, conversations and deferred actions are files under `AGENTKIT_HOST_DATA_DIR`
+(default `data/agentkit-host`), for one process. With a database they are in Postgres:
+
+```bash
+AGENTKIT_HOST_DATABASE_URL='jdbc:postgresql://db.internal:5432/agentkit' \
+AGENTKIT_HOST_DATABASE_USER=agentkit AGENTKIT_HOST_DATABASE_PASSWORD=... \
+  ./mvnw -q -pl agentkit-host exec:exec
+```
+
+- **Keyed by organization.** Every row carries `org_id`: conversations, turns and attachments
+  (`chat_*`), deferred actions (`deferred_action`, per organization and agent), and the versions
+  each organization was loaded at (`org_version`). One organization's data is found, exported or
+  deleted without reading another's.
+- **The schema migrates itself** on start, under an advisory lock, so several hosts starting
+  together apply each migration once (`agentkit_schema` records which have run).
+- **A restart keeps the versions conversations are pinned to.** The host notes every version it
+  makes current. On start it loads each checkout, then loads again the most recent earlier
+  versions it was serving, taking each out of the repository's history by its commit. A version
+  that was never committed (a working tree with changes) cannot be taken out again, and is let go.
+- **Deferred actions are claimed once.** A claim is one conditional update, so however many hosts
+  sweep, one runs an action. If the host that claimed it stops, the action is due again once the
+  claim is 30 minutes old (at least once, as for every deferred store).
+
 ## Over MCP
 
 The host is also an MCP server, at `/mcp` on the console's port. For each agent a caller may use,
@@ -265,12 +290,22 @@ when there are problems.
 
 ```bash
 ./mvnw -pl agentkit-host test                     # offline, against a real MCP connector over HTTP
+AGENTKIT_TEST_DATABASE_URL='jdbc:postgresql://127.0.0.1:5432/agentkit_test?user=agentkit' \
+  ./mvnw -pl agentkit-host test -Dtest='dev.agentkit.host.store.*Test'   # the Postgres stores
 AGENTKIT_HOST_LIVE=true OPENROUTER_API_KEY=sk-or-... \
   ./mvnw -pl agentkit-host test -Dtest=AHostedAgentAgainstARealModelTest
 ```
 
+The Postgres tests are skipped without `AGENTKIT_TEST_DATABASE_URL`. The chat store's cases run
+against the in-memory store too, so the two cannot drift apart. CI runs them against a Postgres
+service container.
+
 ## Not yet
 
+- **A turn cut off by a restart.** Conversations and their turns are kept, but a turn that was
+  running or waiting for a confirmation when the host stopped is not resumed. Its live stream
+  and pending confirmations are in the process that ran it, so a person should also stay on one
+  instance while a turn runs.
 - **Real sign-in.** Only development sign-in exists; OIDC per organization comes next.
 - **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller
   assertion in the connector contract comes later.

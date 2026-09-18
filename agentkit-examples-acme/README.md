@@ -70,6 +70,10 @@ AGENTKIT_SECRET_ACME_ONBOARDING_URL=http://127.0.0.1:8140/mcp AGENTKIT_SECRET_AC
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
 
+To keep conversations, deferred actions and loaded versions in Postgres rather than in files, add
+`AGENTKIT_HOST_DATABASE_URL=jdbc:postgresql://...` to the host's command (see
+[Where it keeps things](../agentkit-host/README.md#where-it-keeps-things)).
+
 Open <http://localhost:8400> and sign in as one of the demo people:
 
 - Priya Natarajan, engineer: `priya.natarajan@acme.example`

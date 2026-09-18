@@ -15,7 +15,13 @@ import dev.agentkit.mcp.server.McpServer;
 import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
+import dev.agentkit.host.VersionLog;
 import dev.agentkit.host.repo.DefinitionException;
+import dev.agentkit.host.store.Database;
+import dev.agentkit.host.store.PostgresChatStore;
+import dev.agentkit.host.store.PostgresDeferredActionStore;
+import dev.agentkit.host.store.PostgresVersionLog;
+import dev.agentkit.chat.store.ChatStore;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -52,6 +58,12 @@ import java.util.stream.Stream;
  * {@code ${secret:NAME}}; {@code AGENTKIT_HOST_ALLOW_LOCAL_CONNECTORS=true} for connectors run as local commands;
  * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which is the only sign-in so far;
  * {@code AGENTKIT_HOST_DEFERRED_SECONDS} (default 30), how often due deferred actions are run.
+ *
+ * <p><strong>Where it keeps things.</strong> With {@code AGENTKIT_HOST_DATABASE_URL} ({@code jdbc:postgresql://...},
+ * and {@code AGENTKIT_HOST_DATABASE_USER} and {@code AGENTKIT_HOST_DATABASE_PASSWORD} if the url does not carry them),
+ * conversations, deferred actions and the versions each organization was loaded at are in Postgres, keyed by
+ * organization, and a restart serves again the versions conversations are pinned to. Without it they are files under
+ * the data directory, for one process, and a restart serves only each checkout's current version.
  */
 public final class AgentHostApp {
 
@@ -75,7 +87,12 @@ public final class AgentHostApp {
                     + "directory holding one checkout per organization, as an absolute path.");
             System.exit(2);
         }
-        Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal);
+        String databaseUrl = env.get("AGENTKIT_HOST_DATABASE_URL");
+        Optional<Database> database = databaseUrl == null || databaseUrl.isBlank() ? Optional.empty()
+                : Optional.of(Database.open(databaseUrl.strip(), env.get("AGENTKIT_HOST_DATABASE_USER"),
+                        env.get("AGENTKIT_HOST_DATABASE_PASSWORD")));
+        VersionLog versions = database.<VersionLog>map(PostgresVersionLog::new).orElseGet(VersionLog::inMemory);
+        Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal, versions);
         if (orgs.isEmpty()) {
             System.err.println("No organization loaded from " + orgsDir + "; nothing to serve.");
             System.exit(2);
@@ -89,14 +106,18 @@ public final class AgentHostApp {
         long deferredSeconds = Long.parseLong(env.getOrDefault("AGENTKIT_HOST_DEFERRED_SECONDS", "30").strip());
         Map<String, DeferredWork> deferred = new LinkedHashMap<>();
         orgs.forEach((name, org) -> {
-            DeferredWork work = new DeferredWork(org, agent -> DeferredActionStore.inDirectory(
-                    dataDir.resolve("deferred").resolve(name).resolve(agent)), Instant::now, llm);
+            DeferredWork work = new DeferredWork(org, agent -> database
+                    .<DeferredActionStore>map(db -> new PostgresDeferredActionStore(db, name, agent))
+                    .orElseGet(() -> DeferredActionStore.inDirectory(dataDir.resolve("deferred").resolve(name).resolve(agent))),
+                    Instant::now, llm);
             work.start(java.time.Duration.ofSeconds(deferredSeconds));
             deferred.put(name, work);
         });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
         HostChat chat = new HostChat(orgs, deferred, llm, Instant::now, self::get);
-        ChatRuntime runtime = new ChatRuntime(new FileChatStore(dataDir.resolve("chat")), new ChatEvents(), chat);
+        ChatStore store = database.<ChatStore>map(PostgresChatStore::new)
+                .orElseGet(() -> new FileChatStore(dataDir.resolve("chat")));
+        ChatRuntime runtime = new ChatRuntime(store, new ChatEvents(), chat);
         self.set(runtime);
 
         DevSignIn signIn = new DevSignIn(orgs);
@@ -127,6 +148,7 @@ public final class AgentHostApp {
             server.close();
             runtime.close();
             orgs.values().forEach(OrgHost::close);
+            database.ifPresent(Database::close);
         }));
 
         StringBuilder banner = new StringBuilder("\nAgentKit host is running on http://localhost:" + port + "\n");
@@ -137,12 +159,13 @@ public final class AgentHostApp {
         banner.append("  sign-in: ").append(devSignIn ? "DEVELOPMENT (unauthenticated) at /sign-in" : "none").append('\n');
         banner.append("  MCP: http://localhost:").append(port).append("/mcp").append(devSignIn
                 ? " (header " + DevSignIn.MCP_HEADER + ": <org>/<email>)" : " (no sign-in configured)").append('\n');
-        banner.append("  data: ").append(dataDir).append('\n');
+        banner.append("  data: ").append(database.isPresent() ? "Postgres (schema version "
+                + database.get().schemaVersion() + ")" : dataDir.toString()).append('\n');
         System.out.println(banner);
         Thread.currentThread().join();
     }
 
-    static Map<String, OrgHost> openOrgs(Path orgsDir, boolean allowLocal) throws IOException {
+    static Map<String, OrgHost> openOrgs(Path orgsDir, boolean allowLocal, VersionLog versions) throws IOException {
         Map<String, OrgHost> orgs = new LinkedHashMap<>();
         List<Path> checkouts;
         try (Stream<Path> entries = Files.list(orgsDir)) {
@@ -152,7 +175,8 @@ public final class AgentHostApp {
         for (Path checkout : checkouts) {
             String name = checkout.getFileName().toString();
             try {
-                OrgHost org = OrgHost.open(checkout, new AgentHost.Options(secretsFor(name), Map.of(), allowLocal));
+                OrgHost org = OrgHost.open(checkout, new AgentHost.Options(secretsFor(name), Map.of(), allowLocal),
+                        versions);
                 if (!org.org().equals(name)) {
                     System.err.println("Skipping " + checkout + ": its org.yaml says " + org.org()
                             + ", and the directory must be named for the organization.");

@@ -46,6 +46,46 @@ public final class GitVersion {
         return head + "-dirty-" + sha256(changes.toString()).substring(0, 12);
     }
 
+    /** Whether {@code version} names a commit, rather than a working tree with changes or no Git at all. */
+    public static boolean isCommit(String version) {
+        return version != null && version.matches("[0-9a-f]{40,64}");
+    }
+
+    /**
+     * Writes the files {@code dir} held at the commit {@code version} into {@code into}, which must exist: the
+     * directory's own subtree when it is part of a larger repository. False, having written nothing useful, when
+     * {@code version} is not a commit this checkout has.
+     */
+    public static boolean extract(Path dir, String version, Path into) {
+        if (!isCommit(version)) {
+            return false;
+        }
+        Path archive = null;
+        try {
+            archive = java.nio.file.Files.createTempFile("agentkit-version-", ".tar");
+            // Run from the directory, git archive takes only its subtree, at the paths relative to it.
+            if (git(dir, "archive", "--format=tar", "-o", archive.toString(), version) == null) {
+                return false;
+            }
+            Process tar = new ProcessBuilder("tar", "-xf", archive.toString(), "-C", into.toString())
+                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            return tar.waitFor(60, TimeUnit.SECONDS) && tar.exitValue() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            if (archive != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(archive);
+                } catch (IOException ignored) {
+                    // A temporary file left behind is only litter.
+                }
+            }
+        }
+    }
+
     private static String sha256(String text) {
         try {
             return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
