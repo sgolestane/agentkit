@@ -76,6 +76,7 @@ agentkit-chat-ui/        # the console agentkit-chat serves (React), built into 
 agentkit-agui/           # that stream spoken as AG-UI, for a CopilotKit or assistant-ui frontend
 agentkit-host/           # agents as configuration: an org's Git repo of definitions, assembled over MCP connectors
 agentkit-examples/       # runnable end-to-end demos
+agentkit-examples-acme/  # an org's agents on the host: Access Desk and Onboarding, and their connectors
 ```
 
 Only `agentkit-core` is required; everything else is opt-in. See
@@ -2442,6 +2443,7 @@ cites in turn.
 - [`docs/BACKENDS.md`](docs/BACKENDS.md) — operational setup for Bedrock and OpenRouter.
 - [`docs/PLAN.md`](docs/PLAN.md) — the phased roadmap the modules were built against.
 - [`agentkit-examples`](agentkit-examples/README.md) — runnable, fully-wired demos, and how to run them.
+- [`agentkit-examples-acme`](agentkit-examples-acme/README.md) — two agents on the agent host as configuration only.
 
 Every public type carries javadoc that explains the *why*, not just the what;
 `./mvnw verify` builds it and fails on a broken `{@link}` or a malformed tag.

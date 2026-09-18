@@ -94,11 +94,13 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         Tenant tenant = Tenant.parse(tenantId)
                 .orElseThrow(() -> new ChatUnavailable("This conversation belongs to nobody the host knows."));
         HostedAgent agent = pinned(tenant, conversation);
-        return request(agent, input);
+        Principal principal = principal(tenantId).map(Found::principal)
+                .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
+        return request(agent, input, principal);
     }
 
-    /** {@code input} as {@code agent}'s request, or every reason it is not one. */
-    static String request(HostedAgent agent, Map<String, Object> input) {
+    /** {@code input} as {@code agent}'s request from {@code principal}, or every reason it is not one. */
+    static String request(HostedAgent agent, Map<String, Object> input, Principal principal) {
         dev.agentkit.host.repo.TaskInput form = agent.definition().input();
         if (form == null) {
             throw new ChatUnavailable(agent.definition().name() + " takes no form; say what you need instead.");
@@ -107,7 +109,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         if (!problems.isEmpty()) {
             throw new ChatUnavailable(String.join(". ", problems) + ".");
         }
-        return form.render(input);
+        return form.render(input, principal::value);
     }
 
     // ---------------------------------------------------------------- turns

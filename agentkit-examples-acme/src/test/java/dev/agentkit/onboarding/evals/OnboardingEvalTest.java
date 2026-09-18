@@ -1,42 +1,47 @@
-package dev.agentkit.examples.onboarding.evals;
+package dev.agentkit.onboarding.evals;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.agentkit.core.agent.AgentObserver;
+import dev.agentkit.accessdesk.desk.AccessLedger;
+import dev.agentkit.accessdesk.systems.CompanySystems;
+import dev.agentkit.acme.AcmeOnTheHost;
+import dev.agentkit.chat.ChatRuntime;
+import dev.agentkit.chat.Conversation;
+import dev.agentkit.chat.Step;
+import dev.agentkit.chat.Turn;
 import dev.agentkit.core.agent.AgentResult;
-import dev.agentkit.core.agent.AgentRun;
 import dev.agentkit.core.agent.Goal;
+import dev.agentkit.core.deferred.DeferredAction;
+import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.llm.LlmClient;
-import dev.agentkit.core.planning.PlanExecution;
+import dev.agentkit.core.reliability.ApprovalDecision;
 import dev.agentkit.core.tool.Disposition;
 import dev.agentkit.core.tool.ToolInvocation;
-import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.eval.CaseReport;
 import dev.agentkit.eval.Check;
 import dev.agentkit.eval.CheckOutcome;
 import dev.agentkit.eval.Checks;
 import dev.agentkit.eval.EvalRun;
 import dev.agentkit.eval.ToolCall;
-import dev.agentkit.core.deferred.DeferredAction;
-import dev.agentkit.examples.onboarding.OnboardingApp;
-import dev.agentkit.examples.onboarding.OnboardingConfig;
-import dev.agentkit.examples.onboarding.OnboardingFixtures;
-import dev.agentkit.examples.onboarding.OnboardingGoal;
-import dev.agentkit.examples.onboarding.OnboardingSystems;
-import dev.agentkit.examples.onboarding.OnboardingSystems.AwsGrant;
-import dev.agentkit.examples.onboarding.OnboardingSystems.GithubIdentity;
-import dev.agentkit.examples.onboarding.OnboardingSystems.OktaUser;
-import dev.agentkit.examples.onboarding.OnboardingSystems.SlackAccount;
-import dev.agentkit.examples.onboarding.OnboardingSystems.SlackQuestion;
-import dev.agentkit.examples.onboarding.ToolCallPrinter;
-import dev.agentkit.examples.planexecute.PlanExecuteAgent;
+import dev.agentkit.onboarding.OnboardingSystems;
+import dev.agentkit.onboarding.OnboardingSystems.AwsGrant;
+import dev.agentkit.onboarding.OnboardingSystems.GithubIdentity;
+import dev.agentkit.onboarding.OnboardingSystems.OktaUser;
+import dev.agentkit.onboarding.OnboardingSystems.SlackAccount;
+import dev.agentkit.onboarding.OnboardingSystems.SlackQuestion;
+import dev.agentkit.onboarding.OnboardingSystems.Worker;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -47,18 +52,15 @@ import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
 /**
- * Evaluates onboarding — an {@link OnboardingGoal} run by a {@link PlanExecuteAgent} with the shipped
- * policy and prompts — against a real model: one case per hire in {@link OnboardingFixtures},
- * each scored on its plan and on what the systems hold afterwards.
+ * Evaluates Onboarding as it runs — {@code orgs/acme}'s {@code onboarding} agent on the agent host, with the onboarding
+ * systems as an MCP connector over HTTP — against a real model: one case per hire in {@code onboarding/hr.json}, each
+ * started by the hire's manager from the agent's form, filled in from the hire's HRIS record, with every grant confirmed
+ * as the manager would in the console. Each is scored on its plan and on what the systems hold afterwards.
  *
  * <p>Two kinds of check, on purpose. The <b>plan</b> checks score planning: every step unconditional,
  * nothing that only notes a skipped branch, and no mention of branches that do not apply to this hire.
  * The <b>world-state</b> checks score the outcome, read from the fake systems rather than from what the
  * model said it did — accounts, groups, grants, tickets, questions asked, deferred actions scheduled.
- *
- * <p>Uses {@code agentkit-eval}'s {@link Check}, {@link Checks#worldState} and {@link CaseReport}. Its
- * {@code EvalHarness} drives a single {@code Agent}, and this application is a {@code PlanningAgent}, so
- * the few lines that run a case and build its {@link EvalRun} are here.
  *
  * <p><b>Opt-in, and it costs real tokens</b> (roughly 80k input per hire). Skipped unless
  * {@code ONBOARDING_EVAL=true} and {@code OPENROUTER_API_KEY} are set, so an ordinary build never calls a
@@ -67,13 +69,17 @@ import org.junit.jupiter.api.TestFactory;
  * <pre>
  * ONBOARDING_EVAL=true OPENROUTER_API_KEY=sk-or-... \
  *   ONBOARDING_SCENARIOS="contractor rehire" \        # optional subset
- *   ./mvnw -f agentkit-examples/pom.xml test -Dtest=OnboardingEvalTest
+ *   ./mvnw -pl agentkit-examples-acme test -Dtest=OnboardingEvalTest
  * </pre>
  *
- * <p>Model output varies between runs. World-state checks have held on every run so far; plan-wording
- * checks occasionally catch the planner writing a hedge or a skip note, which is what they are for.
+ * <p>The model is {@code orgs/acme}'s, as the host runs it. Model output varies between runs. World-state checks have
+ * held on every run so far; plan-wording checks occasionally catch the planner writing a hedge or a skip note, which is
+ * what they are for.
  */
 class OnboardingEvalTest {
+
+    /** The eval's "now": fixed, so scheduled dates and checks never drift with the calendar. */
+    static final Instant NOW = Instant.parse("2026-09-16T00:00:00Z");
 
     /** Conditional wording that must not survive planning. */
     static final Pattern CONDITIONAL = Pattern.compile("\\b(if|otherwise|unless|else|whether|depending on)\\b",
@@ -88,14 +94,37 @@ class OnboardingEvalTest {
     static final Pattern PENDING = Pattern.compile(
             "pending|missing|unknown|outstanding|awaiting|not yet|not been|could not|couldn't|unable|no reply|not respond");
 
+    /** What an HRIS field holds when it holds nothing: left out of the form. */
+    private static final Set<String> NOT_ON_FILE = Set.of("", "none", "not on file");
+
+    static final String RAVI = "W-1001";
+    static final String MARCUS = "W-1002";
+    static final String MARIA = "W-1003";
+    static final String NOAH = "W-1004";
+    static final String AISHA = "W-1005";
+    static final String JORDAN = "W-1006";
+    static final String ALEX = "W-1007";
+
     /**
      * One hire to onboard and what must be true afterwards.
      *
      * @param planMustNotMention word prefixes of branches that do not apply to this hire
-     * @param expectations       checks on the world after the run, given the systems and the run's tool calls
+     * @param expectations       checks on the world after the run
      */
     record Scenario(String name, String employeeId, Set<String> planMustNotMention,
-                    Function<OnboardingSystems, List<Check>> expectations) {
+                    Function<World, List<Check>> expectations) {
+    }
+
+    /** One case's systems, and what the manager was asked along the way. */
+    static final class World {
+        final OnboardingSystems s = OnboardingSystems.open("onboarding", 1_000);
+        final DeferredActionStore store = DeferredActionStore.inMemory();
+        final List<String> confirmed = new CopyOnWriteArrayList<>();
+        final List<String> questions = new CopyOnWriteArrayList<>();
+
+        List<DeferredAction> deferredActions() {
+            return store.all();
+        }
     }
 
     @TestFactory
@@ -106,54 +135,142 @@ class OnboardingEvalTest {
         Assumptions.assumeTrue(key != null && !key.isBlank(), "Set OPENROUTER_API_KEY to run the onboarding evals.");
 
         LlmClient llm = OpenRouterLlmClient.builder(key).title("agentkit onboarding evals").build();
-        String model = System.getenv().getOrDefault("ONBOARDING_MODEL", OnboardingApp.DEFAULT_MODEL);
-        OnboardingConfig config = OnboardingConfig.fromEnv();
         String subset = System.getenv().getOrDefault("ONBOARDING_SCENARIOS", "");
         Set<String> wanted = subset.isBlank() ? Set.of() : Set.of(subset.strip().split("[\\s,]+"));
 
         return scenarios().stream()
                 .filter(scenario -> wanted.isEmpty() || wanted.contains(scenario.name()))
                 .map(scenario -> DynamicTest.dynamicTest(scenario.name(), () -> {
-                    CaseReport report = run(scenario, config, llm, model);
+                    CaseReport report = run(scenario, llm);
                     assertThat(report.failures()).as("failed checks for %s", scenario.name()).isEmpty();
                 }));
     }
 
-    private static CaseReport run(Scenario scenario, OnboardingConfig config, LlmClient llm, String model) {
+    private static CaseReport run(Scenario scenario, LlmClient llm) throws InterruptedException {
         System.out.println("\n=== " + scenario.name() + " (" + scenario.employeeId() + ") ===");
-        OnboardingSystems systems = OnboardingFixtures.world();
-        Trajectory trajectory = new Trajectory();
-        PlanExecuteAgent agent = new PlanExecuteAgent(llm, model, config.plannerPrompt(), config.executorPrompt(),
-                systems::registry, trajectory);
-        Goal goal = OnboardingGoal.forWorker(config.policy(), systems.worker(scenario.employeeId()));
+        World w = new World();
+        Worker hire = w.s.worker(scenario.employeeId());
+        String manager = hire.manager();
+        try (AcmeOnTheHost acme = AcmeOnTheHost.start(CompanySystems.open(null), AccessLedger.open(null), w.s,
+                AcmeOnTheHost.storeFor("onboarding", w.store), () -> NOW, llm)) {
+            ChatRuntime runtime = acme.runtime();
+            String tenant = acme.tenant(manager);
+            Conversation conversation = acme.start(manager, "onboarding", scenario.name());
+            String request = acme.chat().message(tenant, conversation, form(hire));
+            Turn turn = converse(runtime, w, tenant, conversation.id(), request);
 
-        PlanExecution execution;
-        try {
-            execution = agent.run(goal);
-        } catch (RuntimeException e) {
-            EvalRun failed = new EvalRun(goal, AgentResult.failed(e, 0), trajectory.calls());
-            return print(new CaseReport(scenario.name(), failed, List.of(CheckOutcome.fail("run", "threw: " + e))));
-        }
-        OnboardingApp.printRun(execution, systems, System.out);
-        EvalRun run = new EvalRun(goal, execution.overall(), trajectory.calls());
+            List<String> plan = plan(turn);
+            List<ToolCall> calls = toolCalls(turn);
+            printRun(turn, plan, w);
+            AgentResult result = turn.state() == Turn.State.COMPLETED ? AgentResult.completed(turn.answer(), 0)
+                    : AgentResult.failed(new IllegalStateException(turn.state() + ": " + turn.detail()), 0);
+            EvalRun run = new EvalRun(Goal.of(request), result, calls);
 
-        List<Check> checks = new ArrayList<>();
-        checks.add(Checks.completed());
-        checks.addAll(planChecks(execution.plan().steps(), scenario, systems.worker(scenario.employeeId()).manager()));
-        checks.addAll(scenario.expectations().apply(systems));
-        String manager = systems.worker(scenario.employeeId()).manager();
-        checks.add(Checks.worldState("manager was messaged",
-                () -> systems.slackMessages().stream().map(m -> m.to()).toList(), to -> to.contains(manager)));
+            List<Check> checks = new ArrayList<>();
+            checks.add(Checks.completed());
+            checks.addAll(planChecks(plan, scenario, manager));
+            checks.addAll(scenario.expectations().apply(w));
+            checks.add(Checks.worldState("manager was messaged",
+                    () -> w.s.slackMessages().stream().map(m -> m.to()).toList(), to -> to.contains(manager)));
+            checks.add(named("every grant was confirmed by the manager", () -> w.s.grants().stream()
+                    .allMatch(g -> w.confirmed.stream().anyMatch(c -> c.startsWith(g.tool() + " ")))));
+            checks.add(named("did not ask the manager what the hire's record or the hire could say",
+                    () -> w.questions.isEmpty()));
 
-        List<CheckOutcome> outcomes = new ArrayList<>();
-        for (Check check : checks) {
-            try {
-                outcomes.add(check.check(run));
-            } catch (RuntimeException e) {
-                outcomes.add(CheckOutcome.fail("check", "threw: " + e));
+            List<CheckOutcome> outcomes = new ArrayList<>();
+            for (Check check : checks) {
+                try {
+                    outcomes.add(check.check(run));
+                } catch (RuntimeException e) {
+                    outcomes.add(CheckOutcome.fail("check", "threw: " + e));
+                }
             }
+            return print(new CaseReport(scenario.name(), run, outcomes));
         }
-        return print(new CaseReport(scenario.name(), run, outcomes));
+    }
+
+    /** The agent's form, filled in from the hire's HRIS record as the manager would: nothing where nothing is on file. */
+    static Map<String, Object> form(Worker hire) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        hire.fields().forEach((field, value) -> {
+            String v = value.strip();
+            switch (field) {
+                case "manager" -> { }
+                case "rehire", "production_aws_access_requested" ->
+                        input.put(field, v.toLowerCase(Locale.ROOT).startsWith("yes"));
+                default -> {
+                    if (!NOT_ON_FILE.contains(v.toLowerCase(Locale.ROOT))) {
+                        input.put(field, v);
+                    }
+                }
+            }
+        });
+        return input;
+    }
+
+    /**
+     * Sends the request and sees its turn through as the manager: each grant's confirmation approved, as they would in
+     * the console, and any question put to them answered with "I don't know" — and recorded, since the record or the hire
+     * should have answered it.
+     */
+    private static Turn converse(ChatRuntime runtime, World w, String tenant, String conversationId, String request)
+            throws InterruptedException {
+        Turn turn = runtime.say(tenant, conversationId, request, List.of());
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            for (ChatRuntime.PendingDecision pending : runtime.pending(tenant)) {
+                if (pending.kind() == ChatRuntime.PendingDecision.Kind.QUESTION) {
+                    w.questions.add(pending.question());
+                    System.out.println("  ? " + pending.question());
+                    runtime.decide(tenant, pending.id(), ApprovalDecision.approveWithArguments(
+                            Map.of("answer", "I don't know.")), tenant);
+                } else {
+                    w.confirmed.add(pending.tool() + " " + pending.arguments());
+                    System.out.println("  ✓ confirmed " + pending.tool() + " " + pending.arguments());
+                    runtime.decide(tenant, pending.id(), ApprovalDecision.approve(), tenant);
+                }
+            }
+            Optional<Turn> now = runtime.store().turn(tenant, conversationId, turn.id());
+            if (now.isPresent() && now.get().state().isTerminal()) {
+                return now.get();
+            }
+            Thread.sleep(100);
+        }
+        throw new IllegalStateException("The onboarding did not finish in time");
+    }
+
+    /** The plan, as the turn recorded it. */
+    @SuppressWarnings("unchecked")
+    private static List<String> plan(Turn turn) {
+        return turn.stepsOf(Step.Kind.NOTE).stream().filter(step -> step.name().equals("plan")).findFirst()
+                .map(step -> (List<String>) step.detail().get("steps")).orElse(List.of());
+    }
+
+    /** Every tool call of the turn, as the trace recorded it. */
+    @SuppressWarnings("unchecked")
+    private static List<ToolCall> toolCalls(Turn turn) {
+        List<ToolCall> calls = new ArrayList<>();
+        for (Step step : turn.stepsOf(Step.Kind.TOOL_CALL)) {
+            Object arguments = step.detail().get("arguments");
+            calls.add(new ToolCall(new ToolInvocation("c" + step.sequence(), step.name(),
+                    arguments instanceof Map<?, ?> m ? new LinkedHashMap<>((Map<String, Object>) m) : Map.of()),
+                    Boolean.TRUE.equals(step.detail().get("isError")),
+                    Disposition.valueOf(String.valueOf(step.detail().getOrDefault("disposition", "RAN")))));
+        }
+        return calls;
+    }
+
+    private static void printRun(Turn turn, List<String> plan, World w) {
+        System.out.println("\nPlan:");
+        for (int i = 0; i < plan.size(); i++) {
+            System.out.println("  " + (i + 1) + ". " + plan.get(i));
+        }
+        System.out.println("\nTurn " + turn.state() + ":\n" + turn.answer());
+        for (DeferredAction action : w.deferredActions()) {
+            System.out.println("\nDeferred action " + action.id() + " runs " + action.runAt() + " (" + action.when()
+                    + "):");
+            action.goal().lines().forEach(line -> System.out.println("    | " + line));
+        }
     }
 
     // ---------------------------------------------------------------- plan checks
@@ -178,15 +295,16 @@ class OnboardingEvalTest {
 
     static List<Scenario> scenarios() {
         return List.of(
-                new Scenario("engineer", OnboardingFixtures.PRIYA,
+                new Scenario("engineer", RAVI,
                         Set.of("salesforce", "guest", "reactivat", "contractors", "pickup", "pick up", "obtain", "deferred", "terminat"),
-                        s -> {
-                            String email = "priya.natarajan@acme.example";
+                        w -> {
+                            OnboardingSystems s = w.s;
+                            String email = "ravi.menon@acme.example";
                             return List.of(
                                     named("Okta account created (not reactivated)",
                                             () -> s.oktaCreated().contains(email) && s.oktaReactivated().isEmpty()),
                                     oktaGroups(s, email, Set.of("engineering", "all-staff"), Set.of("contractors")),
-                                    Checks.worldState("GitHub members", s::githubMembers, m -> "backend".equals(m.get("priyan-dev"))),
+                                    Checks.worldState("GitHub members", s::githubMembers, m -> "backend".equals(m.get("rmenon-dev"))),
                                     Checks.worldState("no Slack question sent (username was on file)", s::slackQuestions, List::isEmpty),
                                     awsStagingOnly(s, email),
                                     named("no access_request ticket", () -> noTicket(s, "access_request")),
@@ -196,12 +314,13 @@ class OnboardingEvalTest {
                                             && s.shipments().get(0).address().contains("Lisbon")),
                                     named("no laptop_pickup ticket", () -> noTicket(s, "laptop_pickup")),
                                     Checks.worldState("benefits enrolled", s::benefitsEnrolled, b -> b.equals(Set.of("W-1001"))),
-                                    Checks.worldState("no deferred actions scheduled", s::deferredActions, List::isEmpty));
+                                    Checks.worldState("no deferred actions scheduled", w::deferredActions, List::isEmpty));
                         }),
 
-                new Scenario("contractor", OnboardingFixtures.MARCUS,
+                new Scenario("contractor", MARCUS,
                         Set.of("github", "aws", "benefit", "reactivat", "all-staff", "ship", "obtain"),
-                        s -> {
+                        w -> {
+                            OnboardingSystems s = w.s;
                             String email = "marcus.bell@acme.example";
                             List<Check> checks = new ArrayList<>(List.of(
                                     named("Okta account created", () -> s.oktaCreated().contains(email)),
@@ -214,13 +333,14 @@ class OnboardingEvalTest {
                                     named("laptop_pickup ticket names the New York office", () -> pickupAt(s, "new york")),
                                     Checks.worldState("no laptop shipped", s::shipments, List::isEmpty),
                                     Checks.worldState("no benefits enrollment", s::benefitsEnrolled, Set::isEmpty)));
-                            checks.addAll(terminationDeferred(s, OnboardingFixtures.MARCUS, LocalDate.of(2026, 12, 31)));
+                            checks.addAll(terminationDeferred(w, MARCUS, LocalDate.of(2026, 12, 31)));
                             return checks;
                         }),
 
-                new Scenario("rehire", OnboardingFixtures.MARIA,
+                new Scenario("rehire", MARIA,
                         Set.of("salesforce", "guest", "contractors", "ship", "obtain", "deferred", "terminat"),
-                        s -> {
+                        w -> {
+                            OnboardingSystems s = w.s;
                             String email = "maria.chen@acme.example";
                             return List.of(
                                     named("Okta account reactivated (not created)",
@@ -236,17 +356,17 @@ class OnboardingEvalTest {
                                     named("laptop_pickup ticket names the San Francisco office", () -> pickupAt(s, "san francisco")),
                                     Checks.worldState("no laptop shipped", s::shipments, List::isEmpty),
                                     Checks.worldState("benefits enrolled", s::benefitsEnrolled, b -> b.equals(Set.of("W-1003"))),
-                                    Checks.worldState("no deferred actions scheduled", s::deferredActions, List::isEmpty));
+                                    Checks.worldState("no deferred actions scheduled", w::deferredActions, List::isEmpty));
                         }),
 
                 // ---- GitHub username not on file: the agent has to obtain it.
 
-                austinEngineer("github-found", OnboardingFixtures.NOAH, "noah.fischer@acme.example", s -> List.of(
+                austinEngineer("github-found", NOAH, "noah.fischer@acme.example", s -> List.of(
                         identityIs(s, "noah.fischer@acme.example", "nfischer-code", "slack_profile"),
                         Checks.worldState("did not ask the hire (their own profile settled it)", s::slackQuestions, List::isEmpty),
                         Checks.worldState("GitHub members", s::githubMembers, m -> m.equals(Map.of("nfischer-code", "platform"))))),
 
-                austinEngineer("github-asked", OnboardingFixtures.AISHA, "aisha.rahman@acme.example", s -> List.of(
+                austinEngineer("github-asked", AISHA, "aisha.rahman@acme.example", s -> List.of(
                         lookedUpBeforeAsking(),
                         Checks.worldState("asked the hire exactly once", s::slackQuestions, q -> q.size() == 1),
                         Checks.worldState("suggested no username (nothing plausible was found)", s::slackQuestions,
@@ -254,7 +374,7 @@ class OnboardingEvalTest {
                         identityIs(s, "aisha.rahman@acme.example", "ar-codes", "confirmed_by_hire"),
                         Checks.worldState("GitHub members", s::githubMembers, m -> m.equals(Map.of("ar-codes", "data"))))),
 
-                austinEngineer("github-guessed", OnboardingFixtures.JORDAN, "jordan.lee@acme.example", s -> List.of(
+                austinEngineer("github-guessed", JORDAN, "jordan.lee@acme.example", s -> List.of(
                         Checks.inOrder("github_search_users", "slack_request_github_username"),
                         Checks.worldState("asked the hire to confirm the search match jlee", s::slackQuestions,
                                 q -> q.stream().map(SlackQuestion::suggestedUsername).anyMatch("jlee"::equals)),
@@ -262,7 +382,7 @@ class OnboardingEvalTest {
                         Checks.worldState("GitHub members (no search hit added)", s::githubMembers,
                                 m -> m.equals(Map.of("jl-builds", "frontend"))))),
 
-                austinEngineer("github-missing", OnboardingFixtures.ALEX, "alex.rivera@acme.example", s -> List.of(
+                austinEngineer("github-missing", ALEX, "alex.rivera@acme.example", s -> List.of(
                         lookedUpBeforeAsking(),
                         Checks.worldState("asked the hire", s::slackQuestions, q -> !q.isEmpty()),
                         named("no GitHub account on record", () -> s.githubIdentity("alex.rivera@acme.example") == null),
@@ -281,7 +401,8 @@ class OnboardingEvalTest {
                                            Function<OnboardingSystems, List<Check>> github) {
         return new Scenario(name, employeeId,
                 Set.of("salesforce", "guest", "reactivat", "contractors", "ship", "production", "deferred", "terminat"),
-                s -> {
+                w -> {
+                    OnboardingSystems s = w.s;
                     List<Check> checks = new ArrayList<>(List.of(
                             named("Okta account created", () -> s.oktaCreated().contains(email)),
                             oktaGroups(s, email, Set.of("engineering", "all-staff"), Set.of()),
@@ -289,7 +410,7 @@ class OnboardingEvalTest {
                             slackIs(s, email, "member", Set.of("#general", "#engineering")),
                             named("laptop_pickup ticket names the Austin office", () -> pickupAt(s, "austin")),
                             Checks.worldState("benefits enrolled", s::benefitsEnrolled, b -> b.equals(Set.of(employeeId))),
-                            Checks.worldState("no deferred actions scheduled", s::deferredActions, List::isEmpty)));
+                            Checks.worldState("no deferred actions scheduled", w::deferredActions, List::isEmpty)));
                     checks.addAll(github.apply(s));
                     return checks;
                 });
@@ -301,28 +422,29 @@ class OnboardingEvalTest {
      * the date; and a termination-day goal covering every system onboarding set up — judged from the systems'
      * own state, not from the grant record the scheduler reported to the model.
      */
-    private static List<Check> terminationDeferred(OnboardingSystems s, String employeeId, LocalDate terminationDate) {
-        OnboardingSystems.Worker worker = s.worker(employeeId);
+    private static List<Check> terminationDeferred(World w, String employeeId, LocalDate terminationDate) {
+        OnboardingSystems s = w.s;
+        Worker worker = s.worker(employeeId);
         String email = worker.email();
         LocalDate reminderDate = terminationDate.minusDays(14);
         return List.of(
                 Checks.worldState("deferred actions are exactly on " + reminderDate + " and " + terminationDate,
-                        s::deferredActions, actions -> actions.size() == 2
+                        w::deferredActions, actions -> actions.size() == 2
                                 && actions.stream().allMatch(a -> a.subjectKind().equals(OnboardingSystems.WORKER)
                                         && a.subjectId().equals(employeeId))
                                 && actions.stream().map(DeferredAction::runAt).collect(Collectors.toSet())
                                         .equals(Set.of(startOf(reminderDate), startOf(terminationDate)))),
-                named("reminder goal names the manager and the termination date", () -> goalOn(s, reminderDate)
+                named("reminder goal names the manager and the termination date", () -> goalOn(w, reminderDate)
                         .map(goal -> goal.contains(worker.manager()) && goal.contains(terminationDate.toString()))
                         .orElse(false)),
                 run -> {
                     List<String> provisioned = provisioned(s, email);
                     String label = "termination-day goal covers every system onboarding set up " + provisioned;
-                    String goal = goalOn(s, terminationDate).orElse("");
+                    String goal = goalOn(w, terminationDate).orElse("");
                     List<String> missing = provisioned.stream().filter(system -> !goal.contains(system)).toList();
                     return missing.isEmpty() ? CheckOutcome.pass(label) : CheckOutcome.fail(label, "does not name " + missing);
                 },
-                named("termination-day goal names the worker and notifies the manager", () -> goalOn(s, terminationDate)
+                named("termination-day goal names the worker and notifies the manager", () -> goalOn(w, terminationDate)
                         .map(goal -> goal.contains(email) && goal.contains(worker.manager())).orElse(false)));
     }
 
@@ -332,8 +454,8 @@ class OnboardingEvalTest {
         return date.atStartOfDay().toInstant(java.time.ZoneOffset.UTC);
     }
 
-    private static java.util.Optional<String> goalOn(OnboardingSystems s, LocalDate date) {
-        return s.deferredActions().stream().filter(a -> a.runAt().equals(startOf(date))).findFirst()
+    private static Optional<String> goalOn(World w, LocalDate date) {
+        return w.deferredActions().stream().filter(a -> a.runAt().equals(startOf(date))).findFirst()
                 .map(a -> a.goal().toLowerCase(Locale.ROOT));
     }
 
@@ -418,22 +540,5 @@ class OnboardingEvalTest {
         }
         System.out.println(report.passed() ? "  => " + report.caseId() + " PASSED" : "  => " + report.caseId() + " FAILED");
         return report;
-    }
-
-    /** Prints each tool call and records it for trajectory checks. */
-    private static final class Trajectory implements AgentObserver {
-        private final ToolCallPrinter printer = new ToolCallPrinter(System.out);
-        private final List<ToolCall> calls = new ArrayList<>();
-
-        @Override
-        public synchronized void onToolResult(AgentRun run, int step, ToolInvocation proposed, ToolInvocation effective,
-                                              ToolResult result, Disposition disposition) {
-            printer.onToolResult(run, step, proposed, effective, result, disposition);
-            calls.add(new ToolCall(proposed, result.isError(), disposition));
-        }
-
-        synchronized List<ToolCall> calls() {
-            return List.copyOf(calls);
-        }
     }
 }

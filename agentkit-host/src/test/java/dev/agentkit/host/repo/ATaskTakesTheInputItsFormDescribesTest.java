@@ -53,6 +53,16 @@ class ATaskTakesTheInputItsFormDescribesTest {
     }
 
     @Test
+    void theTemplateMayNameThePersonStartingItAsTheHostKnowsThem() throws Exception {
+        TaskInput hire = parse(HIRE, "Onboard {{name}}. I am their manager, {{principal.name}} "
+                + "({{principal.email}}); my desk is {{principal.desk}}.", new ArrayList<>());
+        Map<String, String> dana = Map.of("principal.email", "dana@acme.example", "principal.name", "Dana Kim");
+
+        assertThat(hire.render(Map.of("name", "Jo Park"), path -> java.util.Optional.ofNullable(dana.get(path))))
+                .isEqualTo("Onboard Jo Park. I am their manager, Dana Kim (dana@acme.example); my desk is (unknown).");
+    }
+
+    @Test
     void anInputIsCheckedWithEveryProblemAtOnce() throws Exception {
         TaskInput hire = parse(HIRE, null, new ArrayList<>());
 
@@ -78,7 +88,7 @@ class ATaskTakesTheInputItsFormDescribesTest {
                   address: {type: object, properties: {city: {type: string}}}
                   seats: {type: integer, enum: [1, 2]}
                   start: {type: integer, format: date}
-                """, "Hello {{nme}}", problems);
+                """, "Hello {{nme}} {{person.email}}", problems);
 
         assertThat(bad).isNull();
         assertThat(problems).containsExactlyInAnyOrder(
@@ -87,7 +97,8 @@ class ATaskTakesTheInputItsFormDescribesTest {
                 "properties.seats.enum: is a non-empty list, on a string field",
                 "properties.start.format: is date or email, on a string field",
                 "required: missing is not one of the fields",
-                "goal: {{nme}} is not a field of the input");
+                "goal: {{nme}} is not a field of the input",
+                "goal: {{person.email}} is not a field of the input, nor principal.<field>");
     }
 
     @Test

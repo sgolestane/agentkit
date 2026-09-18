@@ -120,7 +120,7 @@ public final class HostMcp {
                                 .schema(agent.definition().input().jsonSchema())
                                 .sideEffects(SideEffects.EXTERNAL)
                                 .provenance(Provenance.FIRST_PARTY)
-                                .handler(inv -> run(tenant.get(), agent, inv.arguments()))
+                                .handler(inv -> run(tenant.get(), agent, principal.get(), inv.arguments()))
                                 .build(),
                         new ToolDeclaration(id, ToolEffect.REQUEST, null));
             }
@@ -136,10 +136,10 @@ public final class HostMcp {
         return Optional.of(tools);
     }
 
-    private ToolResult run(Tenant tenant, HostedAgent agent, Map<String, Object> input) {
+    private ToolResult run(Tenant tenant, HostedAgent agent, Principal principal, Map<String, Object> input) {
         String request;
         try {
-            request = HostChat.request(agent, input);
+            request = HostChat.request(agent, input, principal);
         } catch (ChatUnavailable refused) {
             return ToolResult.error(refused.getMessage());
         }

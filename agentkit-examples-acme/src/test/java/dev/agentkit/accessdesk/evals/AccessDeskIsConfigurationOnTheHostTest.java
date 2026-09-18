@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
 import dev.agentkit.accessdesk.evals.OnTheHost.Harness;
 import dev.agentkit.accessdesk.evals.AccessDeskEvalTest.World;
+import dev.agentkit.acme.AcmeOnTheHost;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.Conversation;
 import dev.agentkit.chat.Turn;
@@ -91,7 +92,7 @@ class AccessDeskIsConfigurationOnTheHostTest {
             });
 
             // Two hours on, the host runs it — as the desk, which may revoke.
-            DeferredWork later = new DeferredWork(harness.org(), agent -> world.store,
+            DeferredWork later = new DeferredWork(harness.org(), AcmeOnTheHost.storeFor("access-desk", world.store),
                     () -> Instant.parse("2026-09-16T17:01:00Z"), Optional.of(llm));
             assertThat(later.runDue()).isEqualTo(1);
             assertThat(world.grants()).singleElement().satisfies(g -> {
@@ -162,7 +163,7 @@ class AccessDeskIsConfigurationOnTheHostTest {
 
     /** The harness's own deferred work, with the clock moved past the grant's expiry. */
     private static DeferredWork laterWork(Harness harness, World world, LlmClient llm) {
-        return new DeferredWork(harness.org(), agent -> world.store, () -> Instant.parse("2026-09-16T19:01:00Z"),
+        return new DeferredWork(harness.org(), AcmeOnTheHost.storeFor("access-desk", world.store), () -> Instant.parse("2026-09-16T19:01:00Z"),
                 Optional.of(llm));
     }
 

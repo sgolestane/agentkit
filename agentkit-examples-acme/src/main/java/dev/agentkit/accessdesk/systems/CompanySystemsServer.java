@@ -1,6 +1,6 @@
 package dev.agentkit.accessdesk.systems;
 
-import dev.agentkit.accessdesk.ledger.HttpConnector;
+import dev.agentkit.acme.HttpConnector;
 import dev.agentkit.mcp.server.McpServer;
 import dev.agentkit.mcp.server.StdioMcpServer;
 import java.nio.file.Path;
@@ -8,9 +8,8 @@ import java.nio.file.Path;
 /**
  * The company systems as an MCP server: over stdio, or over HTTP.
  *
- * <p>Access Desk launches this as a subprocess through {@code connectors.json}, the same way it would
- * launch any other MCP server. The only argument is the directory the state is kept in; without one it
- * is kept in memory.
+ * <p>Over stdio it runs as a subprocess of an MCP client, as any local MCP server would. The only argument is the
+ * directory the state is kept in; without one it is kept in memory.
  *
  * <p>{@code --http <port> <token> [stateDir]} serves it over HTTP instead, the way the agent host reaches a
  * connector, answering only a caller with that bearer token. With no arguments and {@code COMPANY_HTTP_TOKEN} set,

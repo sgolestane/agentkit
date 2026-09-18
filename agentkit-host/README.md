@@ -91,7 +91,8 @@ limits: {maxSteps: 12, maxTokens: 1024}
 
 input:                              # optional: the form that starts its task
   schema: input.yaml                # a flat JSON Schema: string (enum, date, email), integer, number, boolean
-  goal: goal.md                     # optional: the request, with {{input}} and {{field}} filled in
+  goal: goal.md                     # optional: the request, with {{input}}, {{field}} and
+                                    # {{principal.email}} or {{principal.<field>}} filled in
 
 mcp:                                # optional: reads also offered directly to MCP callers
   direct: [helpdesk/directory_lookup]

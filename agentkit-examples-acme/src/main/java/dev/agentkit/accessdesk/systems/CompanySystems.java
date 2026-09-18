@@ -41,8 +41,15 @@ public final class CompanySystems {
 
     public static final String SYSTEM = "company";
 
-    /** A person in the directory. {@code manager} is an email, empty for nobody. */
-    public record Person(String email, String name, String title, String department, String manager) {
+    /**
+     * A person in the directory. {@code manager} is an email, empty for nobody; {@code groups} are what the agent host
+     * offers agents by, such as {@code managers}.
+     */
+    public record Person(String email, String name, String title, String department, String manager,
+                         List<String> groups) {
+        public Person {
+            groups = groups == null ? List.of() : List.copyOf(groups);
+        }
     }
 
     /** Something a person can be given access to. */

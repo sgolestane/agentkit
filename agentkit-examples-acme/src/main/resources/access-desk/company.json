@@ -1,8 +1,9 @@
 {
   "people": [
     {"email": "priya.natarajan@acme.example", "name": "Priya Natarajan", "title": "Senior Backend Engineer", "department": "Payments", "manager": "dana.kim@acme.example"},
-    {"email": "dana.kim@acme.example", "name": "Dana Kim", "title": "Engineering Manager", "department": "Payments", "manager": "sam.okafor@acme.example"},
-    {"email": "sam.okafor@acme.example", "name": "Sam Okafor", "title": "Head of Security", "department": "Security", "manager": ""}
+    {"email": "dana.kim@acme.example", "name": "Dana Kim", "title": "Engineering Manager", "department": "Payments", "manager": "sam.okafor@acme.example", "groups": ["managers"]},
+    {"email": "sam.okafor@acme.example", "name": "Sam Okafor", "title": "Head of Security", "department": "Security", "manager": "", "groups": ["managers"]},
+    {"email": "lena.ortiz@acme.example", "name": "Lena Ortiz", "title": "Sales Director", "department": "Sales", "manager": "", "groups": ["managers"]}
   ],
   "resources": [
     {"id": "github-payments-service", "name": "GitHub repository acme/payments-service", "system": "github", "levels": ["read", "write"], "sensitivity": "low", "owner": "dana.kim@acme.example", "max_hours": 72},

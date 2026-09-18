@@ -1,24 +1,19 @@
-package dev.agentkit.examples.onboarding;
+package dev.agentkit.onboarding;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.agentkit.core.deferred.SubjectRecord;
+import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.FunctionTool;
 import dev.agentkit.core.tool.Provenance;
 import dev.agentkit.core.tool.SideEffects;
 import dev.agentkit.core.tool.Tool;
-import dev.agentkit.core.tool.ToolInvocation;
-import dev.agentkit.core.tool.ToolRegistry;
-import dev.agentkit.core.tool.ToolResult;
-import dev.agentkit.core.tool.SimpleToolRegistry;
-import dev.agentkit.core.deferred.DeferredAction;
-import dev.agentkit.core.deferred.DeferredActionScheduler;
-import dev.agentkit.core.deferred.DeferredActionStore;
-import dev.agentkit.core.deferred.SubjectRecord;
-import dev.agentkit.core.deferred.SubjectResolver;
-import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.ToolDeclaration;
 import dev.agentkit.core.tool.ToolEffect;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
+import dev.agentkit.core.tool.ToolInvocation;
+import dev.agentkit.core.tool.ToolResult;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -26,26 +21,32 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
- * In-memory stand-ins for the systems an IT onboarding touches — Okta, GitHub, AWS, Salesforce,
- * Slack, Workday, the IT service desk and a scheduler — exposed as tools. This is the product
- * side: it behaves the same for every customer, and a customer changes behavior through the
- * policy and prompts in {@link OnboardingConfig}, never here.
+ * In-memory stand-ins for the systems an IT onboarding touches — the HRIS, Okta, GitHub, AWS, Salesforce,
+ * Slack, Workday and the IT service desk — exposed as tools, and served to the agent host as an MCP
+ * connector by {@link OnboardingConnector}. In a real deployment the company's own MCP servers take their
+ * place; nothing about onboarding is code on the host.
  *
  * <p>Every write is recorded so the onboarding evals can verify a run by what it did to
- * these systems rather than by what the model said it did. One instance serves one run.
+ * these systems rather than by what the model said it did.
  *
  * <h2>Tools describe themselves</h2>
  *
  * <p>Each tool declares a {@link ToolDeclaration}: the system it belongs to, its {@link ToolEffect}, and
- * which argument names the person it acts on. The record of every {@link Grant} is derived from that, and
- * so are the bounds on deferred actions, which live in {@code dev.agentkit.core.deferred} and know
- * nothing about onboarding.
+ * which argument names the person it acts on. The host reads the declarations to decide what needs a
+ * person's confirmation and what a deferred action may use; the record of every {@link Grant} is derived
+ * from them here.
+ *
+ * <h2>Only a hire's manager</h2>
+ *
+ * <p>A tool that grants or revokes takes {@code requested_by}, which the host binds to the person in the
+ * conversation, and refuses unless that is the worker's manager in the HRIS — or the onboarding agent itself
+ * ({@code actor}), which is who a deferred action runs as. So whatever a model writes, a manager can onboard
+ * only their own hires.
  *
  * <h2>Resolving a missing GitHub username</h2>
  *
@@ -56,10 +57,10 @@ import java.util.regex.Pattern;
  *
  * <h2>Deferred actions</h2>
  *
- * <p>Okta has no native account expiry. Work that belongs on a later date is scheduled with the
- * generic {@link DeferredActionScheduler}. Onboarding supplies only what is specific to it: the HRIS
- * as a {@link SubjectResolver} for subjects of kind {@code worker} (identified by work email or
- * employee id, with their manager as the one contact), and what a worker holds, from the grant record.
+ * <p>Okta has no native account expiry, so work that belongs on a later date is scheduled with the host's
+ * deferred work. {@code hris_get_worker} is how the host looks a worker up as the subject of such work: who
+ * they are (work email and employee id), whom it may tell (their manager), their HRIS record, and which
+ * systems hold something of theirs.
  */
 public final class OnboardingSystems {
 
@@ -126,12 +127,6 @@ public final class OnboardingSystems {
     public record ItTicket(String category, String forEmail, String summary) {
     }
 
-    /** The example's "today". Fixed, so scheduled dates and checks never drift with the calendar. */
-    public static final LocalDate TODAY = LocalDate.of(2026, 9, 16);
-
-    /** The start of {@link #TODAY} in UTC: the scheduler's "now". */
-    public static final Instant NOW = TODAY.atStartOfDay().toInstant(ZoneOffset.UTC);
-
     /** What an HRIS field holds when it holds nothing. */
     private static final Set<String> NO_VALUE = Set.of("", "none", "n/a", "na", "unknown", "not on file", "-");
 
@@ -160,48 +155,61 @@ public final class OnboardingSystems {
     private final Set<Grant> grants = new LinkedHashSet<>();
     private final Map<String, ToolDeclaration> declarations = new LinkedHashMap<>();
     private final List<String> toolCalls = new ArrayList<>();
+    private final String actor;
     private final long replyWaitMillis;
 
-    private final DeferredActionStore deferredActions = DeferredActionStore.inMemory();
-    private final DeferredActionScheduler scheduler;
-
-    private OnboardingSystems(long replyWaitMillis) {
+    private OnboardingSystems(String actor, long replyWaitMillis) {
+        this.actor = lower(Objects.requireNonNull(actor, "actor"));
         this.replyWaitMillis = replyWaitMillis;
-        this.scheduler = new DeferredActionScheduler(subjects(), deferredActions, () -> NOW, this::holdings);
     }
 
-    /** The HRIS, as the generic deferred-action code sees it. */
-    public SubjectResolver subjects() {
-        return new SubjectResolver() {
-            @Override
-            public Set<String> kinds() {
-                return Set.of(WORKER);
-            }
-
-            @Override
-            public Optional<SubjectRecord> resolve(String kind, String id) {
-                synchronized (OnboardingSystems.this) {
-                    return WORKER.equals(kind) ? Optional.ofNullable(workers.get(id)).map(Worker::asSubject)
-                            : Optional.empty();
-                }
-            }
-        };
+    /** The systems a worker holds something in, from the grant record. */
+    private synchronized List<String> holdings(Worker worker) {
+        String email = lower(worker.email());
+        return grants.stream().filter(g -> g.email().equals(email)).map(Grant::system).distinct().toList();
     }
 
-    /** The systems a subject holds something in, from the grant record. */
-    private synchronized List<String> holdings(SubjectRecord subject) {
-        return grants.stream().filter(g -> subject.refersTo(g.email())).map(Grant::system).distinct().toList();
+    /** Empty systems: no workers, accounts or history. */
+    public static OnboardingSystems create(String actor, long replyWaitMillis) {
+        return new OnboardingSystems(actor, replyWaitMillis);
     }
 
-    /** Empty systems: no workers, accounts or history. A person answering a Slack form takes a second. */
-    public static OnboardingSystems create() {
-        return create(1_000);
+    /**
+     * The systems as {@code onboarding/hr.json} seeds them: the HRIS's hires, and what the other systems hold before any
+     * of them is onboarded.
+     *
+     * @param actor           who the onboarding agent's deferred actions run as
+     * @param replyWaitMillis how long a person takes to answer a Slack form
+     */
+    public static OnboardingSystems open(String actor, long replyWaitMillis) {
+        OnboardingSystems systems = create(actor, replyWaitMillis);
+        try (InputStream in = OnboardingSystems.class.getClassLoader().getResourceAsStream("onboarding/hr.json")) {
+            Seed seed = JSON.readValue(Objects.requireNonNull(in, "onboarding/hr.json"), Seed.class);
+            seed.workers().forEach(systems::addWorker);
+            seed.okta_deactivated().forEach(u -> systems.addDeactivatedOktaUser(u.email(), u.first_name(), u.last_name()));
+            seed.github_users().forEach(u -> systems.addGithubUser(u.login(), u.name()));
+            seed.slack_preboarding().forEach(a -> systems.addPreboardingSlackAccount(a.email(), a.profile()));
+            seed.github_username_replies().forEach(systems::setGithubUsernameReply);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not load onboarding/hr.json", e);
+        }
+        return systems;
     }
 
-    /** Empty systems, where a person answering a Slack form takes {@code replyWaitMillis}. */
-    public static OnboardingSystems create(long replyWaitMillis) {
-        return new OnboardingSystems(replyWaitMillis);
+    private record Seed(List<Map<String, String>> workers, List<OktaSeed> okta_deactivated, List<GithubSeed> github_users,
+                        List<SlackSeed> slack_preboarding, Map<String, String> github_username_replies) {
     }
+
+    private record OktaSeed(String email, String first_name, String last_name) {
+    }
+
+    private record GithubSeed(String login, String name) {
+    }
+
+    private record SlackSeed(String email, Map<String, String> profile) {
+    }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     // ---------------------------------------------------------------- existing state
     //
@@ -246,16 +254,6 @@ public final class OnboardingSystems {
         hireReplies.put(lower(email), reply);
     }
 
-    /** Every tool, in one registry. Build a fresh registry per executor step. */
-    public ToolRegistry registry() {
-        return new SimpleToolRegistry(allTools());
-    }
-
-    /** Every tool, as a list. */
-    public List<Tool> tools() {
-        return allTools();
-    }
-
     /** Every tool, with what it declares about itself. */
     public DeclaredTools catalog() {
         DeclaredTools catalog = new DeclaredTools();
@@ -269,13 +267,42 @@ public final class OnboardingSystems {
 
     private List<Tool> allTools() {
         return List.of(
+                hrisGetWorker(),
                 oktaCreateUser(), oktaReactivateUser(), oktaDeactivateUser(),
                 slackGetProfile(), githubSearchUsers(), slackRequestGithubUsername(),
                 githubAddMember(), githubRemoveMember(),
                 awsGrantAccess(), awsRevokeAccess(),
                 salesforceAssignSeat(), salesforceReleaseSeat(),
                 slackCreateAccount(), slackRemoveAccount(), slackSendMessage(),
-                shipLaptop(), itCreateTicket(), workdayEnrollBenefits(), scheduleDeferredAction());
+                shipLaptop(), itCreateTicket(), workdayEnrollBenefits());
+    }
+
+    // ---------------------------------------------------------------- HRIS
+
+    private FunctionTool hrisGetWorker() {
+        return tool("hris_get_worker",
+                "Look a worker up in the HRIS by employee id or work email. Answers with one JSON object: their id, "
+                        + "the identifiers they go by, their manager as contact, their HRIS record as facts, and the "
+                        + "systems that hold something of theirs.",
+                new ToolDeclaration("hris", ToolEffect.READ, "employee_id"),
+                schema(Map.of("employee_id", str("Employee id, such as W-1001, or work email")), "employee_id"),
+                SideEffects.NONE, inv -> {
+                    Worker worker = workerFor(inv.stringArgument("employee_id"));
+                    if (worker == null) {
+                        return ToolResult.error("HRIS: no worker " + inv.stringArgument("employee_id"));
+                    }
+                    Map<String, Object> record = new LinkedHashMap<>();
+                    record.put("id", worker.employeeId());
+                    record.put("identifiers", List.of(worker.employeeId(), lower(worker.email())));
+                    record.put("contacts", worker.manager() == null ? List.of() : List.of(lower(worker.manager())));
+                    record.put("facts", new java.util.TreeMap<>(worker.fields()));
+                    record.put("holdings", holdings(worker));
+                    try {
+                        return ToolResult.ok(JSON.writeValueAsString(record));
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
     }
 
     // ---------------------------------------------------------------- Okta
@@ -607,19 +634,7 @@ public final class OnboardingSystems {
                 });
     }
 
-    // ---------------------------------------------------------------- Scheduler
-
-    private FunctionTool scheduleDeferredAction() {
-        return tool(DeferredActionScheduler.TOOL_NAME, scheduler.description(),
-                new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"),
-                scheduler.schema(), SideEffects.IDEMPOTENT, inv -> scheduler.schedule(inv, "onboarding"));
-    }
-
     // ---------------------------------------------------------------- state, for verification
-
-    public List<DeferredAction> deferredActions() {
-        return deferredActions.all();
-    }
 
     public synchronized List<Grant> grants() {
         return List.copyOf(grants);
@@ -699,8 +714,38 @@ public final class OnboardingSystems {
 
     /** A subject argument as a work email: an employee id is looked up in the HRIS when it can be. */
     private String subjectEmail(String subject) {
-        Worker worker = workers.get(subject);
+        Worker worker = workerFor(subject);
         return lower(worker != null ? worker.email() : subject);
+    }
+
+    /** The worker an employee id or work email names, or null. */
+    private synchronized Worker workerFor(String subject) {
+        if (subject == null) {
+            return null;
+        }
+        Worker byId = workers.get(subject.strip());
+        if (byId != null) {
+            return byId;
+        }
+        String email = lower(subject);
+        return workers.values().stream().filter(w -> lower(w.email()).equals(email)).findFirst().orElse(null);
+    }
+
+    /**
+     * Why {@code requestedBy} may not have a grant or revocation done for the worker {@code subject} names, or null
+     * when they may: they are the worker's manager, or the onboarding agent itself.
+     */
+    private String refusal(String subject, String requestedBy) {
+        Worker worker = workerFor(subject);
+        if (worker == null) {
+            return "HRIS: no worker " + subject + "; onboarding acts only on people the HRIS knows.";
+        }
+        String who = lower(requestedBy);
+        if (who.isEmpty() || !(who.equals(actor) || who.equals(lower(worker.manager())))) {
+            return "Only " + worker.fields().getOrDefault("name", worker.employeeId()) + "'s manager can have "
+                    + "access granted or removed for them, and " + (who.isEmpty() ? "nobody" : who) + " is not.";
+        }
+        return null;
     }
 
     /** Stands in for the time a person takes to answer. */
@@ -713,22 +758,39 @@ public final class OnboardingSystems {
     }
 
     /**
-     * Builds a tool that declares what it is. Every call is logged and runs under this instance's
-     * lock, and a successful call to a {@link ToolEffect#GRANT} tool is recorded as a {@link Grant} —
-     * from the declaration, so no tool has to remember to do it.
+     * Builds a tool that declares what it is. Every call is logged and runs under this instance's lock. A tool that
+     * grants or revokes also takes {@code requested_by} and refuses anyone but the worker's manager; a successful
+     * {@link ToolEffect#GRANT} is recorded as a {@link Grant} — from the declaration, so no tool has to remember to.
      */
+    @SuppressWarnings("unchecked")
     private FunctionTool tool(String name, String description, ToolDeclaration info, Map<String, Object> schema,
                               SideEffects sideEffects, Function<ToolInvocation, ToolResult> handler) {
         synchronized (this) {
             declarations.put(name, info);
         }
+        boolean guarded = info.effect() == ToolEffect.GRANT || info.effect() == ToolEffect.REVOKE;
+        Map<String, Object> described = schema;
+        if (guarded) {
+            Map<String, Object> properties = new LinkedHashMap<>((Map<String, Object>) schema.get("properties"));
+            properties.put("requested_by", str("Work email of the person asking: the worker's manager"));
+            List<String> required = new ArrayList<>((List<String>) schema.get("required"));
+            required.add("requested_by");
+            described = Map.of("type", "object", "properties", properties, "required", required);
+        }
         return FunctionTool.builder(name, description)
-                .schema(schema)
+                .schema(described)
                 .sideEffects(sideEffects)
                 .provenance(Provenance.FIRST_PARTY)
                 .handler(inv -> {
                     synchronized (this) {
                         toolCalls.add(name);
+                        if (guarded) {
+                            String refused = refusal(inv.stringArgument(info.subjectParam()),
+                                    inv.stringArgument("requested_by"));
+                            if (refused != null) {
+                                return ToolResult.error(refused);
+                            }
+                        }
                         ToolResult result = handler.apply(inv);
                         if (info.effect() == ToolEffect.GRANT && !result.isError() && info.subjectParam() != null) {
                             grants.add(new Grant(subjectEmail(inv.stringArgument(info.subjectParam())), info.system(), name));

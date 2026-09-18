@@ -42,6 +42,7 @@ agentkit-chat-ui/        the console agentkit-chat serves; built into its jar
 agentkit-agui/           that stream spoken as AG-UI (adapter, not a core dependency)
 agentkit-host/           agents as configuration: an org's Git repo of definitions, over MCP connectors
 agentkit-examples/       runnable end-to-end demos wiring it all together
+agentkit-examples-acme/  an org's agents on the host as configuration, and the connectors they use
 ```
 
 The Anthropic adapter carries a `ModelResolver` seam that translates the logical

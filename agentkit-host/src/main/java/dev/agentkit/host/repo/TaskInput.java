@@ -24,7 +24,9 @@ import java.util.regex.Pattern;
  * person. Flat on purpose: it is a form a person fills in, and the shape MCP's own questions to a person allow.
  *
  * <p>The goal template is text with {@code {{input}}} — every field given, one per line — and {@code {{field}}} for
- * one field's value. Without one, the request is the fields, one per line.
+ * one field's value. {@code {{principal.email}}}, or {@code {{principal.<field>}}} of their directory record, is the
+ * person starting the task, as the host knows them: a request says who it is from in the host's words, not the
+ * form's. Without a template, the request is the fields, one per line.
  *
  * @param schema   the JSON Schema, as the definition wrote it
  * @param fields   its properties, in the order written
@@ -47,7 +49,9 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
     private static final Set<String> SCHEMA_KEYS = Set.of("type", "properties", "required", "title", "description",
             "$schema", "additionalProperties");
     private static final Set<String> FIELD_KEYS = Set.of("type", "title", "description", "enum", "format", "default");
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*}}");
+    private static final Pattern PLACEHOLDER =
+            Pattern.compile("\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)?)\\s*}}");
+    private static final String PRINCIPAL = "principal.";
     private static final Pattern FIELD_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,63}");
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -128,8 +132,9 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         Matcher m = PLACEHOLDER.matcher(text);
         while (m.find()) {
             String name = m.group(1);
-            if (!name.equals("input") && !properties.has(name)) {
-                report.accept("goal", "{{" + name + "}} is not a field of the input");
+            if (!name.equals("input") && !name.startsWith(PRINCIPAL) && !properties.has(name)) {
+                report.accept("goal", "{{" + name + "}} is not a field of the input"
+                        + (name.contains(".") ? ", nor principal.<field>" : ""));
             }
         }
         if (found[0] > 0) {
@@ -169,8 +174,17 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         return problems;
     }
 
-    /** The request for {@code input}, which must be valid: the template, with its placeholders filled. */
+    /** The request for {@code input}, which must be valid, from nobody in particular. */
     public String render(Map<String, Object> input) {
+        return render(input, path -> java.util.Optional.empty());
+    }
+
+    /**
+     * The request for {@code input}, which must be valid: the template, with its placeholders filled.
+     *
+     * @param principal the person starting it: a {@code principal.<field>} path to its value, empty if they have none
+     */
+    public String render(Map<String, Object> input, java.util.function.Function<String, java.util.Optional<String>> principal) {
         Map<String, Object> given = input == null ? Map.of() : input;
         StringBuilder lines = new StringBuilder();
         for (Field field : fields) {
@@ -184,6 +198,7 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         while (m.find()) {
             String name = m.group(1);
             String value = name.equals("input") ? lines.toString().stripTrailing()
+                    : name.startsWith(PRINCIPAL) ? OneLine.of(principal.apply(name).orElse("(unknown)"))
                     : OneLine.of(String.valueOf(given.getOrDefault(name, "")));
             m.appendReplacement(out, Matcher.quoteReplacement(value));
         }

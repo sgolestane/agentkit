@@ -3,6 +3,7 @@ package dev.agentkit.accessdesk.ledger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.CompanyClient;
+import dev.agentkit.acme.HttpConnector;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.accessdesk.desk.ExpiryBackstop;
 import dev.agentkit.core.deferred.SubjectRecord;

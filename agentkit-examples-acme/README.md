@@ -1,18 +1,19 @@
-# Access Desk
+# Acme on the agent host
 
-Temporary access, by chat. People ask for access in plain language, a policy decides who
-approves, approvers decide in their own conversation, and every grant ends on its own.
+Acme's agents, as an operator would ship them: **[`orgs/acme`](orgs/acme)**, the organization's
+repository of agents, and the MCP connectors those agents use. There is no application here. The
+[agent host](../agentkit-host/README.md) runs the repository and provides the console, the MCP
+endpoint, sign-in, conversations, confirmations and deferred work.
 
-Access Desk is an agent on the [agent host](../agentkit-host/README.md). It has no application
-of its own. It is:
-- **[`orgs/acme`](orgs/acme)**, Acme's repository of agents: an `agent.yaml`, the policy and the
-  prompts;
-- **two MCP connectors**: the company systems, and the access ledger, which holds the desk's rules.
+| Agent | What it does | Connectors |
+|---|---|---|
+| **Access Desk** | Temporary access under a policy: people ask, the right approver decides, and every grant ends on its own. | the company systems, and the access ledger that holds the desk's rules |
+| **Onboarding** | A manager starts their new hire's onboarding from a form. The policy is settled into a plan, and each grant waits for the manager's confirmation. | the onboarding systems: HRIS, Okta, GitHub, AWS, Salesforce, Slack, Workday, IT desk |
 
-The host provides the rest: the console, the MCP endpoint, sign-in, conversations, confirmations
-and deferred work.
+Both agents are configuration: an `agent.yaml`, a policy and prompts. Each connector is a
+separate MCP server, reached over HTTP with a bearer token.
 
-## What it does
+## Access Desk
 
 1. **Ask.** Priya writes *"I need read access to payments-prod for 2 hours for INC-4211."* The
    agent finds the resource and reads the access policy. It then either grants low-risk access at
@@ -24,10 +25,27 @@ and deferred work.
    reminder 15 minutes before it expires, and revocation when it does. The host runs each when
    its time comes, with only revoke and notify tools, and for that grant only.
 
+## Onboarding
+
+1. **Start.** Lena, a sales director, opens Onboarding in the console and fills in the form for
+   Marcus, a contractor starting on 1 October. It could also be `run_onboarding` from an MCP client,
+   or a request in plain words. The form becomes the request through `goal.md`.
+2. **Plan.** The planner settles every condition of the policy against Marcus's record, then lists
+   only what applies to him: an Okta account in `sales` and `contractors`, a Slack guest account in
+   #sales, a Salesforce seat, a laptop pickup ticket in New York, two deferred actions for his end
+   date, and a message to Lena. The console shows the plan as soon as it is made.
+3. **Carry it out.** Each step runs with the connector's tools. Every tool that gives Marcus
+   something stops for Lena's confirmation (a card in the console, or a question from her MCP
+   client). A GitHub username that is not on file is obtained without asking Lena: from the hire's
+   own Slack profile, then a search, then a Slack form that asks the hire.
+4. **Later.** On 17 December the host reminds Lena which access will go. On 31 December it removes
+   it, opens a laptop return ticket and tells her, running as the Onboarding agent with only the
+   tools that read, revoke, notify or request, for Marcus only.
+
 ## Run it
 
-Three processes, one terminal each, from the repository root after
-`./mvnw -q -DskipTests install`:
+Four processes, one terminal each, from the repository root after
+`./mvnw -q -DskipTests install`: the three connectors, then the host.
 
 ```bash
 COMPANY_HTTP_TOKEN=company-secret \
@@ -40,9 +58,15 @@ LEDGER_TOKEN=ledger-secret COMPANY_MCP_URL=http://127.0.0.1:8130/mcp COMPANY_MCP
 ```
 
 ```bash
+ONBOARDING_TOKEN=onboarding-secret \
+  ./mvnw -q -pl agentkit-examples-acme exec:exec -Dexec.mainClass=dev.agentkit.onboarding.OnboardingConnector
+```
+
+```bash
 AGENTKIT_HOST_ORGS=$PWD/agentkit-examples-acme/orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
 AGENTKIT_SECRET_ACME_COMPANY_URL=http://127.0.0.1:8130/mcp AGENTKIT_SECRET_ACME_COMPANY_TOKEN=company-secret \
 AGENTKIT_SECRET_ACME_LEDGER_URL=http://127.0.0.1:8120/mcp AGENTKIT_SECRET_ACME_LEDGER_TOKEN=ledger-secret \
+AGENTKIT_SECRET_ACME_ONBOARDING_URL=http://127.0.0.1:8140/mcp AGENTKIT_SECRET_ACME_ONBOARDING_TOKEN=onboarding-secret \
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
 
@@ -51,16 +75,23 @@ Open <http://localhost:8400> and sign in as one of the demo people:
 - Priya Natarajan, engineer: `priya.natarajan@acme.example`
 - Dana Kim, engineering manager: `dana.kim@acme.example`
 - Sam Okafor, head of security: `sam.okafor@acme.example`
+- Lena Ortiz, sales director: `lena.ortiz@acme.example`
+
+The managers (Dana, Sam and Lena) are also offered Onboarding. The HRIS holds seven hires, in
+[`onboarding/hr.json`](src/main/resources/onboarding/hr.json); a manager can onboard only their own:
+Lena has Marcus Bell (W-1002), Sam has Maria Chen (W-1003), and Dana has the rest.
 
 **From Claude Code:**
 
 ```bash
-claude mcp add --transport http access-desk http://localhost:8400/mcp \
+claude mcp add --transport http acme http://localhost:8400/mcp \
   --header "X-AgentKit-User: acme/dana.kim@acme.example"
 ```
 
-The host offers `ask_access_desk`, a turn in that person's "Access Desk over MCP" conversation.
-It also offers `my_access`, `my_requests` and `pending_approvals` directly. When a turn needs the
+Each agent the person may use is a tool. `ask_access_desk` is a turn in that person's "Access Desk
+over MCP" conversation, and `my_access`, `my_requests` and `pending_approvals` are offered
+directly. A manager also gets `ask_onboarding`, and `run_onboarding`, whose arguments are the
+onboarding form. When a turn needs the
 person's confirmation, the client asks them, if it supports MCP elicitation. Otherwise the reply
 links to the conversation in the console.
 
@@ -81,10 +112,17 @@ Everything a customer changes lives in `orgs/acme`, and none of it needs a code 
 | `agents/access-desk/system-prompt.md` | the desk's system prompt |
 | `agents/access-desk/deferred-prompt.md` | the prompt deferred actions run with |
 | `agents/access-desk/agent.yaml` | which tools, what is confirmed, who it acts as, deferred work, MCP reads |
+| `agents/onboarding/policy.md` | the onboarding policy, conditions and all |
+| `agents/onboarding/planner.md`, `executor.md` | the prompts the plan is made with, and each step is carried out with |
+| `agents/onboarding/input.yaml`, `goal.md` | the form a manager fills in, and the request it becomes |
+| `agents/onboarding/deferred-prompt.md` | the prompt the reminder and the removal run with |
+| `agents/onboarding/agent.yaml` | plan-and-execute, managers only, confirmed grants, who asks, deferred work |
 | `connectors/*.yaml` | where the connectors are, and which secrets reach them |
 | `org.yaml` | the organization, its default model, and its directory |
 
 ## How it is built
+
+### Access Desk
 
 **The policy is text; the safety rules are code.** The model applies `policy.md`: which route a
 request takes, what a justification must say, and which reminders to schedule. The ledger's tools
@@ -122,6 +160,33 @@ enforce the rules that must hold whatever the model concludes:
 - The ledger is marked `authoritative`, because it enforces its own rules for what it grants.
 - The contract is [`docs/MCP-CONNECTORS.md`](../docs/MCP-CONNECTORS.md).
 
+### Onboarding
+
+**The policy's conditions are settled while planning.** The policy branches on rehire or new,
+full-time or contractor, remote or on-site, department, production access, GitHub username and
+end date. `pattern: plan-execute` has the planner resolve all of it against the hire's record into
+a flat list of unconditional steps. A fresh executor then carries out each step, with the agent's
+tools, bindings and confirmations.
+
+**What holds whatever the model writes:**
+- **Confirmation.** Every tool that gives the hire something (an account, a seat, a laptop,
+  benefits, AWS or GitHub access) stops for the manager. The host refuses to load an agent that
+  would grant without a person in the loop, unless the connector enforces its own rules, as the
+  access ledger does.
+- **Only the hire's manager.** Each tool that grants or revokes takes `requested_by`, which the
+  host binds to the person, and the onboarding systems
+  ([`OnboardingSystems`](src/main/java/dev/agentkit/onboarding/OnboardingSystems.java)) refuse
+  anyone but the worker's manager in the HRIS. The one other caller they accept is the agent
+  itself, which is who its deferred work runs as.
+- **A username never passes through the model.** `github_add_member` takes the hire's email and
+  adds the GitHub account on record for them. Only the HRIS, the hire's own Slack profile or the
+  hire's answer to a Slack form put one on record. A search result is only a suggestion.
+- **Deferred work is about one worker.** `hris_get_worker` is how the host looks the worker up,
+  both when the manager schedules the work and again when it runs. It returns their identifiers,
+  their manager as contact, and the systems that hold something of theirs. Only the worker's
+  manager may schedule work about them. When it runs, it may act on nobody else, and tell nobody
+  but them and their manager.
+
 ## Tests and evals
 
 ```bash
@@ -138,6 +203,13 @@ enforce the rules that must hold whatever the model concludes:
   - a deferred revocation carried out as the desk;
   - a hostile deferred goal held to its grant.
 - **MCP over stdio** (`McpStdioRoundTripTest`): the company systems as a subprocess.
+- **Onboarding's systems** (`AGrantIsOnlyForTheHiresManagerTest`, `DeferredActionBoundsTest`):
+  only the hire's manager, the HRIS as a subject record, and what a deferred run may not do.
+- **Onboarding on the host** (`OnboardingIsConfigurationOnTheHostTest`), with a scripted model:
+  - offered to managers only;
+  - the form as the request, each grant confirmed and done as the manager;
+  - another manager refused;
+  - the offboarding scheduled by the manager and run later as the agent, with only removals.
 
 ```bash
 ACCESS_DESK_EVAL=true OPENROUTER_API_KEY=sk-or-... \
@@ -154,11 +226,31 @@ company systems and the deferred store hold afterwards:
 - a request over the maximum
 - an attempted self-approval
 
+```bash
+ONBOARDING_EVAL=true OPENROUTER_API_KEY=sk-or-... \
+  ./mvnw -pl agentkit-examples-acme test -Dtest=OnboardingEvalTest
+```
+
+Seven hires are onboarded on the host, each by their manager from the form, with every grant
+confirmed. Each is scored on its plan (no conditions, no skip notes, nothing that does not apply
+to this hire) and on what the systems hold afterwards:
+
+- `engineer`: remote, GitHub username on file
+- `contractor`: sales, on-site, with an end date and its two deferred actions
+- `rehire`: Okta reactivated, and production access sent to security as a ticket
+- `github-found`: the username on the hire's Slack profile
+- `github-asked`: nothing found, so the hire is asked
+- `github-guessed`: a search match the hire corrects
+- `github-missing`: the hire never answers, and the manager is told it is pending
+
+`ONBOARDING_SCENARIOS="contractor rehire"` runs a subset.
+
 ## Limits
 
 - **Demo identity:** the host's development sign-in and MCP header trust whoever says who they
   are. Real sign-in is the host's to add.
-- **Fake systems:** the company systems are a stand-in. Connecting real ones means pointing
-  `connectors/company.yaml` at their MCP servers, and the ledger at them too.
+- **Fake systems:** the company systems and the onboarding systems are stand-ins. Connecting real
+  ones means pointing `connectors/company.yaml` and `connectors/onboarding.yaml` at their MCP
+  servers, and the ledger at them too. The onboarding systems keep their state in memory.
 - **Single process each:** the ledger is a file, and the host keeps conversations and deferred
   actions in files.
