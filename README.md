@@ -1023,6 +1023,60 @@ output, and silently no-ops below the model's minimum cacheable size. `EPHEMERAL
 trades a higher write premium for a longer TTL. Verify hits via
 `usage.cache_read_input_tokens`. Works on the first-party API and Bedrock.
 
+### Work that settles stops paying a model
+
+The third run of a job usually costs what the first one did: a model call per step to work out
+what it worked out last time. `dev.agentkit.core.routine` watches instead. Every successful run
+is recorded — the tools it called, in order, with the task's own values taken out and left as
+placeholders — and once the last few runs have agreed on exactly the same sequence, the next one
+is **replayed**: same tools, same order, this task's values, no model call.
+
+```java
+RoutineBook book = new RoutineBook();          // three runs in a row that agree, by default
+
+RoutineAgent agent = new RoutineAgent(
+        observer -> Agent.builder(llm, tools, config).observer(observer).build(),
+        book, TaskShape.ofGoalParameters(), () -> tools, gate);
+
+agent.run(new Goal("Give a new hire their accounts", Map.of("work_email", "dev@acme.example")));
+agent.routineFor(goal);   // "...: create_account -> add_to_group -> send_welcome (seen 3 times)"
+```
+
+`TaskShape` is the one piece a deployment writes: which part of a goal is the job and which part
+is this week's values. `ofGoalParameters()` covers the case where a `Goal` already separates them.
+
+Four things make this safe enough to leave on:
+
+- **A replay is not a bypass.** Every call goes through the same registry and the same `ToolGate`.
+  A gate that refuses a model's `aws_grant_access` refuses a recording's, and the replay stops
+  there rather than working around it.
+- **It stops at the first surprise** — a missing tool, a refusal, an error, an unfilled
+  placeholder — and hands the work to the model *with what already ran quoted to it as evidence*,
+  so a job that granted access and failed to announce it does not grant it twice.
+- **A settled job is still checked.** One run in ten (`recheckEvery`) goes to the model anyway.
+  If it does the same thing the streak continues; if the right answer has changed, the streak
+  breaks and the job goes back to being worked out. A routine that always replays can never be
+  found wrong.
+- **Only successful runs teach it.** A run that failed, stopped early or was refused says nothing
+  about how the work is done, and a half-replay's steps are not recorded as the new normal.
+
+It holds no results: a replay talks to the same systems and gets whatever they say now. What it
+removes is the deliberation, which is the part that is charged per token. The book lives in
+memory, for one process — a fresh process starts by watching again.
+
+Repeated **reads** have their own saving, one level down:
+
+```java
+ToolMemo memo = new ToolMemo(Duration.ofSeconds(30));
+ToolRegistry cached = new SimpleToolRegistry(memo.wrapAll(tools.tools()));
+memo.hits();   // reads that cost nothing
+```
+
+Only `SideEffects.NONE` tools are wrapped, errors are never remembered, and there is no
+unbounded time to live — a read cached past the change it should have seen is a wrong answer
+delivered confidently. Give each run, session or tenant its own memo: entries are keyed by tool
+and arguments and by nothing else, so a shared one would show one person what another asked for.
+
 ### Knowing what a run cost
 
 `AgentResult.usage()` reports the **loop's own turns**, not the whole run. The
