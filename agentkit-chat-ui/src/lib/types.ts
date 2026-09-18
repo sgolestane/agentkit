@@ -135,6 +135,24 @@ export interface AgentInfo {
   name: string
   description: string
   unavailable?: string
+  /** The form that starts its task, when it has one. */
+  input?: InputSchema
+}
+
+/** One field of a task's form: flat, as the Java side's `TaskInput` allows. */
+export interface InputField {
+  type: 'string' | 'integer' | 'number' | 'boolean'
+  title?: string
+  description?: string
+  enum?: string[]
+  format?: 'date' | 'email'
+}
+
+/** A task's form, as a JSON Schema object of flat fields. */
+export interface InputSchema {
+  type: 'object'
+  properties: Record<string, InputField>
+  required?: string[]
 }
 
 export interface ConversationDetail extends Conversation {

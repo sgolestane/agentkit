@@ -53,7 +53,8 @@ public final class RepoLoader {
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
     private static final Set<String> AGENT_KEYS = Set.of("name", "description", "pattern", "model", "audience",
-            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp");
+            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp", "input");
+    private static final Set<String> INPUT_KEYS = Set.of("schema", "goal");
     private static final Set<String> MCP_KEYS = Set.of("direct");
     private static final Set<String> DEFERRED_KEYS = Set.of("prompt", "actor", "subjects");
     private static final Set<String> SUBJECT_KEYS = Set.of("tool", "argument");
@@ -335,11 +336,41 @@ public final class RepoLoader {
             }
         }
 
+        TaskInput input = null;
+        JsonNode inputNode = node.get("input");
+        if (inputNode != null) {
+            input = input(file, dir, inputNode);
+        }
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred, direct, planner));
+                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input));
+    }
+
+    private TaskInput input(String file, Path dir, JsonNode node) {
+        if (!node.isObject()) {
+            problem(file, "input", "must be a mapping of schema, and optionally goal");
+            return null;
+        }
+        unknownKeys(file, "input.", node, INPUT_KEYS);
+        String schemaText = promptFile(file, "input.schema", dir, node.get("schema"), true);
+        String goal = promptFile(file, "input.goal", dir, node.get("goal"), false);
+        if (schemaText == null) {
+            return null;
+        }
+        JsonNode schema;
+        try {
+            schema = YAML.readTree(schemaText);
+        } catch (IOException e) {
+            problem(file, "input.schema", "is not valid JSON or YAML: " + firstLine(e.getMessage()));
+            return null;
+        }
+        String schemaFile = node.get("schema").asText();
+        return TaskInput.parse(schema, goal, (where, message) -> problem(file,
+                where.equals("goal") ? "input.goal" : "input.schema" + (where.isEmpty() ? "" : " (" + schemaFile + " "
+                        + where + ")"), message));
     }
 
     private AgentDefinition.Deferred deferred(String file, Path dir, JsonNode node, Set<String> connectors) {

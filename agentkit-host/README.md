@@ -89,6 +89,10 @@ bind:                               # hidden from the model, filled from the per
 
 limits: {maxSteps: 12, maxTokens: 1024}
 
+input:                              # optional: the form that starts its task
+  schema: input.yaml                # a flat JSON Schema: string (enum, date, email), integer, number, boolean
+  goal: goal.md                     # optional: the request, with {{input}} and {{field}} filled in
+
 mcp:                                # optional: reads also offered directly to MCP callers
   direct: [helpdesk/directory_lookup]
 
@@ -113,6 +117,18 @@ every turn.
   scheduled it.
 - The subject record a connector returns is described in
   [`docs/MCP-CONNECTORS.md`](../docs/MCP-CONNECTORS.md).
+
+### Starting a task from its input
+
+An agent with an `input` can be started from its fields as well as from words.
+
+- **In the console,** its conversation shows the form, open until the conversation has started.
+- **Over MCP,** `run_<agent>` takes the form as its arguments.
+- **Checked first.** Either way the input is checked, with every problem listed at once, and then
+  made into the request through the goal template (without one, the request is the fields, one
+  per line).
+- **Plain words still work.** A request in plain words goes to the agent as it is, and its prompt
+  lists the fields, so it asks for a required one the request did not give.
 
 ### Plan-and-execute agents
 

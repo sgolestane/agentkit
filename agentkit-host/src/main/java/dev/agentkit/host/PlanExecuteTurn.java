@@ -132,11 +132,12 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             if (i < results.size()) {
                 AgentResult result = results.get(i);
                 String output = Cut.to(OneLine.of(result.output() == null ? "" : result.output()), MAX_STEP_OUTPUT_CHARS);
-                answer.append(result.stopReason() == StopReason.COMPLETED ? "\n   Done: " : "\n   Stopped ("
+                // A nested item, so the answer reads as a list of steps each with its outcome under it.
+                answer.append(result.stopReason() == StopReason.COMPLETED ? "\n   - Done: " : "\n   - Stopped ("
                         + result.stopReason().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + "): ")
                         .append(output.isEmpty() ? "(nothing said)" : output);
             } else {
-                answer.append("\n   Not started.");
+                answer.append("\n   - Not started.");
             }
             answer.append("\n");
         }

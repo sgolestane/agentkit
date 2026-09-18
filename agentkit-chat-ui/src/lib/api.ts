@@ -75,10 +75,10 @@ export const api = {
       body: JSON.stringify(agent ? { title, agent } : { title }),
     }),
 
-  say: (id: string, text: string, attachments: string[] = []) =>
+  say: (id: string, text: string, attachments: string[] = [], input?: Record<string, unknown>) =>
     call<Turn>(`/conversations/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text, attachments }),
+      body: JSON.stringify(input ? { text, attachments, input } : { text, attachments }),
     }),
 
   cancel: (id: string) =>

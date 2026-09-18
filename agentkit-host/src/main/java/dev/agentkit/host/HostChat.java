@@ -62,6 +62,9 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                     described.put("name", agent.definition().name());
                     described.put("description", agent.definition().description());
                     agent.unavailable().ifPresent(why -> described.put("unavailable", why));
+                    if (agent.definition().input() != null) {
+                        described.put("input", agent.definition().input().jsonSchema());
+                    }
                     return described;
                 }).toList()).orElse(List.of());
     }
@@ -83,6 +86,28 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                     .orElseThrow(() -> new ChatUnavailable("There is no agent " + agentId.strip() + " for you."));
         }
         return new Conversation.Pin(chosen.definition().id(), found.host().repo().version());
+    }
+
+    /** A form's input, checked against the pinned agent's schema and made into its request. */
+    @Override
+    public String message(String tenantId, Conversation conversation, Map<String, Object> input) {
+        Tenant tenant = Tenant.parse(tenantId)
+                .orElseThrow(() -> new ChatUnavailable("This conversation belongs to nobody the host knows."));
+        HostedAgent agent = pinned(tenant, conversation);
+        return request(agent, input);
+    }
+
+    /** {@code input} as {@code agent}'s request, or every reason it is not one. */
+    static String request(HostedAgent agent, Map<String, Object> input) {
+        dev.agentkit.host.repo.TaskInput form = agent.definition().input();
+        if (form == null) {
+            throw new ChatUnavailable(agent.definition().name() + " takes no form; say what you need instead.");
+        }
+        List<String> problems = form.problems(input);
+        if (!problems.isEmpty()) {
+            throw new ChatUnavailable(String.join(". ", problems) + ".");
+        }
+        return form.render(input);
     }
 
     // ---------------------------------------------------------------- turns
@@ -109,17 +134,10 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         }
         Tenant tenant = Tenant.parse(session.tenantId())
                 .orElseThrow(() -> new ChatUnavailable("This conversation belongs to nobody the host knows."));
-        OrgHost org = Optional.ofNullable(orgs.get(tenant.org()))
-                .orElseThrow(() -> new ChatUnavailable("Your organization has no agents here."));
         Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
                 .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
-        Conversation.Pin pin = Optional.ofNullable(conversation.agent())
-                .orElseThrow(() -> new ChatUnavailable("This conversation is not with any agent. Start a new one."));
-        AgentHost version = org.version(pin.version()).orElseThrow(() -> new ChatUnavailable(
-                "This conversation was with a version of " + pin.id() + " this host no longer runs. Start a new "
-                        + "conversation to talk to the current one."));
-        HostedAgent agent = version.agent(pin.id()).orElseThrow(() -> new ChatUnavailable(
-                "There is no agent " + pin.id() + " in that version."));
+        HostedAgent agent = pinned(tenant, conversation);
+        AgentHost version = orgs.get(tenant.org()).version(conversation.agent().version()).orElseThrow();
         Principal principal = version.principal(tenant.email())
                 .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
         List<dev.agentkit.core.tool.Tool> scheduler = Optional.ofNullable(deferred.get(tenant.org()))
@@ -129,6 +147,19 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                     + "running deferred work for your organization.");
         }
         return new Turn(agent, principal, scheduler);
+    }
+
+    /** The agent, at the version, a conversation is pinned to — or a sentence saying why there is none. */
+    private HostedAgent pinned(Tenant tenant, Conversation conversation) {
+        OrgHost org = Optional.ofNullable(orgs.get(tenant.org()))
+                .orElseThrow(() -> new ChatUnavailable("Your organization has no agents here."));
+        Conversation.Pin pin = Optional.ofNullable(conversation.agent())
+                .orElseThrow(() -> new ChatUnavailable("This conversation is not with any agent. Start a new one."));
+        AgentHost version = org.version(pin.version()).orElseThrow(() -> new ChatUnavailable(
+                "This conversation was with a version of " + pin.id() + " this host no longer runs. Start a new "
+                        + "conversation to talk to the current one."));
+        return version.agent(pin.id()).orElseThrow(() -> new ChatUnavailable(
+                "There is no agent " + pin.id() + " in that version."));
     }
 
     // ---------------------------------------------------------------- helpers

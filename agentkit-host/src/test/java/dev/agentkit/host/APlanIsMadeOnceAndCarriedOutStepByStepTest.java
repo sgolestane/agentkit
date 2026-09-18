@@ -101,9 +101,9 @@ class APlanIsMadeOnceAndCarriedOutStepByStepTest {
         assertThat(turn.state()).isEqualTo(Turn.State.COMPLETED);
         assertThat(turn.answer()).isEqualTo("""
                 1. Open a ticket for a replacement laptop.
-                   Done: Opened TICKET-1001.
+                   - Done: Opened TICKET-1001.
                 2. Tell the manager, dana.kim@acme.example.
-                   Done: Told Dana.""");
+                   - Done: Told Dana.""");
         assertThat(helpdesk.calls("open_ticket")).singleElement().satisfies(call ->
                 assertThat(call.arguments()).containsEntry("requester", HelpdeskConnector.PRIYA));
         assertThat(helpdesk.calls("send_message")).hasSize(1);
@@ -141,8 +141,8 @@ class APlanIsMadeOnceAndCarriedOutStepByStepTest {
         Turn turn = say(conversation, "My laptop was stolen.");
 
         assertThat(turn.state()).isEqualTo(Turn.State.FAILED);
-        assertThat(turn.answer()).contains("1. Open a ticket.\n   Stopped (error)")
-                .contains("2. Tell the manager.\n   Not started.");
+        assertThat(turn.answer()).contains("1. Open a ticket.\n   - Stopped (error)")
+                .contains("2. Tell the manager.\n   - Not started.");
         // The host looked Priya up; no step touched the helpdesk.
         assertThat(helpdesk.calls).extracting(HelpdeskConnector.Call::tool).containsOnly("directory_lookup");
     }

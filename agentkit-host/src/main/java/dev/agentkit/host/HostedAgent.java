@@ -313,7 +313,8 @@ public final class HostedAgent {
      * directory record, fenced, since people type what is in it — and the time.
      */
     public String systemPrompt(Principal principal, Instant now) {
-        return prompt(definition.systemPrompt(), definition.pattern() == AgentDefinition.Pattern.CHAT, principal, now);
+        boolean chat = definition.pattern() == AgentDefinition.Pattern.CHAT;
+        return prompt(definition.systemPrompt(), chat, chat, principal, now);
     }
 
     /**
@@ -322,10 +323,14 @@ public final class HostedAgent {
      * {@link #systemPrompt}, the executor's prompt, the person and the time.
      */
     public String plannerPrompt(Principal principal, Instant now) {
-        return prompt(Objects.requireNonNull(definition.plannerPrompt(), "plannerPrompt"), true, principal, now);
+        return prompt(Objects.requireNonNull(definition.plannerPrompt(), "plannerPrompt"), true, true, principal, now);
     }
 
-    private String prompt(String base, boolean withPolicy, Principal principal, Instant now) {
+    /**
+     * @param withInput whether to say what input the agent works from, so a request in plain words that lacks some of it
+     *                  can be completed by asking — for the prompt that reads the request, not for a step of a plan
+     */
+    private String prompt(String base, boolean withPolicy, boolean withInput, Principal principal, Instant now) {
         StringBuilder record = new StringBuilder("- email: ").append(principal.email()).append('\n');
         new TreeMap<>(principal.facts()).forEach((field, value) -> {
             if (!field.equals("email")) {
@@ -336,6 +341,11 @@ public final class HostedAgent {
         StringBuilder prompt = new StringBuilder(base);
         if (withPolicy && !definition.policy().isBlank()) {
             prompt.append("\n\n").append(definition.policy());
+        }
+        if (withInput && definition.input() != null) {
+            prompt.append("\n\nA request to you is for a task that works from these fields. It may come as the fields "
+                    + "themselves, or in plain words; when a request in plain words does not say a required one, "
+                    + "ask the person for it rather than guess:\n").append(definition.input().describe());
         }
         prompt.append("\n\nYou are talking to one person, and you act only as them. Their record in the directory:\n")
                 .append(Spotlight.wrap(Spotlight.Kind.EVIDENCE, Source.of("directory", principal.email()),

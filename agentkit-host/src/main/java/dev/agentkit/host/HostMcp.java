@@ -29,7 +29,9 @@ import org.slf4j.LoggerFactory;
  * <p>{@code ask_<agent>} is a turn of conversation with that agent, as the caller, in their "&lt;Agent&gt; over MCP"
  * conversation — pinned to the agent's version like any other, and in their console too — so the prompt, the policy,
  * the tools and the confirmations are exactly the console's. An agent's {@code mcp.direct} tools are offered as well,
- * bound to the caller as in a conversation; they are reads, so nothing about them needs a person's word.
+ * bound to the caller as in a conversation; they are reads, so nothing about them needs a person's word. An agent with
+ * an input is also {@code run_<agent>}, whose arguments are its form: checked, made into the request, and then a turn
+ * like any other.
  *
  * <p><strong>A confirmation over MCP.</strong> When the turn stops for the person — a confirmed tool, or a question
  * from the agent — and the client can be asked ({@link McpCall}), the person is asked there, directly: the client
@@ -74,6 +76,11 @@ public final class HostMcp {
         return "ask_" + agentId.replace('-', '_');
     }
 
+    /** The tool starting {@code agentId}'s task from its input. */
+    public static String runTool(String agentId) {
+        return "run_" + agentId.replace('-', '_');
+    }
+
     /** The conversation an MCP caller talks to an agent in. */
     static String conversationTitle(HostedAgent agent) {
         return agent.definition().name() + " over MCP";
@@ -105,6 +112,18 @@ public final class HostMcp {
                             .handler(inv -> ask(tenant.get(), id, inv.stringArgument("message")))
                             .build(),
                     new ToolDeclaration(id, ToolEffect.REQUEST, null));
+            if (agent.definition().input() != null) {
+                tools.add(FunctionTool.builder(runTool(id), "Start " + agent.definition().name() + " with its input, the "
+                                        + "same fields as its form in the console: " + agent.definition().description()
+                                        + " It carries the task out as the person, following " + current.repo().org()
+                                        + "'s policy, and asks them directly for any confirmation it needs.")
+                                .schema(agent.definition().input().jsonSchema())
+                                .sideEffects(SideEffects.EXTERNAL)
+                                .provenance(Provenance.FIRST_PARTY)
+                                .handler(inv -> run(tenant.get(), agent, inv.arguments()))
+                                .build(),
+                        new ToolDeclaration(id, ToolEffect.REQUEST, null));
+            }
             for (DeclaredTools.Entry direct : agent.directTools(principal.get()).entries()) {
                 if (tools.entry(direct.tool().name()).isPresent()) {
                     LOG.warn("{} offers {} directly, and another agent already does; offering the first", id,
@@ -115,6 +134,16 @@ public final class HostMcp {
             }
         }
         return Optional.of(tools);
+    }
+
+    private ToolResult run(Tenant tenant, HostedAgent agent, Map<String, Object> input) {
+        String request;
+        try {
+            request = HostChat.request(agent, input);
+        } catch (ChatUnavailable refused) {
+            return ToolResult.error(refused.getMessage());
+        }
+        return ask(tenant, agent.definition().id(), request);
     }
 
     private ToolResult ask(Tenant tenant, String agentId, String message) {

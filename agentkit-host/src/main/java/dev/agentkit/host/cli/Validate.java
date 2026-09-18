@@ -111,6 +111,10 @@ public final class Validate {
             out.println("    deferred work as " + definition.deferred().actor() + ", about: "
                     + String.join(", ", definition.deferred().subjects().keySet()));
         }
+        if (definition.input() != null) {
+            out.println("    started from a form: " + definition.input().fields().stream()
+                    .map(f -> f.name() + (f.required() ? "*" : "")).collect(Collectors.joining(", ")));
+        }
         if (!definition.mcpDirect().isEmpty()) {
             out.println("    offered directly over MCP: " + definition.mcpDirect().stream().map(Object::toString)
                     .collect(Collectors.joining(", ")));

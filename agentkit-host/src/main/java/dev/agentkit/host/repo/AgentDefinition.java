@@ -29,11 +29,14 @@ import java.util.Set;
  * @param deferred     how the agent schedules work for later, or null when it does not
  * @param mcpDirect    the agent's read tools also offered directly to MCP callers, beside asking the agent
  * @param plannerPrompt for {@link Pattern#PLAN_EXECUTE}, the prompt the plan is made with; null otherwise
+ * @param input        the fields a person fills in to start it, and how they become its request; null when it takes
+ *                     only what is said to it
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
-                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt) {
+                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt,
+                              TaskInput input) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";

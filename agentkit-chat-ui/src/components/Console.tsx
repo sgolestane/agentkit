@@ -8,6 +8,7 @@ import { Threads } from './Threads'
 import { money } from './Trace'
 import type { Overview } from '../lib/types'
 import { Composer } from './Composer'
+import { TaskForm } from './TaskForm'
 import { Transcript } from './Transcript'
 
 /**
@@ -80,6 +81,10 @@ export function Console() {
     [conversation, uploads],
   )
 
+  // The open conversation's agent, when the console offers more than one: its form, if it has one.
+  const openAgentId = threads.threads.find((one) => one.id === threads.current)?.agent?.id
+  const openAgent = overview?.agents?.find((agent) => agent.id === openAgentId)
+
   const problems = overview?.problems ?? []
   // Disabled with a reason rather than disabled: a person whose console will not accept a
   // message is owed the sentence that says why, and it is already written — the runtime's own.
@@ -141,6 +146,17 @@ export function Console() {
           }}
           onEdit={setDraft}
         />
+
+        {openAgent?.input && threads.current ? (
+          <TaskForm
+            key={threads.current}
+            schema={openAgent.input}
+            agentName={openAgent.name}
+            startOpen={conversation.transcript.turns.length === 0}
+            disabled={Boolean(unusable) || conversation.working}
+            onSubmit={(input) => void conversation.say('', [], input)}
+          />
+        ) : null}
 
         <Composer
           onSend={send}

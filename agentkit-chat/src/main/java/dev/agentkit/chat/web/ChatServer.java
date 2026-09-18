@@ -144,6 +144,16 @@ public final class ChatServer implements AutoCloseable {
          */
         Conversation.Pin pin(String tenantId, String agentId);
 
+        /**
+         * A message filled in as a form rather than written: the request {@code input} makes for {@code conversation}'s
+         * agent, which the runtime is then told as if the person had said it.
+         *
+         * @throws ChatUnavailable with a sentence for the person — the agent takes no form, or the input is not valid
+         */
+        default String message(String tenantId, Conversation conversation, Map<String, Object> input) {
+            throw new ChatUnavailable("This conversation's agent takes no form; say what you need instead.");
+        }
+
         /** One agent, and conversations pinned to nothing. */
         AgentCatalog NONE = new AgentCatalog() {
             @Override
@@ -403,8 +413,15 @@ public final class ChatServer implements AutoCloseable {
         if (rawAttachments instanceof List<?> list) {
             list.forEach(id -> attachmentIds.add(String.valueOf(id)));
         }
-        Turn turn = runtime.say(tenantId, conversationId,
-                String.valueOf(request.getOrDefault("text", "")), attachmentIds);
+        String text = String.valueOf(request.getOrDefault("text", ""));
+        if (request.get("input") instanceof Map<?, ?> input) {
+            Conversation conversation = store.conversation(tenantId, conversationId)
+                    .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> fields = (Map<String, Object>) input;
+            text = catalog.message(tenantId, conversation, fields);
+        }
+        Turn turn = runtime.say(tenantId, conversationId, text, attachmentIds);
         return turnJsonWithCost(turn);
     }
 
