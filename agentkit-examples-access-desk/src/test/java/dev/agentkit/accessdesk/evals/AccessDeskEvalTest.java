@@ -6,25 +6,19 @@ import dev.agentkit.accessdesk.desk.AccessLedger.AccessRequest;
 import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
 import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.CompanyClient;
-import dev.agentkit.accessdesk.desk.DeskConfig;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.mcp.InProcessMcpConnection;
 import dev.agentkit.accessdesk.systems.CompanySystems;
-import dev.agentkit.accessdesk.web.DeskChat;
-import dev.agentkit.chat.ChatEvents;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.Conversation;
 import dev.agentkit.chat.Step;
 import dev.agentkit.chat.Turn;
-import dev.agentkit.chat.store.InMemoryChatStore;
 import dev.agentkit.core.agent.AgentResult;
 import dev.agentkit.core.agent.Goal;
 import dev.agentkit.core.deferred.DeferredAction;
-import dev.agentkit.core.deferred.DeferredActionScheduler;
 import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.reliability.ApprovalDecision;
-import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.eval.CaseReport;
@@ -32,7 +26,6 @@ import dev.agentkit.eval.Check;
 import dev.agentkit.eval.CheckOutcome;
 import dev.agentkit.eval.Checks;
 import dev.agentkit.eval.EvalRun;
-import dev.agentkit.mcp.McpTool;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicTest;
@@ -48,7 +41,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -56,15 +48,14 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Evaluates Access Desk's conversational agent against a real model: one conversation turn per case, scored on
- * what the ledger, the company systems and the deferred action store hold afterwards — not on what the agent
- * said.
+ * Evaluates Access Desk against a real model: one conversation per case, scored on what the ledger, the company
+ * systems and the deferred action store hold afterwards — not on what the agent said.
  *
- * <p>Each case is a real conversation through {@link ChatRuntime}, with the agent the console uses ({@link DeskChat})
- * and the shipped policy and prompts. What a console has a person for is scripted: questions asked with
- * {@code ask_person} and questions asked in a reply (which the person answers in their next message) are answered
- * from the case's script, and confirmation cards are approved. The company systems run in-process behind
- * {@code McpTool}, so the agent sees the same fenced results it would over stdio.
+ * <p>Access Desk runs as it is deployed: {@code orgs/acme} on the agent host, with the company systems and the access
+ * ledger as MCP connectors over HTTP ({@link OnTheHost}). Each case is a real conversation through the host's
+ * {@code ChatRuntime}. What a console has a person for is scripted: questions asked with {@code ask_person} and
+ * questions asked in a reply (which the person answers in their next message) are answered from the case's script,
+ * and confirmation cards are approved.
  *
  * <p>Opt-in, and it costs real tokens. Skipped unless {@code ACCESS_DESK_EVAL=true} and {@code OPENROUTER_API_KEY}
  * are set:
@@ -73,7 +64,8 @@ import java.util.stream.Stream;
  * ACCESS_DESK_EVAL=true OPENROUTER_API_KEY=sk-or-... \
  *   ./mvnw -pl agentkit-examples-access-desk test -Dtest=AccessDeskEvalTest
  * </pre>
- * {@code ACCESS_DESK_EVAL_CASES="low-risk-grant approver-shortens"} runs a subset.
+ * {@code ACCESS_DESK_EVAL_CASES="low-risk-grant approver-shortens"} runs a subset. The model is the one
+ * {@code orgs/acme/org.yaml} names.
  */
 class AccessDeskEvalTest {
 
@@ -88,13 +80,12 @@ class AccessDeskEvalTest {
         final CompanyClient company = new CompanyClient(new InProcessMcpConnection(systems.catalog()));
         final AccessLedger ledger = AccessLedger.open(null);
         final DeferredActionStore store = DeferredActionStore.inMemory();
-        final DeferredActionScheduler scheduler = DeskTools.scheduler(ledger, store, () -> NOW);
         final List<String> questions = new CopyOnWriteArrayList<>();
         final List<String> confirmations = new CopyOnWriteArrayList<>();
         final List<Turn> turns = new CopyOnWriteArrayList<>();
 
         DeskTools as(String who) {
-            return new DeskTools(who, ledger, company, scheduler, () -> NOW);
+            return new DeskTools(who, ledger, company, () -> NOW);
         }
 
         List<Grant> grants() {
@@ -127,71 +118,23 @@ class AccessDeskEvalTest {
         String key = System.getenv(OpenRouterLlmClient.API_KEY_ENV);
         Assumptions.assumeTrue(key != null && !key.isBlank(), "Set OPENROUTER_API_KEY to run the Access Desk evals.");
         LlmClient llm = OpenRouterLlmClient.builder(key).title("agentkit access desk evals").build();
-        String model = System.getenv().getOrDefault("ACCESS_DESK_MODEL", "anthropic/claude-sonnet-5");
         String subset = System.getenv().getOrDefault("ACCESS_DESK_EVAL_CASES", "");
         Set<String> wanted = subset.isBlank() ? Set.of() : Set.of(subset.strip().split("[\\s,]+"));
 
         return cases().stream().filter(c -> wanted.isEmpty() || wanted.contains(c.name()))
                 .map(c -> DynamicTest.dynamicTest(c.name(), () -> {
-                    CaseReport report = run(c, world -> console(world, llm, model));
+                    CaseReport report = run(c, world -> OnTheHost.start(world, llm));
                     assertThat(report.failures()).as("failed checks for %s", c.name()).isEmpty();
                 }));
-    }
-
-    /**
-     * Where a case's conversation happens: a chat runtime with Access Desk behind it, and whose conversations are
-     * whose. The console app's and the agent host's differ in how they are wired, and in nothing a case can see.
-     */
-    interface Harness extends AutoCloseable {
-        ChatRuntime runtime();
-
-        /** The runtime's tenant for a person. */
-        String tenant(String who);
-
-        /** A new conversation of {@code who}'s with Access Desk. */
-        Conversation start(String who, String title);
-
-        @Override
-        void close();
-    }
-
-    /** The console app's wiring: {@link DeskChat}, one tenant per person. */
-    private static Harness console(World world, LlmClient llm, String model) {
-        AtomicReference<ChatRuntime> self = new AtomicReference<>();
-        ChatRuntime runtime = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(),
-                DeskChat.agents(DeskConfig.from(Map.of()), Optional.of(llm), model, world.company, mcpTools(world.systems),
-                        world.ledger, world.scheduler, () -> NOW, List.of(), self));
-        self.set(runtime);
-        return new Harness() {
-            @Override
-            public ChatRuntime runtime() {
-                return runtime;
-            }
-
-            @Override
-            public String tenant(String who) {
-                return who;
-            }
-
-            @Override
-            public Conversation start(String who, String title) {
-                return runtime.store().create(who, title);
-            }
-
-            @Override
-            public void close() {
-                runtime.close();
-            }
-        };
     }
 
     /** How many turns one case's conversation may take. */
     static final int MAX_TURNS = 3;
 
-    static CaseReport run(Case c, Function<World, Harness> harnessFor) throws InterruptedException {
+    static CaseReport run(Case c, Function<World, OnTheHost.Harness> harnessFor) throws InterruptedException {
         World world = new World();
         c.setup().accept(world);
-        try (Harness harness = harnessFor.apply(world)) {
+        try (OnTheHost.Harness harness = harnessFor.apply(world)) {
             ChatRuntime runtime = harness.runtime();
             String tenant = harness.tenant(c.who());
             Conversation conversation = harness.start(c.who(), c.name());
@@ -370,13 +313,12 @@ class AccessDeskEvalTest {
 
     // ---------------------------------------------------------------- helpers
 
-    /** The company systems' tools as the app sees them: {@code McpTool}s, fenced, with their declarations. */
-    private static DeclaredTools mcpTools(CompanySystems systems) {
-        DeclaredTools declared = systems.catalog();
-        InProcessMcpConnection connection = new InProcessMcpConnection(declared);
-        DeclaredTools catalog = new DeclaredTools();
-        connection.listTools().forEach(info -> catalog.add(new McpTool(connection, info), declared.declaration(info.name()).orElseThrow()));
-        return catalog;
+
+    /** Priya asks Dana for read on payments-prod for four hours, and Dana approves two: GR-1001, until 17:00. */
+    static void approvedGrant(World w) {
+        call(w.as(PRIYA), "submit_access_request", "resource_id", "db-payments-prod", "level", "read", "hours", 4,
+                "justification", "INC-4211", "approver_email", DANA);
+        call(w.as(DANA), "decide_request", "request_id", "REQ-1001", "decision", "approve", "hours", 2);
     }
 
     private static void call(DeskTools desk, String name, Object... args) {

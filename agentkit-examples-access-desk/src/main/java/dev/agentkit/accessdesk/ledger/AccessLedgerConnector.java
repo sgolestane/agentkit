@@ -82,7 +82,7 @@ public final class AccessLedgerConnector implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         });
-        ExpiryBackstop expiry = new ExpiryBackstop(ledger, new DeskTools(DeskTools.DESK, ledger, company, null, clock));
+        ExpiryBackstop expiry = new ExpiryBackstop(ledger, new DeskTools(DeskTools.DESK, ledger, company, clock));
         timer.scheduleWithFixedDelay(() -> {
             try {
                 expiry.revokeOverdue(clock.get()).forEach(id ->
@@ -110,8 +110,8 @@ public final class AccessLedgerConnector implements AutoCloseable {
      */
     public static DeclaredTools catalog(AccessLedger ledger, CompanyClient company, Supplier<Instant> clock) {
         DeclaredTools catalog = new DeclaredTools();
-        for (DeclaredTools.Entry entry : new DeskTools(DeskTools.DESK, ledger, company, null, clock).catalog().entries()) {
-            catalog.add(new ActingAs(entry.tool(), who -> new DeskTools(who, ledger, company, null, clock).catalog()
+        for (DeclaredTools.Entry entry : new DeskTools(DeskTools.DESK, ledger, company, clock).catalog().entries()) {
+            catalog.add(new ActingAs(entry.tool(), who -> new DeskTools(who, ledger, company, clock).catalog()
                     .entry(entry.tool().name()).orElseThrow().tool()), entry.declaration());
         }
         catalog.add(FunctionTool.builder("get_grant", "A grant as it stands now, as a subject record: who holds it, who "

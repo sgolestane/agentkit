@@ -4,8 +4,6 @@ import dev.agentkit.accessdesk.desk.AccessLedger.AccessRequest;
 import dev.agentkit.accessdesk.desk.AccessLedger.Grant;
 import dev.agentkit.accessdesk.desk.CompanyClient.Person;
 import dev.agentkit.accessdesk.desk.CompanyClient.Resource;
-import dev.agentkit.core.deferred.DeferredActionScheduler;
-import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.deferred.SubjectRecord;
 import dev.agentkit.core.deferred.SubjectResolver;
 import dev.agentkit.core.tool.DeclaredTools;
@@ -43,11 +41,12 @@ import java.util.function.Supplier;
  *   <li>access never lasts longer than the resource's {@code max_hours};</li>
  *   <li>an approver is the resource's owner or the requester's manager, and never the requester;</li>
  *   <li>only the named approver decides a request, and may shorten it but not lengthen it;</li>
- *   <li>a grant is revoked only by its holder, its approver, the resource's owner, or the desk itself, and only they
- *       may schedule deferred actions for it ({@link #scheduler}).</li>
+ *   <li>a grant is revoked only by its holder, its approver, the resource's owner, or the desk itself.</li>
  * </ul>
  * The raw {@code grant_access} and {@code revoke_access} tools of the company systems are never given to a
- * model; access changes only through these.
+ * model; access changes only through these. They are served to the agent host by
+ * {@link dev.agentkit.accessdesk.ledger.AccessLedgerConnector}, which also describes a grant as a subject record
+ * ({@link #grantSubjects}) for the reminders and revocations the host schedules.
  */
 public final class DeskTools {
 
@@ -60,35 +59,14 @@ public final class DeskTools {
     private final String me;
     private final AccessLedger ledger;
     private final CompanyClient company;
-    private final DeferredActionScheduler scheduler;
     private final Supplier<Instant> clock;
 
-    /**
-     * @param me        the work email of the person these tools act as, or {@link #DESK}
-     * @param scheduler the deferred action scheduler, or null to offer no scheduling
-     */
-    public DeskTools(String me, AccessLedger ledger, CompanyClient company, DeferredActionScheduler scheduler,
-                     Supplier<Instant> clock) {
+    /** @param me the work email of the person these tools act as, or {@link #DESK} */
+    public DeskTools(String me, AccessLedger ledger, CompanyClient company, Supplier<Instant> clock) {
         this.me = lower(Objects.requireNonNull(me, "me"));
         this.ledger = Objects.requireNonNull(ledger, "ledger");
         this.company = Objects.requireNonNull(company, "company");
-        this.scheduler = scheduler;
         this.clock = Objects.requireNonNull(clock, "clock");
-    }
-
-    /**
-     * The scheduler for deferred actions about grants. Only someone who could revoke a grant — its holder, its
-     * approver or its resource's owner — may schedule work for it, because the work runs later as the desk, which may
-     * revoke any grant.
-     */
-    public static DeferredActionScheduler scheduler(AccessLedger ledger, DeferredActionStore store, Supplier<Instant> clock) {
-        return new DeferredActionScheduler(grantSubjects(ledger), store, clock, DeskTools::holdings,
-                DeskTools::mayScheduleFor);
-    }
-
-    /** Whether {@code scheduledBy} may schedule deferred actions for {@code grant}: the desk, or one of its contacts. */
-    public static boolean mayScheduleFor(String scheduledBy, SubjectRecord grant) {
-        return scheduledBy != null && (DESK.equals(lower(scheduledBy)) || grant.isContact(scheduledBy));
     }
 
     /** Resolves {@value #GRANT} subjects from the ledger, for deferred actions. */
@@ -109,7 +87,7 @@ public final class DeskTools {
         };
     }
 
-    /** What a grant holds, for the scheduler's feedback: the grant id a goal about it should name. */
+    /** What a grant holds, for a scheduler's feedback: the grant id a goal about it should name. */
     public static List<String> holdings(SubjectRecord subject) {
         return GRANT.equals(subject.kind()) && "ACTIVE".equals(subject.facts().get("status"))
                 ? List.of(subject.id()) : List.of();
@@ -190,9 +168,6 @@ public final class DeskTools {
         catalog.add(tool("audit_log", "Show recent access-desk activity involving the person you are talking to.",
                         props(), List.of(), SideEffects.NONE, inv -> auditLog()),
                 new ToolDeclaration("access-desk", ToolEffect.READ, null));
-        if (scheduler != null) {
-            catalog.add(scheduler.tool(me), new ToolDeclaration("scheduler", ToolEffect.SCHEDULE, "subject_id"));
-        }
         return catalog;
     }
 
