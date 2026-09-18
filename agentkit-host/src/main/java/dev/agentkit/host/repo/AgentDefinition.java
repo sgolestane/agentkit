@@ -19,7 +19,7 @@ import java.util.Set;
  * @param pattern      how a turn runs
  * @param model        the model id, or null for the organization's default
  * @param audience     who may use it: group names, or {@value #EVERYONE}
- * @param systemPrompt the system prompt's text
+ * @param systemPrompt the system prompt's text; for {@link Pattern#PLAN_EXECUTE}, the one each step runs with
  * @param policy       the policy's text, appended to the system prompt; empty when there is none
  * @param tools        which connector tools it is given
  * @param confirm      tools that stop for the person's confirmation before they run
@@ -28,11 +28,12 @@ import java.util.Set;
  * @param maxTokens    the most a model call may produce
  * @param deferred     how the agent schedules work for later, or null when it does not
  * @param mcpDirect    the agent's read tools also offered directly to MCP callers, beside asking the agent
+ * @param plannerPrompt for {@link Pattern#PLAN_EXECUTE}, the prompt the plan is made with; null otherwise
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
-                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect) {
+                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
@@ -40,7 +41,13 @@ public record AgentDefinition(String id, String name, String description, Patter
     /** How a turn runs. */
     public enum Pattern {
         /** One agent loop per turn, with the conversation so far. */
-        CHAT
+        CHAT,
+        /**
+         * A plan made once from the person's request, with the policy and who they are, then carried out step by step,
+         * each step by a fresh agent with the agent's tools: for work with many steps, where the policy's conditions
+         * are best settled before anything is done.
+         */
+        PLAN_EXECUTE
     }
 
     public AgentDefinition {
@@ -55,6 +62,9 @@ public record AgentDefinition(String id, String name, String description, Patter
         confirm = List.copyOf(confirm);
         bind = Map.copyOf(bind);
         mcpDirect = mcpDirect == null ? List.of() : List.copyOf(mcpDirect);
+        if (pattern == Pattern.PLAN_EXECUTE) {
+            Objects.requireNonNull(plannerPrompt, "plannerPrompt");
+        }
     }
 
     /**

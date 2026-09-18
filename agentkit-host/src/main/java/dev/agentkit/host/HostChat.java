@@ -89,6 +89,21 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
 
     @Override
     public Agent agentFor(ChatRuntime.Session session) {
+        Turn turn = turnFor(session);
+        return turn.agent().turn(session, llm.get(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
+    }
+
+    /** The pinned agent's way of carrying out the turn: its own loop, or a plan carried out step by step. */
+    @Override
+    public ChatRuntime.Runner runnerFor(ChatRuntime.Session session) {
+        Turn turn = turnFor(session);
+        return turn.agent().runner(session, llm.get(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
+    }
+
+    private record Turn(HostedAgent agent, Principal principal, List<dev.agentkit.core.tool.Tool> scheduler) {
+    }
+
+    private Turn turnFor(ChatRuntime.Session session) {
         if (llm.isEmpty()) {
             throw new ChatUnavailable("No model is configured.");
         }
@@ -113,7 +128,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             throw new ChatUnavailable(agent.definition().name() + " schedules work for later, and this host is not "
                     + "running deferred work for your organization.");
         }
-        return agent.turn(session, llm.get(), principal, clock.get(), runtime.get(), scheduler);
+        return new Turn(agent, principal, scheduler);
     }
 
     // ---------------------------------------------------------------- helpers

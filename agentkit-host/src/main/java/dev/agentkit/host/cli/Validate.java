@@ -97,7 +97,8 @@ public final class Validate {
     /** What an agent can do, by effect: the part of a change a reviewer must not miss. */
     private static void describe(HostedAgent agent, PrintStream out) {
         AgentDefinition definition = agent.definition();
-        out.println("\n  " + definition.id() + " — " + definition.name() + " (audience: "
+        out.println("\n  " + definition.id() + " — " + definition.name() + " ("
+                + definition.pattern().name().toLowerCase(Locale.ROOT).replace('_', '-') + "; audience: "
                 + String.join(", ", definition.audience()) + ")");
         Principal nobody = new Principal("validate", "validate", "validate@example.invalid", Set.of(), Map.of());
         DeclaredTools tools = agent.tools(nobody);

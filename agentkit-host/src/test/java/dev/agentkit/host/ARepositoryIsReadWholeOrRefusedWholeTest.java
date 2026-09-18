@@ -155,6 +155,35 @@ class ARepositoryIsReadWholeOrRefusedWholeTest {
     }
 
     @Test
+    void aPlanAndExecuteAgentNamesItsPlannerAndItsExecutorPrompts() {
+        RepoFixture repo = RepoFixture.copyInto(dir)
+                .write("agents/onboarding/agent.yaml", """
+                        name: Onboarding
+                        pattern: plan-execute
+                        prompt: {planner: planner.md, executor: executor.md, policy: policy.md}
+                        tools: [{connector: helpdesk, effects: [read, notify]}]
+                        """)
+                .write("agents/onboarding/planner.md", "Plan it.")
+                .write("agents/onboarding/executor.md", "Do one step.")
+                .write("agents/onboarding/policy.md", "Onboarding policy.");
+        AgentDefinition onboarding = RepoLoader.load(repo.root(), "v").agents().get("onboarding");
+        assertThat(onboarding.pattern()).isEqualTo(AgentDefinition.Pattern.PLAN_EXECUTE);
+        assertThat(onboarding.plannerPrompt()).isEqualTo("Plan it.");
+        assertThat(onboarding.systemPrompt()).isEqualTo("Do one step.");
+        assertThat(onboarding.policy()).isEqualTo("Onboarding policy.");
+
+        repo.edit("agents/onboarding/agent.yaml", "{planner: planner.md, executor: executor.md, policy: policy.md}",
+                "{system: planner.md}");
+        assertThatThrownBy(() -> RepoLoader.load(repo.root(), "v"))
+                .isInstanceOfSatisfying(DefinitionException.class, e -> assertThat(e.problems())
+                        .extracting(Object::toString).containsExactlyInAnyOrder(
+                                "agents/onboarding/agent.yaml prompt.system: is not a field here; the fields are "
+                                        + "[executor, planner, policy]",
+                                "agents/onboarding/agent.yaml prompt.planner: is required",
+                                "agents/onboarding/agent.yaml prompt.executor: is required"));
+    }
+
+    @Test
     void theVersionIsTheCommitAndSaysSoWhenTheCheckoutHasChanged() throws Exception {
         RepoFixture repo = RepoFixture.copyInto(dir);
         assertThat(GitVersion.of(repo.root())).isEqualTo(GitVersion.UNVERSIONED);

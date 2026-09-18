@@ -313,6 +313,19 @@ public final class HostedAgent {
      * directory record, fenced, since people type what is in it — and the time.
      */
     public String systemPrompt(Principal principal, Instant now) {
+        return prompt(definition.systemPrompt(), definition.pattern() == AgentDefinition.Pattern.CHAT, principal, now);
+    }
+
+    /**
+     * For {@link AgentDefinition.Pattern#PLAN_EXECUTE}: the prompt the plan is made with — the planner's prompt, the
+     * policy, who the person is and the time. The policy is settled here, while planning; each step then runs with
+     * {@link #systemPrompt}, the executor's prompt, the person and the time.
+     */
+    public String plannerPrompt(Principal principal, Instant now) {
+        return prompt(Objects.requireNonNull(definition.plannerPrompt(), "plannerPrompt"), true, principal, now);
+    }
+
+    private String prompt(String base, boolean withPolicy, Principal principal, Instant now) {
         StringBuilder record = new StringBuilder("- email: ").append(principal.email()).append('\n');
         new TreeMap<>(principal.facts()).forEach((field, value) -> {
             if (!field.equals("email")) {
@@ -320,8 +333,8 @@ public final class HostedAgent {
                         .append(value.isBlank() ? "(none)" : OneLine.of(value)).append('\n');
             }
         });
-        StringBuilder prompt = new StringBuilder(definition.systemPrompt());
-        if (!definition.policy().isBlank()) {
+        StringBuilder prompt = new StringBuilder(base);
+        if (withPolicy && !definition.policy().isBlank()) {
             prompt.append("\n\n").append(definition.policy());
         }
         prompt.append("\n\nYou are talking to one person, and you act only as them. Their record in the directory:\n")
@@ -369,19 +382,44 @@ public final class HostedAgent {
     /** {@link #turn}, with tools the host adds for this turn, such as the scheduler for deferred work. */
     public Agent turn(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now, ChatRuntime runtime,
                       List<Tool> alsoGiven) {
+        return builder(session, llm, principal, now, runtime, alsoGiven).build();
+    }
+
+    /**
+     * How a turn with this agent is carried out, as {@code principal}: its own loop for a chat agent, or for a
+     * plan-and-execute agent a plan made once and then carried out step by step ({@link PlanExecuteTurn}), every step
+     * with the same tools, bindings and confirmations a chat turn has.
+     *
+     * @throws ChatUnavailable with a sentence for the person, when the agent cannot run or is not for them
+     */
+    public ChatRuntime.Runner runner(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
+                                     ChatRuntime runtime, List<Tool> alsoGiven) {
+        if (definition.pattern() == AgentDefinition.Pattern.PLAN_EXECUTE) {
+            check(principal);
+            return new PlanExecuteTurn(this, llm, principal, now,
+                    () -> builder(session, llm, principal, now, runtime, alsoGiven).streaming(false).build(), session);
+        }
+        return turn(session, llm, principal, now, runtime, alsoGiven)::run;
+    }
+
+    private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
+                                  ChatRuntime runtime, List<Tool> alsoGiven) {
+        check(principal);
+        List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
+        tools.addAll(alsoGiven);
+        tools.add(ChatTools.askPerson(runtime, session));
+        return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
+                .name(definition.id())
+                .toolGate(gate(session.approver()));
+    }
+
+    private void check(Principal principal) {
         if (unavailable.isPresent()) {
             throw new ChatUnavailable(definition.name() + " is unavailable. " + unavailable.get());
         }
         if (!admits(principal)) {
             throw new ChatUnavailable(definition.name() + " is not available to you.");
         }
-        List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
-        tools.addAll(alsoGiven);
-        tools.add(ChatTools.askPerson(runtime, session));
-        return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
-                .name(definition.id())
-                .toolGate(gate(session.approver()))
-                .build();
     }
 
     /**
@@ -396,13 +434,25 @@ public final class HostedAgent {
         Objects.requireNonNull(principals, "principals");
         Objects.requireNonNull(clock, "clock");
         Objects.requireNonNull(runtime, "runtime");
-        return session -> {
-            if (llm.isEmpty()) {
-                throw new ChatUnavailable("No model is configured for " + definition.name() + ".");
+        return new ChatRuntime.Agents() {
+            @Override
+            public Agent agentFor(ChatRuntime.Session session) {
+                return turn(session, llm(), principal(session), clock.get(), runtime.get());
             }
-            Principal principal = principals.apply(session.tenantId())
-                    .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
-            return turn(session, llm.get(), principal, clock.get(), runtime.get());
+
+            @Override
+            public ChatRuntime.Runner runnerFor(ChatRuntime.Session session) {
+                return runner(session, llm(), principal(session), clock.get(), runtime.get(), List.of());
+            }
+
+            private LlmClient llm() {
+                return llm.orElseThrow(() -> new ChatUnavailable("No model is configured for " + definition.name() + "."));
+            }
+
+            private Principal principal(ChatRuntime.Session session) {
+                return principals.apply(session.tenantId())
+                        .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
+            }
         };
     }
 }

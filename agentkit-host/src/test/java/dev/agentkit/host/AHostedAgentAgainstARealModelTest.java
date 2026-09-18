@@ -52,12 +52,82 @@ class AHostedAgentAgainstARealModelTest {
         LlmClient llm = OpenRouterLlmClient.builder(key).title("agentkit host live test").build();
 
         helpdesk = new HelpdeskConnector();
-        host = AgentHost.open(RepoFixture.copyInto(dir).root(), "live", AgentHost.Options.hosted(Secrets.of(Map.of(
+        RepoFixture repo = RepoFixture.copyInto(dir)
+                .write("agents/replacement/agent.yaml", """
+                        name: Laptop Replacement
+                        description: Sorts out a lost or stolen laptop end to end.
+                        pattern: plan-execute
+                        prompt: {planner: planner.md, executor: executor.md, policy: policy.md}
+                        tools: [{connector: helpdesk, effects: [read, request, notify, grant]}]
+                        confirm: [helpdesk/reset_mfa]
+                        bind:
+                          helpdesk/open_ticket: {requester: principal.email}
+                          helpdesk/reset_mfa: {email: principal.email}
+                        """)
+                .write("agents/replacement/planner.md", "You plan what IT must do for the person asking, following the "
+                        + "policy. Resolve every condition in the policy against what the person said now, and output "
+                        + "only the actions that apply, as a flat numbered list, one action per line, and nothing else. "
+                        + "Name the exact values each step uses, such as the manager's email.")
+                .write("agents/replacement/executor.md", "You carry out exactly one step of an IT plan with your tools, "
+                        + "then reply with one sentence saying what you did, including any ticket number.")
+                .write("agents/replacement/policy.md", """
+                        Lost or stolen laptop policy:
+                        - Open an IT ticket for a replacement laptop, summarizing what happened.
+                        - If the device they used for MFA was lost or stolen too, reset their MFA.
+                        - Finally, message their manager what was done, with the ticket number.""");
+        host = AgentHost.open(repo.root(), "live", AgentHost.Options.hosted(Secrets.of(Map.of(
                 "HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN))));
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
         runtime = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(), host.agent("helpdesk").orElseThrow()
                 .chatAgents(Optional.of(llm), host::principal, Instant::now, self::get));
         self.set(runtime);
+        this.llm = llm;
+    }
+
+    private LlmClient llm;
+
+    @Test
+    void aPlanAndExecuteAgentSortsOutAStolenLaptopStepByStep() {
+        runtime.close();
+        AtomicReference<ChatRuntime> self = new AtomicReference<>();
+        runtime = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(), host.agent("replacement").orElseThrow()
+                .chatAgents(Optional.of(llm), host::principal, Instant::now, self::get));
+        self.set(runtime);
+        String priya = HelpdeskConnector.PRIYA;
+        Conversation conversation = runtime.store().create(priya, "stolen");
+        Turn started = runtime.say(priya, conversation.id(), "My laptop and my phone were stolen from my car last "
+                + "night. I have a new phone already. Please sort out whatever IT needs to.", List.of());
+
+        Turn done = awaitApproving(priya, conversation.id(), started.id(), "reset_mfa");
+        System.out.println("[live] plan: " + done.views());
+        System.out.println("[live] " + done.state() + ":\n" + done.answer());
+
+        assertThat(done.state()).isEqualTo(Turn.State.COMPLETED);
+        assertThat(helpdesk.calls("open_ticket")).singleElement().satisfies(call ->
+                assertThat(call.arguments()).containsEntry("requester", priya));
+        assertThat(helpdesk.calls("reset_mfa")).singleElement().satisfies(call ->
+                assertThat(call.arguments()).containsEntry("email", priya));
+        assertThat(helpdesk.calls("send_message")).anySatisfy(call ->
+                assertThat(call.arguments()).containsEntry("to_email", HelpdeskConnector.DANA));
+        assertThat(helpdesk.calls("delete_account")).isEmpty();
+    }
+
+    /** Waits for the turn, approving confirmations of {@code approved} as the person would, and refusing others. */
+    private Turn awaitApproving(String tenant, String conversationId, String turnId, String approved) {
+        long deadline = System.nanoTime() + Duration.ofMinutes(5).toNanos();
+        while (System.nanoTime() < deadline) {
+            for (ChatRuntime.PendingDecision pending : runtime.pending(tenant)) {
+                boolean yes = approved.equals(pending.tool());
+                System.out.println("[live] " + (yes ? "approving " : "refusing ") + pending.tool() + " " + pending.arguments());
+                runtime.decide(tenant, pending.id(), yes ? ApprovalDecision.approve() : ApprovalDecision.deny("No."), tenant);
+            }
+            Optional<Turn> turn = runtime.store().turn(tenant, conversationId, turnId);
+            if (turn.isPresent() && turn.get().state().isTerminal()) {
+                return turn.get();
+            }
+            pause();
+        }
+        throw new AssertionError("The turn did not finish");
     }
 
     @AfterEach

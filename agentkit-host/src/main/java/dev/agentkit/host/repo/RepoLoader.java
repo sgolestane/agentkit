@@ -58,6 +58,7 @@ public final class RepoLoader {
     private static final Set<String> DEFERRED_KEYS = Set.of("prompt", "actor", "subjects");
     private static final Set<String> SUBJECT_KEYS = Set.of("tool", "argument");
     private static final Set<String> PROMPT_KEYS = Set.of("system", "policy");
+    private static final Set<String> PLAN_EXECUTE_PROMPT_KEYS = Set.of("planner", "executor", "policy");
     private static final Set<String> SELECTOR_KEYS = Set.of("connector", "effects", "tools");
     private static final Set<String> LIMIT_KEYS = Set.of("maxSteps", "maxTokens");
 
@@ -231,7 +232,7 @@ public final class RepoLoader {
             try {
                 pattern = AgentDefinition.Pattern.valueOf(patternText.strip().toUpperCase(Locale.ROOT).replace('-', '_'));
             } catch (IllegalArgumentException e) {
-                problem(file, "pattern", "unknown pattern \"" + patternText + "\"; the patterns are: chat");
+                problem(file, "pattern", "unknown pattern \"" + patternText + "\"; the patterns are: chat, plan-execute");
             }
         }
 
@@ -243,10 +244,19 @@ public final class RepoLoader {
         }
 
         String system = null;
+        String planner = null;
         String policy = "";
+        boolean planned = pattern == AgentDefinition.Pattern.PLAN_EXECUTE;
         JsonNode prompt = node.get("prompt");
         if (prompt == null || !prompt.isObject()) {
-            problem(file, "prompt", "is required: a mapping with system, and optionally policy");
+            problem(file, "prompt", planned ? "is required: a mapping with planner and executor, and optionally policy"
+                    : "is required: a mapping with system, and optionally policy");
+        } else if (planned) {
+            unknownKeys(file, "prompt.", prompt, PLAN_EXECUTE_PROMPT_KEYS);
+            planner = promptFile(file, "prompt.planner", dir, prompt.get("planner"), true);
+            system = promptFile(file, "prompt.executor", dir, prompt.get("executor"), true);
+            String policyText = promptFile(file, "prompt.policy", dir, prompt.get("policy"), false);
+            policy = policyText == null ? "" : policyText;
         } else {
             unknownKeys(file, "prompt.", prompt, PROMPT_KEYS);
             system = promptFile(file, "prompt.system", dir, prompt.get("system"), true);
@@ -329,7 +339,7 @@ public final class RepoLoader {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred, direct));
+                confirm, bind, maxSteps, maxTokens, deferred, direct, planner));
     }
 
     private AgentDefinition.Deferred deferred(String file, Path dir, JsonNode node, Set<String> connectors) {

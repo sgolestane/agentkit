@@ -66,7 +66,7 @@ tools:                      # declare tools a server does not describe itself
 ```yaml
 name: IT Helpdesk
 description: Opens IT tickets and resets MFA for the person asking.
-pattern: chat                       # the only pattern so far
+pattern: chat                       # or plan-execute (below)
 model: anthropic/claude-sonnet-5    # optional
 audience: [everyone]                # or group names from the directory
 
@@ -113,6 +113,29 @@ every turn.
   scheduled it.
 - The subject record a connector returns is described in
   [`docs/MCP-CONNECTORS.md`](../docs/MCP-CONNECTORS.md).
+
+### Plan-and-execute agents
+
+An agent with `pattern: plan-execute` makes a plan once, then carries it out a step at a time.
+It suits work with many steps, where the policy's conditions are best settled before anything is
+done, such as onboarding someone.
+
+```yaml
+pattern: plan-execute
+prompt:
+  planner: planner.md      # the plan is made with this, the policy, who is asking and the time
+  executor: executor.md    # each step runs with this, who is asking and the time
+  policy: policy.md
+```
+
+- **Making the plan.** The planner sees the request, the policy, the person's record and the
+  names of the agent's tools. It answers with a numbered list of steps.
+- **Carrying it out.** Each step runs on a fresh agent with the agent's tools, bindings and
+  confirmations, exactly as in a chat turn.
+- **What the person sees.** The plan appears as soon as it is made, and each step is announced as
+  it starts, with its tool calls in the trace. The answer lists every step and what came of it,
+  and says where the plan stopped if a step did not finish.
+- **Limits.** A plan longer than 20 steps is refused before anything runs.
 
 ## Validation
 
