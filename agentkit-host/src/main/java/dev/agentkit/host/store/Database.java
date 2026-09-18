@@ -139,6 +139,21 @@ public final class Database implements AutoCloseable {
             alter table chat_turn add column state text;
             update chat_turn set state = turn->>'state';
             create index chat_turn_live on chat_turn (runner) where state in ('QUEUED', 'RUNNING');
+            """, """
+            create table plan_run (
+                id            bigserial primary key,
+                org_id        text not null,
+                agent_id      text not null,
+                agent_version text not null,
+                shape_digest  text not null,
+                shape         text not null,
+                steps         json not null,
+                task_values   json not null,
+                reused        boolean not null,
+                clean         boolean not null,
+                at            timestamptz not null
+            );
+            create index plan_run_by_shape on plan_run (org_id, agent_id, agent_version, shape_digest, id desc);
             """);
 
     private final HikariDataSource pool;

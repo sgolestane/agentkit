@@ -28,12 +28,14 @@ import dev.agentkit.host.change.Proposals;
 import dev.agentkit.host.models.HostLimits;
 import dev.agentkit.host.models.ModelAccounts;
 import dev.agentkit.host.models.UsageLedger;
+import dev.agentkit.host.plans.PlanBook;
 import dev.agentkit.host.repo.DefinitionException;
 import dev.agentkit.host.repo.OrgRepo;
 import dev.agentkit.host.store.Database;
 import dev.agentkit.host.store.Instances;
 import dev.agentkit.host.store.PostgresChatStore;
 import dev.agentkit.host.store.PostgresDeferredActionStore;
+import dev.agentkit.host.store.PostgresPlanBook;
 import dev.agentkit.host.store.PostgresRehearsalLog;
 import dev.agentkit.host.store.PostgresSessionStore;
 import dev.agentkit.host.store.PostgresUsageLedger;
@@ -171,7 +173,8 @@ public final class AgentHostApp {
             deferred.put(name, work);
         });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
-        HostChat chat = new HostChat(orgs, deferred, models, Instant::now, self::get);
+        HostChat chat = new HostChat(orgs, deferred, models,
+                database.<PlanBook>map(PostgresPlanBook::new).orElseGet(PlanBook::inMemory), Instant::now, self::get);
         // With a database, several instances may share it: each notes the turns it runs, says it is running, and ends
         // the turns an instance that stopped left behind.
         Optional<Instances> instances = database.map(db -> new Instances(db, Instant::now));
@@ -202,7 +205,7 @@ public final class AgentHostApp {
                         .map(token -> new GitHubProposer(spec, token))),
                 name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal).signedBy(signer));
         AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
-                Instant::now, proposals, models);
+                Instant::now, proposals, models, chat.plans());
         server.mount("/host/admin", admin.admin());
         server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,

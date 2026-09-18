@@ -285,6 +285,14 @@ export interface AdminAgent {
   deferred?: { actor: string; subjects: Record<string, string> }
   mcpDirect: string[]
   evals: AdminEvalCase[]
+  /** For a plan-execute agent started from its form: when a settled plan is reused, and for which tasks. */
+  planReuse?: {
+    after: number
+    recheckEvery: number
+    sameWhen: string[]
+    /** Each kind of task planned at this version: what makes it that kind, its runs, and its plan if settled. */
+    kinds: { task: string[]; runs: number; settled?: string[] }[]
+  }
 }
 
 /** What some model calls spent: how many, their tokens, and their estimated cost in US dollars. */

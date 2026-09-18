@@ -40,6 +40,14 @@ deferred:
   subjects:
     worker: {tool: onboarding/hris_get_worker, argument: employee_id}
 
+# Once the last three plans for hires alike — same department, employment, rehire, where they
+# work, AWS request and office, and the same fields on file — agree, the next such hire is
+# carried out on that plan, with its own name, email, dates and address, without asking the model
+# to plan. Every step still runs, and every grant still waits for the manager. One in ten is
+# planned afresh.
+plans:
+  reuse: {after: 3, recheckEvery: 10, sameWhen: [office]}
+
 limits:
   maxSteps: 12
   maxTokens: 4096

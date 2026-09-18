@@ -275,6 +275,41 @@ function AgentDetail({
         </section>
       ) : null}
 
+      {agent.planReuse ? (
+        <section aria-label="Plan reuse">
+          <h3 className="mb-1 text-sm font-semibold">Plan reuse</h3>
+          <p className="text-sm">
+            Once the last {agent.planReuse.after} plans for tasks alike agree, the next is carried out on that plan
+            without asking the model to plan; one in {agent.planReuse.recheckEvery} is planned afresh. Tasks are alike
+            when their choices{agent.planReuse.sameWhen.length > 0 ? `, ${agent.planReuse.sameWhen.join(', ')}` : ''}{' '}
+            and the fields filled in match.
+          </p>
+          {agent.planReuse.kinds.length === 0 ? (
+            <p className="mt-1 text-xs text-muted">Nothing planned at this version yet.</p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {agent.planReuse.kinds.map((kind) => (
+                <li key={kind.task.join('|')} className="rounded-lg border border-line bg-panel p-3 text-xs"
+                  data-testid="plan-kind">
+                  <p className="text-muted">{kind.task.join(' · ')}</p>
+                  <p className="mt-1">
+                    {kind.runs} run{kind.runs === 1 ? '' : 's'}
+                    {kind.settled ? <Badge tone="good">settled</Badge> : <Badge tone="muted">still planned</Badge>}
+                  </p>
+                  {kind.settled ? (
+                    <ol className="mt-1 list-decimal pl-5">
+                      {kind.settled.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ol>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
       {agent.mcpDirect.length > 0 ? (
         <p className="text-sm">
           Offered directly over MCP: {agent.mcpDirect.map((tool) => <code key={tool}>{tool} </code>)}

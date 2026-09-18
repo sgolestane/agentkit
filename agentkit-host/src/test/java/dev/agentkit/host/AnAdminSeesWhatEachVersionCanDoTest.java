@@ -65,7 +65,7 @@ class AnAdminSeesWhatEachVersionCanDoTest {
                 () -> Instant.parse("2026-09-18T20:00:00Z"),
                 new dev.agentkit.host.change.Proposals(o -> Optional.empty(), name -> AgentHost.Options.hosted(
                         Secrets.of(Map.of("HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN)))),
-                models);
+                models, null);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/host/admin", admin.admin());
         server.createContext("/host/rehearsals/", admin.reports());

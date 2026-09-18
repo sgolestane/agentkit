@@ -143,6 +143,7 @@ public final class HostMcp {
         } catch (ChatUnavailable refused) {
             return ToolResult.error(refused.getMessage());
         }
+        chat.formSent(tenant.id(), request, input);
         return ask(tenant, agent.definition().id(), request);
     }
 

@@ -51,7 +51,7 @@ class ValidateTest {
         assertThat(out.text()).contains("2 problems:")
                 .contains("agents/helpdesk/agent.yaml confrim: is not a field here")
                 .contains("::error file=orgs/acme/agents/helpdesk/agent.yaml,title=confrim::is not a field here; the fields "
-                        + "are [audience, bind, confirm, deferred, description, input, limits, mcp, model, name, pattern, prompt, tools]")
+                        + "are [audience, bind, confirm, deferred, description, input, limits, mcp, model, name, pattern, plans, prompt, tools]")
                 .contains("::error file=orgs/acme/agents/helpdesk/agent.yaml,title=tools[0].effects::unknown effect "
                         + "\"delete\"");
     }

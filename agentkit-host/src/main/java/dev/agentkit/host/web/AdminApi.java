@@ -14,6 +14,8 @@ import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.Tenant;
 import dev.agentkit.host.change.Proposals;
 import dev.agentkit.host.models.ModelAccounts;
+import dev.agentkit.host.plans.PlanBook;
+import dev.agentkit.host.plans.PlanReuse;
 import dev.agentkit.host.repo.AgentDefinition;
 import dev.agentkit.host.repo.EvalCase;
 import java.io.IOException;
@@ -66,6 +68,7 @@ public final class AdminApi {
     private final Supplier<Instant> clock;
     private final Proposals proposals;
     private final Optional<ModelAccounts> models;
+    private final Optional<PlanReuse> plans;
 
     /**
      * @param reportToken the token a rehearsal report for an organization must carry; empty when it takes none
@@ -74,14 +77,18 @@ public final class AdminApi {
     public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
                     RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
                     Proposals proposals) {
-        this(orgs, deferred, tenants, rehearsals, reportToken, clock, proposals, null);
+        this(orgs, deferred, tenants, rehearsals, reportToken, clock, proposals, null, null);
     }
 
-    /** @param models each organization's model account, whose use the admin view shows; null when none is kept */
+    /**
+     * @param models each organization's model account, whose use the admin view shows; null when none is kept
+     * @param plans  the plans plan-execute agents carried out from their forms, and which have settled; null for none
+     */
     public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
                     RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
-                    Proposals proposals, ModelAccounts models) {
+                    Proposals proposals, ModelAccounts models, PlanReuse plans) {
         this.models = Optional.ofNullable(models);
+        this.plans = Optional.ofNullable(plans);
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
         this.tenants = Objects.requireNonNull(tenants, "tenants");
@@ -133,7 +140,7 @@ public final class AdminApi {
                     if (agent.isEmpty()) {
                         send(exchange, 404, Map.of("error", "There is no agent " + id + " at " + version + "."));
                     } else {
-                        send(exchange, 200, agent(agent.get(), version));
+                        send(exchange, 200, agent(org.org(), agent.get(), version));
                     }
                 } else if (path.equals("/deferred")) {
                     send(exchange, 200, deferred(org));
@@ -307,7 +314,7 @@ public final class AdminApi {
         return view;
     }
 
-    private Map<String, Object> agent(HostedAgent agent, String version) {
+    private Map<String, Object> agent(String org, HostedAgent agent, String version) {
         AgentDefinition definition = agent.definition();
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", definition.id());
@@ -361,6 +368,31 @@ public final class AdminApi {
         }
         view.put("mcpDirect", definition.mcpDirect().stream().map(Object::toString).toList());
         view.put("evals", definition.evals().stream().map(AdminApi::evalCase).toList());
+        if (definition.planReuse() != null) {
+            view.put("planReuse", planReuse(org, definition, version));
+        }
+        return view;
+    }
+
+    /** When the agent reuses a plan, and for which kinds of task it has, at this version. */
+    private Map<String, Object> planReuse(String org, AgentDefinition definition, String version) {
+        AgentDefinition.PlanReuse rules = definition.planReuse();
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("after", rules.after());
+        view.put("recheckEvery", rules.recheckEvery());
+        view.put("sameWhen", rules.sameWhen());
+        List<Map<String, Object>> kinds = new ArrayList<>();
+        plans.ifPresent(reuse -> {
+            PlanBook.Agent where = new PlanBook.Agent(org, definition.id(), version);
+            for (String shape : reuse.book().shapes(where).stream().limit(20).toList()) {
+                Map<String, Object> kind = new LinkedHashMap<>();
+                kind.put("task", shape.lines().skip(1).toList());
+                kind.put("runs", reuse.book().count(where, shape));
+                reuse.settled(where, rules, shape).ifPresent(settled -> kind.put("settled", settled.steps()));
+                kinds.add(kind);
+            }
+        });
+        view.put("kinds", kinds);
         return view;
     }
 

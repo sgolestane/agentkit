@@ -44,6 +44,14 @@ const onboarding: AdminAgent = {
   mcpDirect: [],
   evals: [{ name: 'contractor', as: 'lena.ortiz@acme.example', input: { employee_id: 'W-1002' }, answers: [],
     expect: ['calls okta_create_user with {groups=[sales, contractors]}'] }],
+  planReuse: {
+    after: 3, recheckEvery: 10, sameWhen: [],
+    kinds: [
+      { task: ['department=Sales', 'employment_type=contractor', 'termination_date given'], runs: 4,
+        settled: ['Okta: create an account for {{input.work_email}} with groups sales and contractors.'] },
+      { task: ['department=Engineering', 'employment_type=full-time'], runs: 1 },
+    ],
+  },
 }
 
 const report: RehearsalReport = {
@@ -92,6 +100,11 @@ describe('The admin view', () => {
     expect(within(can).getByText('refused in a rehearsal')).toBeInTheDocument()
     expect(within(agent).getByText(/Runs as/)).toHaveTextContent('worker (looked up with onboarding/hris_get_worker(employee_id))')
     expect(within(agent).getByText('calls okta_create_user with {groups=[sales, contractors]}')).toBeInTheDocument()
+    const kinds = within(agent).getAllByTestId('plan-kind')
+    expect(kinds[0]).toHaveTextContent('department=Sales · employment_type=contractor · termination_date given')
+    expect(kinds[0]).toHaveTextContent('4 runssettled')
+    expect(kinds[0]).toHaveTextContent('Okta: create an account for {{input.work_email}}')
+    expect(kinds[1]).toHaveTextContent('1 runstill planned')
   })
 
   it('shows what each pull request’s rehearsal held, and what an agent would have done', async () => {

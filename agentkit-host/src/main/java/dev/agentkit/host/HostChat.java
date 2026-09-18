@@ -7,6 +7,9 @@ import dev.agentkit.chat.web.ChatServer;
 import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.host.models.ModelAccounts;
+import dev.agentkit.host.plans.PlanBook;
+import dev.agentkit.host.plans.PlanReuse;
+import dev.agentkit.host.plans.PlanTask;
 import dev.agentkit.host.repo.OrgRepo;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -30,7 +33,16 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     private final Map<String, OrgHost> orgs;
     private final Map<String, DeferredWork> deferred;
     private final ModelAccounts models;
+    private final PlanReuse plans;
     private final Supplier<Instant> clock;
+    /** The input of each form sent lately, by tenant and the request it made, until its turn runs. */
+    private final Map<String, Map<String, Object>> forms = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Map<String, Object>> eldest) {
+                    return size() > 1_000;
+                }
+            });
     private final Supplier<ChatRuntime> runtime;
 
     /**
@@ -52,6 +64,13 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     /** @param models each organization's model account: whose, how many calls at once, and its budgets */
     public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ModelAccounts models,
                     Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
+        this(orgs, deferred, models, PlanBook.inMemory(), clock, runtime);
+    }
+
+    /** @param plans the plans plan-execute agents carried out from their forms, which settled ones are reused from */
+    public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ModelAccounts models,
+                    PlanBook plans, Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
+        this.plans = new PlanReuse(plans);
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
         this.models = Objects.requireNonNull(models, "models");
@@ -104,7 +123,19 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         HostedAgent agent = pinned(tenant, conversation);
         Principal principal = principal(tenantId).map(Found::principal)
                 .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
-        return request(agent, input, principal);
+        String request = request(agent, input, principal);
+        formSent(tenantId, request, input);
+        return request;
+    }
+
+    /** That {@code tenantId} sent {@code input} as a form, which made {@code request}: its turn is that task. */
+    void formSent(String tenantId, String request, Map<String, Object> input) {
+        forms.put(tenantId + '\n' + request, Map.copyOf(input));
+    }
+
+    /** The plans plan-execute agents carried out from their forms. */
+    public PlanReuse plans() {
+        return plans;
     }
 
     /** {@code input} as {@code agent}'s request from {@code principal}, or every reason it is not one. */
@@ -132,11 +163,19 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     @Override
     public ChatRuntime.Runner runnerFor(ChatRuntime.Session session) {
         Turn turn = turnFor(session);
-        return turn.agent().runner(session, turn.llm(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
+        Optional<PlanExecuteTurn.FormTask> form = Optional.ofNullable(
+                        forms.remove(session.tenantId() + '\n' + session.userText()))
+                .filter(input -> turn.agent().definition().planReuse() != null)
+                .map(input -> new PlanExecuteTurn.FormTask(plans, new PlanBook.Agent(Tenant.parse(session.tenantId())
+                        .orElseThrow().org(), turn.agent().definition().id(), turn.version()),
+                        PlanTask.of(turn.agent().definition(), turn.version(), input, turn.principal()::value),
+                        session.userText()));
+        return turn.agent().runner(session, turn.llm(), turn.principal(), clock.get(), runtime.get(), turn.scheduler(),
+                form);
     }
 
     private record Turn(HostedAgent agent, Principal principal, List<dev.agentkit.core.tool.Tool> scheduler,
-                        LlmClient llm) {
+                        LlmClient llm, String version) {
     }
 
     private Turn turnFor(ChatRuntime.Session session) {
@@ -161,7 +200,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             throw new ChatUnavailable(why);
         });
         return new Turn(agent, principal, scheduler,
-                models.client(account, agent.definition().id(), ModelAccounts.Purpose.TURN));
+                models.client(account, agent.definition().id(), ModelAccounts.Purpose.TURN), conversation.agent().version());
     }
 
     /** The agent, at the version, a conversation is pinned to — or a sentence saying why there is none. */

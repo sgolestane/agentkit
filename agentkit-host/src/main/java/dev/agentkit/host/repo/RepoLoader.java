@@ -61,7 +61,9 @@ public final class RepoLoader {
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
     private static final Set<String> AGENT_KEYS = Set.of("name", "description", "pattern", "model", "audience",
-            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp", "input");
+            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp", "input", "plans");
+    private static final Set<String> PLANS_KEYS = Set.of("reuse");
+    private static final Set<String> REUSE_KEYS = Set.of("after", "recheckEvery", "sameWhen");
     private static final Set<String> INPUT_KEYS = Set.of("schema", "goal");
     private static final Set<String> MCP_KEYS = Set.of("direct");
     private static final Set<String> DEFERRED_KEYS = Set.of("prompt", "actor", "subjects");
@@ -423,11 +425,51 @@ public final class RepoLoader {
 
         List<EvalCase> evals = evals("agents/" + id + "/evals.yaml", input);
 
+        AgentDefinition.PlanReuse planReuse = null;
+        JsonNode plans = node.get("plans");
+        if (plans != null) {
+            planReuse = planReuse(file, plans, pattern, input);
+        }
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input, evals));
+                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input, evals, planReuse));
+    }
+
+    /** {@code plans: {reuse: {after, recheckEvery, sameWhen}}}: for a plan-execute agent started from its form. */
+    private AgentDefinition.PlanReuse planReuse(String file, JsonNode plans, AgentDefinition.Pattern pattern,
+                                                TaskInput input) {
+        if (!plans.isObject() || !plans.path("reuse").isObject()) {
+            problem(file, "plans", "must be a mapping with reuse: {after, recheckEvery, sameWhen}");
+            return null;
+        }
+        unknownKeys(file, "plans.", plans, PLANS_KEYS);
+        JsonNode reuse = plans.get("reuse");
+        unknownKeys(file, "plans.reuse.", reuse, REUSE_KEYS);
+        if (pattern != AgentDefinition.Pattern.PLAN_EXECUTE) {
+            problem(file, "plans.reuse", "is for a plan-execute agent: only it makes a plan to reuse");
+        }
+        if (input == null) {
+            problem(file, "plans.reuse", "needs input: a plan is reused for a task started from the agent's form, "
+                    + "whose fields say which tasks are alike");
+        }
+        int after = positive(file, "plans.reuse.after", reuse.get("after"), 3);
+        if (after < 2 || after > 10) {
+            problem(file, "plans.reuse.after", "is from 2 to 10: one plan is an anecdote");
+        }
+        int recheckEvery = positive(file, "plans.reuse.recheckEvery", reuse.get("recheckEvery"), 10);
+        List<String> sameWhen = strings(file, "plans.reuse.sameWhen", reuse.get("sameWhen"));
+        if (input != null) {
+            Set<String> fields = new java.util.HashSet<>(input.fields().stream().map(TaskInput.Field::name).toList());
+            for (String field : sameWhen) {
+                if (!fields.contains(field)) {
+                    problem(file, "plans.reuse.sameWhen", field + " is not a field of the agent's input");
+                }
+            }
+        }
+        return new AgentDefinition.PlanReuse(after, recheckEvery, sameWhen);
     }
 
     /**

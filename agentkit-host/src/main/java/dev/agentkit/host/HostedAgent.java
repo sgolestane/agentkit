@@ -507,10 +507,21 @@ public final class HostedAgent {
      */
     public ChatRuntime.Runner runner(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
                                      ChatRuntime runtime, List<Tool> alsoGiven) {
+        return runner(session, llm, principal, now, runtime, alsoGiven, Optional.empty());
+    }
+
+    /**
+     * As {@link #runner(ChatRuntime.Session, LlmClient, Principal, Instant, ChatRuntime, List)}, for a turn that may
+     * be the task {@code form} was filled in for: a plan-execute agent with {@code plans.reuse} keeps its plan, and
+     * reuses a settled one.
+     */
+    ChatRuntime.Runner runner(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
+                              ChatRuntime runtime, List<Tool> alsoGiven, Optional<PlanExecuteTurn.FormTask> form) {
         if (definition.pattern() == AgentDefinition.Pattern.PLAN_EXECUTE) {
             check(principal);
             return new PlanExecuteTurn(this, llm, principal, now,
-                    () -> builder(session, llm, principal, now, runtime, alsoGiven).streaming(false).build(), session);
+                    () -> builder(session, llm, principal, now, runtime, alsoGiven).streaming(false).build(), session,
+                    definition.planReuse() == null ? Optional.empty() : form);
         }
         return turn(session, llm, principal, now, runtime, alsoGiven)::run;
     }

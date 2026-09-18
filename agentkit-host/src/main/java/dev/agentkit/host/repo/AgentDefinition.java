@@ -32,15 +32,34 @@ import java.util.Set;
  * @param input        the fields a person fills in to start it, and how they become its request; null when it takes
  *                     only what is said to it
  * @param evals        the cases a pull request rehearses, from {@code evals.yaml}; empty when there is none
+ * @param planReuse    for a {@link Pattern#PLAN_EXECUTE} agent started from its form, when a settled plan is reused
+ *                     rather than made again; null when every plan is made by the model
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
                               int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt,
-                              TaskInput input, List<EvalCase> evals) {
+                              TaskInput input, List<EvalCase> evals, PlanReuse planReuse) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
+
+    /**
+     * When a plan-execute agent started from its form reuses a plan instead of asking the model for one: once the last
+     * {@code after} plans made for the same kind of task agreed, word for word once the task's own values are taken
+     * out. One run in {@code recheckEvery} is planned by the model all the same, so a plan that stopped being right is
+     * found out.
+     *
+     * @param after        plans in a row that must agree, from 2
+     * @param recheckEvery one run in this many is planned afresh; 1 plans every run (and only records)
+     * @param sameWhen     free-text fields of the form that decide the plan, beside its choices and yes/no fields,
+     *                     which always do
+     */
+    public record PlanReuse(int after, int recheckEvery, List<String> sameWhen) {
+        public PlanReuse {
+            sameWhen = List.copyOf(sameWhen);
+        }
+    }
 
     /** How a turn runs. */
     public enum Pattern {

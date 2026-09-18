@@ -103,6 +103,7 @@ bind:                               # hidden from the model, filled from the per
   ledger/*: {acting_as: principal.email}
 
 limits: {maxSteps: 12, maxTokens: 1024}
+plans: {reuse: {after: 3}}          # optional, plan-execute with a form: reuse a settled plan
 
 input:                              # optional: the form that starts its task
   schema: input.yaml                # a flat JSON Schema: string (enum, date, email), integer, number, boolean
@@ -168,6 +169,54 @@ prompt:
   it starts, with its tool calls in the trace. The answer lists every step and what came of it,
   and says where the plan stopped if a step did not finish.
 - **Limits.** A plan longer than 20 steps is refused before anything runs.
+
+#### Reusing a settled plan
+
+A plan-and-execute agent started from its form can skip the planning call for tasks it has
+already planned the same way several times:
+
+```yaml
+plans:
+  reuse:
+    after: 3              # plans in a row that must agree (2 to 10)
+    recheckEvery: 10      # one run in this many is planned afresh anyway
+    sameWhen: [office]    # optional: free-text fields that decide the plan
+```
+
+- **Which tasks are alike.** Tasks are alike when these all match:
+  - the agent's version;
+  - every field of the form that is a choice or a yes/no, and every field `sameWhen` names;
+  - which of the other fields are filled in;
+  - which values happen to be equal.
+
+  For onboarding, two on-site Sales contractors with an end date are alike, and a remote engineer
+  is a different kind of task.
+- **Keeping a plan.** Every plan carried out is kept with the task's values taken out. These are
+  the other fields, and the person's name and email. So "Create an Okta account for
+  marcus.bell@acme.example" is kept as "Create an Okta account for {{input.work_email}}".
+- **Worded alike.** A model rarely words the same plan the same way twice, so the planner is
+  shown the last plan carried out for a task like this one, filled in with this task's values.
+  It's asked to write the same plan word for word if the same actions apply, and to change only
+  what this task needs. The model still makes every plan until one settles.
+- **When it settles.** A plan settles when all of these hold:
+  - the last `after` plans the model made for that kind of task agree word for word;
+  - each of them was carried out with every step completed;
+  - every value the plan puts back was seen to differ across them. This shows the plan holds
+    for other values, not just that it met the same one each time.
+
+  A plan that was reused and didn't complete unsettles it. So does a person turning down a step,
+  and so does the model planning differently when it is asked again.
+- **Reusing it.** The next task of that kind is carried out on the settled plan, with its own
+  values put back and no planning call. Each step still runs on the model as the person, and each
+  confirmation is still asked. The plan tells the person it was reused. A plan that names a value
+  this task doesn't have is not reused.
+- **What it saves.** The planning call only. The steps are where most of a task's tokens go,
+  and they still run on the model.
+- **Scope.** Plans are kept per organization, agent and version, so a merge starts over. They are
+  kept in Postgres (`plan_run`), shared by every instance, or in memory without a database. A task
+  started from the form, over MCP or in the console, is the only kind that counts: anything else
+  said with it makes a turn a new request. Rehearsals always plan afresh. The admin view shows
+  each kind of task, its runs, and its settled plan.
 
 ## Validation
 
