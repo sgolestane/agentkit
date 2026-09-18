@@ -38,12 +38,42 @@ public final class OrgConnectors implements AutoCloseable {
     private final Map<String, ConnectorSpec> specs;
     private final Map<String, McpConnectors.Connected> connected;
     private final Map<String, String> failed;
+    private final Optional<dev.agentkit.host.auth.CallerSigner> signer;
 
     private OrgConnectors(Map<String, ConnectorSpec> specs, Map<String, McpConnectors.Connected> connected,
-                          Map<String, String> failed) {
+                          Map<String, String> failed, Optional<dev.agentkit.host.auth.CallerSigner> signer) {
         this.specs = Map.copyOf(specs);
         this.connected = Map.copyOf(connected);
         this.failed = Map.copyOf(failed);
+        this.signer = signer;
+    }
+
+    /**
+     * What a call to {@code connector} for {@code caller} carries in its {@code _meta}: the caller assertion, signed
+     * now, for that connector; empty when the host signs none.
+     */
+    public Map<String, Object> meta(String connector, dev.agentkit.host.auth.CallerSigner.Caller caller) {
+        return signer.<Map<String, Object>>map(s -> Map.of(dev.agentkit.mcp.server.CallerAssertion.META_KEY,
+                s.sign(caller, connector))).orElse(Map.of());
+    }
+
+    /** {@code tool}, one of {@code connector}'s, its every call carrying an assertion for {@code caller}. */
+    public dev.agentkit.core.tool.Tool asserted(String connector, dev.agentkit.core.tool.Tool tool,
+                                              dev.agentkit.host.auth.CallerSigner.Caller caller) {
+        if (signer.isEmpty()) {
+            return tool;
+        }
+        return new dev.agentkit.core.tool.ForwardingTool() {
+            @Override
+            protected dev.agentkit.core.tool.Tool delegate() {
+                return tool;
+            }
+
+            @Override
+            public dev.agentkit.core.tool.ToolResult execute(dev.agentkit.core.tool.ToolInvocation invocation) {
+                return dev.agentkit.mcp.CallMeta.sending(meta(connector, caller), () -> tool.execute(invocation));
+            }
+        };
     }
 
     /**
@@ -54,6 +84,15 @@ public final class OrgConnectors implements AutoCloseable {
      */
     public static OrgConnectors connect(OrgRepo repo, Secrets secrets, Map<String, String> placeholders,
                                         boolean allowLocal) {
+        return connect(repo, secrets, placeholders, allowLocal, Optional.empty());
+    }
+
+    /**
+     * {@link #connect(OrgRepo, Secrets, Map, boolean)}, with every call to a connector carrying a caller assertion that
+     * {@code signer} signs.
+     */
+    public static OrgConnectors connect(OrgRepo repo, Secrets secrets, Map<String, String> placeholders,
+                                        boolean allowLocal, Optional<dev.agentkit.host.auth.CallerSigner> signer) {
         List<Problem> problems = new ArrayList<>();
         Map<String, Map<String, String>> resolved = new LinkedHashMap<>();
         for (ConnectorSpec spec : repo.connectors().values()) {
@@ -91,7 +130,7 @@ public final class OrgConnectors implements AutoCloseable {
                 failed.put(spec.name(), "The " + spec.name() + " connector could not be reached.");
             }
         }
-        return new OrgConnectors(repo.connectors(), connected, failed);
+        return new OrgConnectors(repo.connectors(), connected, failed, signer);
     }
 
     /** The connector's tools, each with its declaration; empty if it is not connected. */

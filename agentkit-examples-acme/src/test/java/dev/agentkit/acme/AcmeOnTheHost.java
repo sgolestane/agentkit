@@ -16,6 +16,8 @@ import dev.agentkit.host.HostChat;
 import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
+import dev.agentkit.host.auth.CallerSigner;
+import dev.agentkit.mcp.server.CallerAssertion;
 import dev.agentkit.mcp.InProcessMcpConnection;
 import dev.agentkit.onboarding.OnboardingConnector;
 import dev.agentkit.onboarding.OnboardingSystems;
@@ -38,6 +40,9 @@ import java.util.function.Supplier;
 public final class AcmeOnTheHost implements AutoCloseable {
 
     public static final Path ORG = Path.of("orgs", "acme");
+
+    /** The host's address, as its caller assertions name it. */
+    static final String ISSUER = "https://agents.acme.example";
 
     private final HttpConnector company;
     private final AccessLedgerConnector ledger;
@@ -65,15 +70,20 @@ public final class AcmeOnTheHost implements AutoCloseable {
                                       OnboardingSystems onboardingSystems, Function<String, DeferredActionStore> stores,
                                       Supplier<Instant> clock, LlmClient llm) {
         try {
+            // As deployed: the host signs who every call is from, and the ledger and the onboarding systems take who is
+            // calling only from that.
+            CallerSigner signer = CallerSigner.generate(ISSUER);
             HttpConnector company = HttpConnector.serve(0, "company-systems", "", "company-token",
                     companySystems.catalog());
             AccessLedgerConnector ledger = AccessLedgerConnector.serve(0, "ledger-token", accessLedger,
-                    new CompanyClient(new InProcessMcpConnection(companySystems.catalog())), clock, 3600);
-            HttpConnector onboarding = OnboardingConnector.serve(0, "onboarding-token", onboardingSystems);
+                    new CompanyClient(new InProcessMcpConnection(companySystems.catalog())), clock, 3600,
+                    Optional.of(CallerAssertion.fromKeys(signer.jwks(), ISSUER, "ledger", "acme")));
+            HttpConnector onboarding = OnboardingConnector.serve(0, "onboarding-token", onboardingSystems,
+                    Optional.of(CallerAssertion.fromKeys(signer.jwks(), ISSUER, "onboarding", "acme")));
             OrgHost org = OrgHost.open(ORG, AgentHost.Options.hosted(Secrets.of(Map.of(
                     "COMPANY_URL", company.url(), "COMPANY_TOKEN", "company-token",
                     "LEDGER_URL", ledger.url(), "LEDGER_TOKEN", "ledger-token",
-                    "ONBOARDING_URL", onboarding.url(), "ONBOARDING_TOKEN", "onboarding-token"))));
+                    "ONBOARDING_URL", onboarding.url(), "ONBOARDING_TOKEN", "onboarding-token"))).signedBy(signer));
             DeferredWork deferred = new DeferredWork(org, stores, clock, Optional.of(llm));
             AtomicReference<ChatRuntime> self = new AtomicReference<>();
             HostChat chat = new HostChat(Map.of("acme", org), Map.of("acme", deferred), Optional.of(llm), clock,

@@ -36,10 +36,21 @@ public final class AgentHost implements AutoCloseable {
     }
 
     /** How to open an organization. */
-    public record Options(Secrets secrets, Map<String, String> placeholders, boolean allowLocalConnectors) {
+    public record Options(Secrets secrets, Map<String, String> placeholders, boolean allowLocalConnectors,
+                          Optional<dev.agentkit.host.auth.CallerSigner> signer) {
         public Options {
             Objects.requireNonNull(secrets, "secrets");
             placeholders = Map.copyOf(placeholders);
+            signer = signer == null ? Optional.empty() : signer;
+        }
+
+        public Options(Secrets secrets, Map<String, String> placeholders, boolean allowLocalConnectors) {
+            this(secrets, placeholders, allowLocalConnectors, Optional.empty());
+        }
+
+        /** These options, with every connector call carrying a caller assertion {@code signer} signs. */
+        public Options signedBy(dev.agentkit.host.auth.CallerSigner signer) {
+            return new Options(secrets, placeholders, allowLocalConnectors, Optional.of(signer));
         }
 
         /** Remote connectors only, with these secrets. */
@@ -61,7 +72,7 @@ public final class AgentHost implements AutoCloseable {
     public static AgentHost open(Path dir, String version, Options options) {
         OrgRepo repo = RepoLoader.load(dir, version);
         OrgConnectors connectors = OrgConnectors.connect(repo, options.secrets(), options.placeholders(),
-                options.allowLocalConnectors());
+                options.allowLocalConnectors(), options.signer());
         try {
             List<DefinitionException.Problem> problems = new ArrayList<>();
             Map<String, HostedAgent> agents = new LinkedHashMap<>();

@@ -109,8 +109,13 @@ public final class StdioMcpConnection implements McpConnection {
 
     @Override
     public McpCallResult callTool(String name, Map<String, Object> arguments) {
+        return callTool(name, arguments, Map.of());
+    }
+
+    @Override
+    public McpCallResult callTool(String name, Map<String, Object> arguments, Map<String, Object> meta) {
         Objects.requireNonNull(name, "name");
-        return McpMessages.callResult(peer.request("tools/call", McpMessages.callParams(name, arguments)));
+        return McpMessages.callResult(peer.request("tools/call", McpMessages.callParams(name, arguments, meta)));
     }
 
     @Override

@@ -106,10 +106,7 @@ won't run them and a retry won't repeat them.
   never written in the file.
 - Server names must be unique. They become the default `system` for their tools.
 
-## 4. Who is calling (proposed)
-
-> **Status:** proposed. It will be implemented in the agent host, where the host first calls
-> connectors on a person's behalf. Nothing in `agentkit-mcp` sends or checks it yet.
+## 4. Who is calling
 
 A connector that enforces rules needs to know **whom** the host is acting for. For example,
 Access Desk's rule "nobody approves their own request" depends on who is asking. In a single
@@ -120,19 +117,19 @@ Two credentials travel with every call, and they answer different questions:
 
 | | Answers | Carried in | Checked by |
 |---|---|---|---|
-| **Connection credential** | Is this the agent host, acting for this org? | The HTTP request: OAuth client-credentials bearer token or mTLS, from the org's secrets | The connector's HTTP front |
+| **Connection credential** | Is this the agent host, acting for this org? | The HTTP request: a bearer token (or mTLS), from the org's secrets | The connector's HTTP front |
 | **Caller assertion** | Which person, which agent, which conversation? | `params._meta["dev.agentkit/caller"]` of each `tools/call` | The connector's tool handlers |
 
 The caller assertion goes in `_meta` rather than a header so it is independent of the transport,
 and so it is tied to the one call it authorizes. It is a compact JWS (a JWT), signed by the host
-with EdDSA (Ed25519). The host publishes its keys at `/.well-known/jwks.json`, identified by `kid`.
+with ES256 (P-256). The host publishes its keys at `/.well-known/jwks.json`, identified by `kid`.
 
 ```json
 {
   "iss": "https://agents.example.com",
   "aud": "ledger",
   "org": "acme",
-  "sub": "user_01J9Z…",
+  "sub": "priya.natarajan@acme.example",
   "email": "priya.natarajan@acme.example",
   "agent": "access-desk",
   "agent_version": "3f9c2e1",
@@ -144,21 +141,40 @@ with EdDSA (Ed25519). The host publishes its keys at `/.well-known/jwks.json`, i
 }
 ```
 
+- `aud` is the connector's name, as `connectors/<name>.yaml` names it in the org's repository.
+- `agent_version` is the commit of the org's repository the conversation is pinned to.
+- `conversation` and `turn` are there for a call made in a conversation; a tool offered directly
+  over MCP has neither.
+- **Who `sub` can be:**
+  - a person's email, with `email` the same;
+  - `agent:<actor>` for a deferred action, which the host carries out with no person present,
+    under the agent's `deferred.actor` name; there is no `email`;
+  - `host` for the host's own lookups: a person's directory record when they sign in, and a
+    deferred action's subject record.
+
 A connector:
 
-- **Verifies** the signature against the host's published keys, `aud` equal to its own name,
-  `exp` no more than 60 seconds after `iat` and not yet passed, and `org` equal to the org its
-  connection credential belongs to.
+- **Verifies** the signature against the host's published keys, `iss` the host's address, `aud`
+  equal to its own name, `org` equal to the org it serves, `exp` not yet passed, and at most two
+  minutes after `iat` (the host signs each for 60 seconds).
 - **Takes identity only from the assertion.** An argument that names the acting person (the host
-  can fill one in, hidden from the model) must match `email`/`sub`, or the call is refused.
-- **May refuse to repeat a `jti`.** Tool calls that change something should.
-- **Treats a missing assertion as an anonymous caller.** Only tools that are safe for anyone may
-  answer it.
+  can fill one in, hidden from the model) must match it — the email, or the name after `agent:` —
+  or the call is refused.
+- **Refuses to repeat a `jti`** for a tool that changes something. A read may be repeated.
+- **Refuses a call without an assertion that checks out**, unless it chooses to answer anyone.
 
-**Deferred actions** are carried out by the host when their time comes, with no person present.
-Their assertion has `sub` set to `agent:<agent id>` and `on_behalf_of` set to whoever scheduled
-the action. A connector decides what that identity may do. Access Desk's equivalent is the
-`access-desk` identity, which may revoke any grant.
+`agentkit-mcp` does this for a Java connector:
+
+```java
+CallerAssertion callers = CallerAssertion.fromJwks(
+        URI.create("https://agents.example.com/.well-known/jwks.json"),
+        "https://agents.example.com", "ledger", "acme");
+DeclaredTools served = callers.guard(tools, Set.of("acting_as"));
+```
+
+Inside a guarded tool, `CallerAssertion.caller()` is who is calling. Acme's ledger and onboarding
+connectors are guarded this way when started with `AGENTKIT_HOST_JWKS_URL`
+(`dev.agentkit.acme.Callers`).
 
 **Why not per-user OAuth to each connector:** the people using an agent usually have no account
 in the connector. The host is the party that authenticated them. Token exchange (RFC 8693) can
@@ -191,19 +207,20 @@ host calls that tool itself, with the subject's id, and it answers with one JSON
 
 An error, or anything that is not such an object, means the subject does not exist.
 
-## Until the caller assertion: bound arguments
+## Bound arguments, alongside the assertion
 
-Until section 4 is implemented, a connector learns who is asking from an argument the agent
-definition binds, for example `bind: {ledger/*: {acting_as: principal.email}}`.
+An agent definition can still bind an argument to who is asking, for example
+`bind: {ledger/*: {acting_as: principal.email}}`.
 - The host hides that argument from the model and fills it in on every call, so the model cannot
   choose it.
-- The connector trusts it only because the caller presented the connector's bearer token, which
-  only the host holds.
 - A deferred action fills it with the agent's `deferred.actor` (for example `access-desk`),
   which the connector recognises as the agent itself rather than a person.
+- A connector that checks the caller assertion holds the argument to it, so the two cannot
+  disagree. One that does not trusts the argument only because the caller presented its bearer
+  token, which only the host holds.
 
-The Access Desk ledger (`agentkit-examples-acme`, `AccessLedgerConnector`) is a
-complete connector built this way.
+The Access Desk ledger (`agentkit-examples-acme`, `AccessLedgerConnector`) is a complete connector
+that does both.
 
 ## Where this is going
 

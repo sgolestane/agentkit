@@ -30,6 +30,14 @@ public interface McpConnection extends AutoCloseable {
     McpCallResult callTool(String name, Map<String, Object> arguments);
 
     /**
+     * {@link #callTool(String, Map)}, with {@code meta} as the call's {@code _meta} — such as a signed statement of who is
+     * calling. A connection that cannot carry it makes the call without it.
+     */
+    default McpCallResult callTool(String name, Map<String, Object> arguments, Map<String, Object> meta) {
+        return callTool(name, arguments);
+    }
+
+    /**
      * Reads a resource the server predeclared ({@code resources/read}).
      *
      * <p>Needed for MCP Apps (SEP-1865): a tool points at a {@code ui://} resource holding

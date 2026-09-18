@@ -76,8 +76,20 @@ public final class AccessLedgerConnector implements AutoCloseable {
      */
     public static AccessLedgerConnector serve(int port, String token, AccessLedger ledger, CompanyClient company,
                                               Supplier<Instant> clock, long backstopSeconds) throws java.io.IOException {
+        return serve(port, token, ledger, company, clock, backstopSeconds, java.util.Optional.empty());
+    }
+
+    /**
+     * {@link #serve(int, String, AccessLedger, CompanyClient, Supplier, long)}, taking a call only with a caller
+     * assertion {@code callers} accepts, and only when its {@code acting_as} is that caller.
+     */
+    public static AccessLedgerConnector serve(int port, String token, AccessLedger ledger, CompanyClient company,
+                                              Supplier<Instant> clock, long backstopSeconds,
+                                              java.util.Optional<dev.agentkit.mcp.server.CallerAssertion> callers)
+            throws java.io.IOException {
+        dev.agentkit.core.tool.DeclaredTools tools = catalog(ledger, company, clock);
         HttpConnector server = HttpConnector.serve(port, "access-ledger", INSTRUCTIONS, token,
-                catalog(ledger, company, clock));
+                callers.map(c -> c.guard(tools, java.util.Set.of("acting_as"))).orElse(tools));
         ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "access-ledger-backstop");
             thread.setDaemon(true);
@@ -213,7 +225,8 @@ public final class AccessLedgerConnector implements AutoCloseable {
      * </pre>
      * {@code LEDGER_PORT} (default 8120), {@code LEDGER_DATA_DIR} (default {@code data/access-ledger}),
      * {@code LEDGER_BACKSTOP_SECONDS} (default 60). It waits up to a minute for the company systems to answer, so the
-     * two can be started together.
+     * two can be started together. With {@code AGENTKIT_HOST_JWKS_URL} it checks every call's caller assertion
+     * ({@link dev.agentkit.acme.Callers}).
      */
     public static void main(String[] args) throws Exception {
         Map<String, String> env = System.getenv();
@@ -239,7 +252,8 @@ public final class AccessLedgerConnector implements AutoCloseable {
         }
         AccessLedgerConnector served = serve(Integer.parseInt(env.getOrDefault("LEDGER_PORT", "8120")), token,
                 AccessLedger.open(dataDir.resolve("ledger.json")), new CompanyClient(company), Instant::now,
-                Long.parseLong(env.getOrDefault("LEDGER_BACKSTOP_SECONDS", "60")));
+                Long.parseLong(env.getOrDefault("LEDGER_BACKSTOP_SECONDS", "60")),
+                dev.agentkit.acme.Callers.fromEnv(env, "ledger"));
         System.out.println("access-ledger at " + served.url());
         Thread.currentThread().join();
     }

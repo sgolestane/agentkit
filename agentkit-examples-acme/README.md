@@ -54,11 +54,12 @@ COMPANY_HTTP_TOKEN=company-secret \
 
 ```bash
 LEDGER_TOKEN=ledger-secret COMPANY_MCP_URL=http://127.0.0.1:8130/mcp COMPANY_MCP_TOKEN=company-secret \
+AGENTKIT_HOST_JWKS_URL=http://localhost:8400/.well-known/jwks.json \
   ./mvnw -q -pl agentkit-examples-acme exec:exec
 ```
 
 ```bash
-ONBOARDING_TOKEN=onboarding-secret \
+ONBOARDING_TOKEN=onboarding-secret AGENTKIT_HOST_JWKS_URL=http://localhost:8400/.well-known/jwks.json \
   ./mvnw -q -pl agentkit-examples-acme exec:exec -Dexec.mainClass=dev.agentkit.onboarding.OnboardingConnector
 ```
 
@@ -69,6 +70,11 @@ AGENTKIT_SECRET_ACME_LEDGER_URL=http://127.0.0.1:8120/mcp AGENTKIT_SECRET_ACME_L
 AGENTKIT_SECRET_ACME_ONBOARDING_URL=http://127.0.0.1:8140/mcp AGENTKIT_SECRET_ACME_ONBOARDING_TOKEN=onboarding-secret \
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
+
+The ledger and the onboarding systems take who is calling from the host's signed caller
+assertion, checked against the keys the host publishes, and refuse a call without one. Leave out
+`AGENTKIT_HOST_JWKS_URL` to have them trust the arguments the host binds instead. The company
+systems are not checked: the ledger calls them too.
 
 The development sign-in above takes whoever says who they are, and the host then answers this
 machine only. To sign in the way a customer would, with an identity provider, add `signIn` to

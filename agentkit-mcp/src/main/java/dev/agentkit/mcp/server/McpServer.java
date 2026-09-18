@@ -136,9 +136,14 @@ public final class McpServer {
         Map<String, Object> arguments = params.has("arguments") && params.get("arguments").isObject()
                 ? MAPPER.convertValue(params.get("arguments"), Map.class)
                 : Map.of();
+        Map<String, Object> meta = params.has("_meta") && params.get("_meta").isObject()
+                ? MAPPER.convertValue(params.get("_meta"), Map.class)
+                : Map.of();
         ToolResult outcome;
         try {
-            outcome = entry.get().tool().execute(new ToolInvocation("mcp-" + UUID.randomUUID(), toolName, arguments));
+            // The call's _meta is the tool's to read while it runs, as CallMeta.received().
+            outcome = dev.agentkit.mcp.CallMeta.receiving(meta, () -> entry.get().tool()
+                    .execute(new ToolInvocation("mcp-" + UUID.randomUUID(), toolName, arguments)));
         } catch (RuntimeException e) {
             outcome = ToolResult.error(toolName + " failed: " + e.getMessage());
         }

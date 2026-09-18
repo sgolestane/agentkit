@@ -30,6 +30,15 @@ public final class InProcessMcpConnection implements McpConnection {
 
     @Override
     public McpCallResult callTool(String name, Map<String, Object> arguments) {
+        return callTool(name, arguments, Map.of());
+    }
+
+    @Override
+    public McpCallResult callTool(String name, Map<String, Object> arguments, Map<String, Object> meta) {
+        return CallMeta.receiving(meta, () -> execute(name, arguments));
+    }
+
+    private McpCallResult execute(String name, Map<String, Object> arguments) {
         ToolResult result = tools.entry(name)
                 .map(e -> e.tool().execute(new ToolInvocation("in-process-" + UUID.randomUUID(), name,
                         new HashMap<>(arguments == null ? Map.of() : arguments))))

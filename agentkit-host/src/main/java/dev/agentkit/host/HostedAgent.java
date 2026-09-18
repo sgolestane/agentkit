@@ -17,6 +17,7 @@ import dev.agentkit.core.tool.SimpleToolRegistry;
 import dev.agentkit.core.tool.Tool;
 import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.util.OneLine;
+import dev.agentkit.host.auth.CallerSigner;
 import dev.agentkit.host.repo.AgentDefinition;
 import dev.agentkit.host.repo.AgentDefinition.ToolRef;
 import dev.agentkit.host.repo.AgentDefinition.ToolSelector;
@@ -214,7 +215,7 @@ public final class HostedAgent {
                             subject.tool() + " has no argument " + subject.argument()));
                 }
             });
-            subjects = Optional.of(new ConnectorSubjects(definition.deferred().subjects(), connectors));
+            subjects = Optional.of(new ConnectorSubjects(repo.org(), definition.deferred().subjects(), connectors));
         }
 
         // Eval cases: every tool an expectation names is one this agent is given.
@@ -311,12 +312,33 @@ public final class HostedAgent {
 
     /** The agent's tools for one person: each with its declaration, and bound arguments filled from them. */
     public DeclaredTools tools(Principal principal) {
+        return tools(principal, null, null);
+    }
+
+    /**
+     * The agent's tools for one person, in one conversation's turn: bound arguments filled from them, and every call
+     * carrying the caller assertion that says so — who, with which agent at which version, in which conversation and
+     * turn — when the host signs one.
+     */
+    public DeclaredTools tools(Principal principal, String conversation, String turn) {
+        CallerSigner.Caller caller = caller(principal, conversation, turn);
         DeclaredTools tools = new DeclaredTools();
         for (Selected s : selected) {
             Tool tool = s.bindings().isEmpty() ? s.entry().tool() : new BoundTool(s.entry().tool(), s.bindings(), principal);
-            tools.add(tool, s.entry().declaration());
+            tools.add(connectors.asserted(s.connector(), tool, caller), s.entry().declaration());
         }
         return tools;
+    }
+
+    /**
+     * Who a call made for {@code principal} is from: the person — or, when {@code principal} is this agent's own
+     * {@linkplain #actor() actor}, the agent acting on its own ({@code agent:<actor>}), as a deferred action does.
+     */
+    CallerSigner.Caller caller(Principal principal, String conversation, String turn) {
+        boolean self = actor().map(a -> a.email().equals(principal.email()) && principal.groups().isEmpty()
+                && principal.facts().isEmpty()).orElse(false);
+        return new CallerSigner.Caller(repo.org(), self ? "agent:" + principal.email() : principal.email(),
+                self ? null : principal.email(), definition.id(), repo.version(), conversation, turn);
     }
 
     /**
@@ -331,7 +353,8 @@ public final class HostedAgent {
                     .findFirst()
                     .ifPresent(s -> connectors.client(s.connector()).ifPresent(client -> {
                         Tool raw = new ConnectorResult(s.entry().tool(), client);
-                        direct.add(s.bindings().isEmpty() ? raw : new BoundTool(raw, s.bindings(), principal),
+                        Tool bound = s.bindings().isEmpty() ? raw : new BoundTool(raw, s.bindings(), principal);
+                        direct.add(connectors.asserted(s.connector(), bound, caller(principal, null, null)),
                                 s.entry().declaration());
                     }));
         }
@@ -355,7 +378,8 @@ public final class HostedAgent {
 
         @Override
         public dev.agentkit.core.tool.ToolResult execute(dev.agentkit.core.tool.ToolInvocation invocation) {
-            dev.agentkit.mcp.McpCallResult result = client.callTool(invocation.name(), invocation.arguments());
+            dev.agentkit.mcp.McpCallResult result = client.callTool(invocation.name(), invocation.arguments(),
+                    dev.agentkit.mcp.CallMeta.toSend());
             return result.isError() ? dev.agentkit.core.tool.ToolResult.error(result.text())
                     : dev.agentkit.core.tool.ToolResult.ok(result.text());
         }
@@ -494,7 +518,8 @@ public final class HostedAgent {
     private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
                                   ChatRuntime runtime, List<Tool> alsoGiven) {
         check(principal);
-        List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
+        List<Tool> tools = new ArrayList<>(tools(principal, session.conversationId(), session.turnId()).entries().stream()
+                .map(DeclaredTools.Entry::tool).toList());
         tools.addAll(alsoGiven);
         tools.add(ChatTools.askPerson(runtime, session));
         ToolGate gate = gate(session.approver());

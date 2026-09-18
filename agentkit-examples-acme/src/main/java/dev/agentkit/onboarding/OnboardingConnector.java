@@ -11,6 +11,7 @@ import java.io.IOException;
  * ONBOARDING_TOKEN=...         # required: the token the host's connector file sends
  * ONBOARDING_PORT=8140         # optional
  * ONBOARDING_ACTOR=onboarding  # optional: the onboarding agent's deferred.actor, which may revoke for anyone
+ * AGENTKIT_HOST_JWKS_URL=...   # optional: check every call's caller assertion (see dev.agentkit.acme.Callers)
  * </pre>
  *
  * The systems are seeded from {@code onboarding/hr.json} and kept in memory.
@@ -25,7 +26,18 @@ public final class OnboardingConnector {
 
     /** Serves {@code systems} on {@code port} (0 for any free one). */
     public static HttpConnector serve(int port, String token, OnboardingSystems systems) throws IOException {
-        return HttpConnector.serve(port, "onboarding-systems", INSTRUCTIONS, token, systems.catalog());
+        return serve(port, token, systems, java.util.Optional.empty());
+    }
+
+    /**
+     * Serves {@code systems}, taking a call only with a caller assertion {@code callers} accepts, and only when its
+     * {@code requested_by} is that caller.
+     */
+    public static HttpConnector serve(int port, String token, OnboardingSystems systems,
+                                      java.util.Optional<dev.agentkit.mcp.server.CallerAssertion> callers) throws IOException {
+        dev.agentkit.core.tool.DeclaredTools tools = systems.catalog();
+        return HttpConnector.serve(port, "onboarding-systems", INSTRUCTIONS, token,
+                callers.map(c -> c.guard(tools, java.util.Set.of("requested_by"))).orElse(tools));
     }
 
     public static void main(String[] args) throws Exception {
@@ -36,7 +48,8 @@ public final class OnboardingConnector {
         }
         int port = Integer.parseInt(System.getenv().getOrDefault("ONBOARDING_PORT", "8140"));
         String actor = System.getenv().getOrDefault("ONBOARDING_ACTOR", "onboarding");
-        HttpConnector served = serve(port, token, OnboardingSystems.open(actor, 1_000));
+        HttpConnector served = serve(port, token, OnboardingSystems.open(actor, 1_000),
+                dev.agentkit.acme.Callers.fromEnv(System.getenv(), "onboarding"));
         System.out.println("onboarding systems at " + served.url());
         Thread.currentThread().join();
     }

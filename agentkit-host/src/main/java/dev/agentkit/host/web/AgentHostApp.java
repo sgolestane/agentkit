@@ -17,6 +17,7 @@ import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
 import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.VersionLog;
+import dev.agentkit.host.auth.CallerSigner;
 import dev.agentkit.host.auth.Oidc;
 import dev.agentkit.host.auth.OidcSignIn;
 import dev.agentkit.host.auth.OrgMcp;
@@ -79,6 +80,10 @@ import java.util.stream.Stream;
  * names under {@code signIn} ({@link OidcSignIn}), with the org's {@code OIDC_CLIENT_SECRET} secret if its client has
  * one; its MCP clients present that provider's access tokens at {@code /orgs/<org>/mcp} ({@link OrgMcp}).
  *
+ * <p><strong>Who is calling a connector.</strong> Every connector call carries a caller assertion ({@link CallerSigner}),
+ * signed with {@code AGENTKIT_HOST_SIGNING_KEY} (a private EC JWK, for instances that must share it) or a key kept in
+ * the data directory; the public half is at {@code /.well-known/jwks.json}.
+ *
  * <p><strong>Proposed changes.</strong> An admin's change from the admin view is opened as a pull request on the
  * repository the organization's {@code org.yaml} names, with its {@code GITHUB_TOKEN} secret. For development,
  * {@code AGENTKIT_HOST_PROPOSALS=local} opens it as a branch in the checkout's own repository instead.
@@ -110,12 +115,19 @@ public final class AgentHostApp {
                 : Optional.of(Database.open(databaseUrl.strip(), env.get("AGENTKIT_HOST_DATABASE_USER"),
                         env.get("AGENTKIT_HOST_DATABASE_PASSWORD")));
         VersionLog versions = database.<VersionLog>map(PostgresVersionLog::new).orElseGet(VersionLog::inMemory);
-        Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal, versions);
+        URI publicUrl = URI.create(env.getOrDefault("AGENTKIT_HOST_PUBLIC_URL", "http://localhost:" + port).strip());
+        Files.createDirectories(dataDir);
+        // Every connector call carries an assertion of who it is for, signed with this key; connectors check it against
+        // the public half the host publishes at /.well-known/jwks.json.
+        String signingKey = env.get("AGENTKIT_HOST_SIGNING_KEY");
+        CallerSigner signer = signingKey != null && !signingKey.isBlank()
+                ? CallerSigner.fromJwk(publicUrl.toString(), signingKey.strip())
+                : CallerSigner.inFile(publicUrl.toString(), dataDir.resolve("caller-signing-key.json"));
+        Map<String, OrgHost> orgs = openOrgs(orgsDir, allowLocal, versions, signer);
         if (orgs.isEmpty()) {
             System.err.println("No organization loaded from " + orgsDir + "; nothing to serve.");
             System.exit(2);
         }
-        URI publicUrl = URI.create(env.getOrDefault("AGENTKIT_HOST_PUBLIC_URL", "http://localhost:" + port).strip());
         // Each org's identity provider, from its org.yaml, made again when that changes.
         Map<String, Oidc> providersByOrg = new java.util.concurrent.ConcurrentHashMap<>();
         java.util.function.Function<OrgHost, Optional<Oidc>> providers = org -> org.current().repo().signIn()
@@ -126,7 +138,6 @@ public final class AgentHostApp {
                     + "For development, set AGENTKIT_HOST_DEV_SIGN_IN=true.");
         }
 
-        Files.createDirectories(dataDir);
         long deferredSeconds = Long.parseLong(env.getOrDefault("AGENTKIT_HOST_DEFERRED_SECONDS", "30").strip());
         Map<String, DeferredWork> deferred = new LinkedHashMap<>();
         orgs.forEach((name, org) -> {
@@ -161,7 +172,7 @@ public final class AgentHostApp {
                 ? Optional.of(new LocalBranchProposer(org.checkout()))
                 : org.current().repo().repository().flatMap(spec -> secretsFor(org.org()).get("GITHUB_TOKEN")
                         .map(token -> new GitHubProposer(spec, token))),
-                name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal));
+                name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal).signedBy(signer));
         AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
                 Instant::now, proposals);
         server.mount("/host/admin", admin.admin());
@@ -172,6 +183,15 @@ public final class AgentHostApp {
                 "Your organization's agents. Use ask_<agent> to ask one in plain language, as you would in the console.");
         OrgMcp orgMcp = new OrgMcp(orgs, providers, publicUrl, mcp::toolsFor, mcpServer);
         server.mount("/orgs/", orgMcp.endpoints());
+        server.mount("/.well-known/jwks.json", exchange -> {
+            try (exchange) {
+                byte[] keys = signer.jwks().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/jwk-set+json");
+                exchange.getResponseHeaders().set("Cache-Control", "max-age=300");
+                exchange.sendResponseHeaders(200, keys.length);
+                exchange.getResponseBody().write(keys);
+            }
+        });
         server.mount("/.well-known/oauth-protected-resource/", orgMcp.metadata());
         if (devSignIn) {
             server.mount("/mcp", new HttpMcpEndpoint(mcpServer.get(), DevSignIn.MCP_CALLERS, mcp::toolsFor));
@@ -217,7 +237,8 @@ public final class AgentHostApp {
         Thread.currentThread().join();
     }
 
-    static Map<String, OrgHost> openOrgs(Path orgsDir, boolean allowLocal, VersionLog versions) throws IOException {
+    static Map<String, OrgHost> openOrgs(Path orgsDir, boolean allowLocal, VersionLog versions, CallerSigner signer)
+            throws IOException {
         Map<String, OrgHost> orgs = new LinkedHashMap<>();
         List<Path> checkouts;
         try (Stream<Path> entries = Files.list(orgsDir)) {
@@ -227,7 +248,8 @@ public final class AgentHostApp {
         for (Path checkout : checkouts) {
             String name = checkout.getFileName().toString();
             try {
-                OrgHost org = OrgHost.open(checkout, new AgentHost.Options(secretsFor(name), Map.of(), allowLocal),
+                OrgHost org = OrgHost.open(checkout, new AgentHost.Options(secretsFor(name), Map.of(), allowLocal)
+                                .signedBy(signer),
                         versions);
                 if (!org.org().equals(name)) {
                     System.err.println("Skipping " + checkout + ": its org.yaml says " + org.org()

@@ -259,6 +259,21 @@ AGENTKIT_HOST_DATABASE_USER=agentkit AGENTKIT_HOST_DATABASE_PASSWORD=... \
   sweep, one runs an action. If the host that claimed it stops, the action is due again once the
   claim is 30 minutes old (at least once, as for every deferred store).
 
+### Who is calling a connector
+
+Every call the host makes to a connector carries a caller assertion it signs: the organization,
+the person, the agent at its version, the conversation and the turn (see
+[the connector contract](../docs/MCP-CONNECTORS.md#4-who-is-calling)). The host publishes the
+keys that check it at `/.well-known/jwks.json`.
+
+- The key is kept in `AGENTKIT_HOST_DATA_DIR` as `caller-signing-key.json`, made on first start
+  and readable by its owner only.
+- Several instances must sign with the same key: give each `AGENTKIT_HOST_SIGNING_KEY`, a
+  private EC P-256 JSON Web Key.
+- The assertions' `iss` is `AGENTKIT_HOST_PUBLIC_URL`, which connectors check.
+- As a library, `AgentHost.Options.signedBy(CallerSigner)` signs; without it, calls carry no
+  assertion.
+
 ## Signing in
 
 Each organization's people sign in with its own identity provider: the OpenID Connect issuer
@@ -474,5 +489,5 @@ service container.
   instance while a turn runs.
 - **Sessions across instances.** Console sessions are kept in the process, so each instance of
   the host signs people in separately, and a restart signs everyone out.
-- **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller
-  assertion in the connector contract comes later.
+- **Who scheduled a deferred action, to its connectors.** A deferred action's calls say
+  `agent:<actor>`, not who scheduled it.

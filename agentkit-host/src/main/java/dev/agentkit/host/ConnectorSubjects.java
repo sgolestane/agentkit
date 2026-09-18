@@ -41,10 +41,12 @@ final class ConnectorSubjects implements SubjectResolver {
     private static final Logger LOG = LoggerFactory.getLogger(ConnectorSubjects.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    private final String org;
     private final Map<String, AgentDefinition.Subject> subjects;
     private final OrgConnectors connectors;
 
-    ConnectorSubjects(Map<String, AgentDefinition.Subject> subjects, OrgConnectors connectors) {
+    ConnectorSubjects(String org, Map<String, AgentDefinition.Subject> subjects, OrgConnectors connectors) {
+        this.org = org;
         this.subjects = Map.copyOf(subjects);
         this.connectors = connectors;
     }
@@ -76,7 +78,8 @@ final class ConnectorSubjects implements SubjectResolver {
         if (client.isEmpty()) {
             return Optional.empty();
         }
-        McpCallResult result = client.get().callTool(spec.tool().tool(), Map.of(spec.argument(), id.strip()));
+        McpCallResult result = client.get().callTool(spec.tool().tool(), Map.of(spec.argument(), id.strip()),
+                connectors.meta(spec.tool().connector(), dev.agentkit.host.auth.CallerSigner.Caller.host(org)));
         if (result.isError()) {
             return Optional.empty();
         }

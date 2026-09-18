@@ -77,9 +77,16 @@ final class McpMessages {
     }
 
     static ObjectNode callParams(String name, Map<String, Object> arguments) {
+        return callParams(name, arguments, Map.of());
+    }
+
+    static ObjectNode callParams(String name, Map<String, Object> arguments, Map<String, Object> meta) {
         ObjectNode params = MAPPER.createObjectNode();
         params.put("name", name);
         params.set("arguments", MAPPER.valueToTree(arguments == null ? Map.of() : arguments));
+        if (meta != null && !meta.isEmpty()) {
+            params.set("_meta", MAPPER.valueToTree(meta));
+        }
         return params;
     }
 

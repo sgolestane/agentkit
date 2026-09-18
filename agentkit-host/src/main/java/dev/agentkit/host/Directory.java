@@ -57,7 +57,8 @@ public final class Directory {
             LOG.warn("The directory connector {} of {} is not connected", directory.connector(), org);
             return Optional.empty();
         }
-        McpCallResult result = client.get().callTool(directory.tool(), Map.of(directory.argument(), normalized));
+        McpCallResult result = client.get().callTool(directory.tool(), Map.of(directory.argument(), normalized),
+                connectors.meta(directory.connector(), dev.agentkit.host.auth.CallerSigner.Caller.host(org)));
         if (result.isError()) {
             return Optional.empty();
         }

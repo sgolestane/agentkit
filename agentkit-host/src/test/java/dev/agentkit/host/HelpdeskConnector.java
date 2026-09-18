@@ -31,7 +31,8 @@ final class HelpdeskConnector implements AutoCloseable {
     static final String SAM = "sam.okafor@acme.example";
 
     /** One call that reached the connector. */
-    record Call(String tool, Map<String, Object> arguments) {
+    /** A call that reached a tool, and who the caller assertion said it was from, when the connector is guarded. */
+    record Call(String tool, Map<String, Object> arguments, dev.agentkit.mcp.server.CallerAssertion.Caller caller) {
     }
 
     final List<Call> calls = new CopyOnWriteArrayList<>();
@@ -44,13 +45,28 @@ final class HelpdeskConnector implements AutoCloseable {
 
     /** @param serves which of the helpdesk's tools this instance serves */
     HelpdeskConnector(java.util.function.Predicate<String> serves) throws IOException {
-        this(serves, 0);
+        this(serves, 0, tools -> tools);
+    }
+
+    /**
+     * A helpdesk that takes only calls carrying a caller assertion {@code callers} accepts, and whose {@code requester}
+     * must be the caller.
+     */
+    static HelpdeskConnector guarded(dev.agentkit.mcp.server.CallerAssertion callers) throws IOException {
+        return new HelpdeskConnector(name -> true, 0, tools -> callers.guard(tools, java.util.Set.of("requester")));
     }
 
     private HelpdeskConnector(java.util.function.Predicate<String> serves, int port) throws IOException {
+        this(serves, port, tools -> tools);
+    }
+
+    private HelpdeskConnector(java.util.function.Predicate<String> serves, int port,
+                              java.util.function.UnaryOperator<DeclaredTools> wrap) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         DeclaredTools all = catalog();
-        DeclaredTools served = new DeclaredTools(all.entries().stream().filter(e -> serves.test(e.tool().name())).toList());
+        DeclaredTools served = wrap.apply(new DeclaredTools(all.entries().stream()
+                .filter(e -> serves.test(e.tool().name())).toList()));
         server.createContext("/mcp", new HttpMcpEndpoint(new McpServer("helpdesk", "1", ""),
                 HttpMcpEndpoint.Callers.header("Authorization"),
                 caller -> caller.equals("Bearer " + TOKEN) ? Optional.of(served) : Optional.empty()));
@@ -122,7 +138,8 @@ final class HelpdeskConnector implements AutoCloseable {
                         "required", new ArrayList<>(properties.keySet())))
                 .sideEffects(effects)
                 .handler(inv -> {
-                    calls.add(new Call(name, Map.copyOf(inv.arguments())));
+                    calls.add(new Call(name, Map.copyOf(inv.arguments()),
+                            dev.agentkit.mcp.server.CallerAssertion.caller().orElse(null)));
                     return handler.apply(inv.arguments());
                 })
                 .build();
