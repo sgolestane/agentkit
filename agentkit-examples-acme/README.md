@@ -81,7 +81,9 @@ Open <http://localhost:8400> and sign in as one of the demo people:
 - Sam Okafor, head of security: `sam.okafor@acme.example`
 - Lena Ortiz, sales director: `lena.ortiz@acme.example`
 
-The managers (Dana, Sam and Lena) are also offered Onboarding. The HRIS holds seven hires, in
+The managers (Dana, Sam and Lena) are also offered Onboarding. Sam is in `agent-operators`, the
+group `org.yaml` names as admins, so he also sees the admin view at <http://localhost:8400/admin>:
+what each version of the agents can do, the pull requests' rehearsals, and the deferred work. The HRIS holds seven hires, in
 [`onboarding/hr.json`](src/main/resources/onboarding/hr.json); a manager can onboard only their own:
 Lena has Marcus Bell (W-1002), Sam has Maria Chen (W-1003), and Dana has the rest.
 

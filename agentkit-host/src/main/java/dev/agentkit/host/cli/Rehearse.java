@@ -49,6 +49,11 @@ import java.util.stream.Collectors;
  * the host. Under GitHub Actions a failed check is an annotation on {@code evals.yaml}, and the report is written to
  * the job's summary.
  *
+ * <p><strong>To the app.</strong> With {@code AGENTKIT_REHEARSE_POST_URL}, the host's address, and
+ * {@code AGENTKIT_REHEARSE_POST_TOKEN}, the organization's {@code REHEARSAL_TOKEN}, the report is also sent to the host,
+ * whose admin view shows it. {@code AGENTKIT_REHEARSE_PULL_REQUEST} and {@code AGENTKIT_REHEARSE_TITLE} say which pull
+ * request it is for.
+ *
  * <p>Exits 0 when every case held, 1 when one did not, and 2 when nothing could be rehearsed.
  */
 public final class Rehearse {
@@ -289,23 +294,64 @@ public final class Rehearse {
     private static void report(Map<String, String> env, String org, String version, List<Rehearsal.Result> results,
                                List<String> untested, PrintStream out) {
         String file = env.get("AGENTKIT_REHEARSE_REPORT");
-        if (file == null || file.isBlank()) {
+        String host = env.get("AGENTKIT_REHEARSE_POST_URL");
+        if ((file == null || file.isBlank()) && (host == null || host.isBlank())) {
             return;
         }
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("org", org);
         report.put("version", version);
         report.put("at", Instant.now().toString());
+        optional(env, "AGENTKIT_REHEARSE_PULL_REQUEST").ifPresent(v -> report.put("pullRequest", v));
+        optional(env, "AGENTKIT_REHEARSE_TITLE").ifPresent(v -> report.put("title", v));
+        optional(env, "GITHUB_HEAD_REF").ifPresent(v -> report.put("ref", v));
+        optional(env, "AGENTKIT_REHEARSE_SINCE").ifPresent(v -> report.put("since", v));
         report.put("held", results.stream().filter(Rehearsal.Result::passed).count());
         report.put("cases", results.size());
         report.put("untested", untested);
         report.put("results", results.stream().map(Rehearse::json).toList());
+        String json;
         try {
-            Files.writeString(Path.of(file), JSON.writeValueAsString(report), StandardCharsets.UTF_8);
-            out.println("The report is in " + file + ".");
+            json = JSON.writeValueAsString(report);
         } catch (IOException e) {
-            out.println("Could not write the report to " + file + ": " + e.getMessage());
+            out.println("Could not write the report: " + e.getMessage());
+            return;
         }
+        if (file != null && !file.isBlank()) {
+            try {
+                Files.writeString(Path.of(file), json, StandardCharsets.UTF_8);
+                out.println("The report is in " + file + ".");
+            } catch (IOException e) {
+                out.println("Could not write the report to " + file + ": " + e.getMessage());
+            }
+        }
+        if (host != null && !host.isBlank()) {
+            post(host.strip(), org, env.getOrDefault("AGENTKIT_REHEARSE_POST_TOKEN", ""), json, out);
+        }
+    }
+
+    /** Sends the report to the host; a host that cannot take it is reported, and does not fail the rehearsal. */
+    private static void post(String host, String org, String token, String json, PrintStream out) {
+        String url = host.replaceAll("/+$", "") + "/host/rehearsals/" + org;
+        try {
+            java.net.http.HttpResponse<String> response = java.net.http.HttpClient.newHttpClient().send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                            .header("Content-Type", "application/json")
+                            .header("Authorization", "Bearer " + token)
+                            .timeout(Duration.ofSeconds(30))
+                            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(json)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            out.println(response.statusCode() == 202 ? "The report was sent to " + url + "."
+                    : "The host did not take the report (" + response.statusCode() + "): " + response.body());
+        } catch (IOException | IllegalArgumentException e) {
+            out.println("Could not send the report to " + url + ": " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static Optional<String> optional(Map<String, String> env, String name) {
+        return Optional.ofNullable(env.get(name)).map(String::strip).filter(v -> !v.isEmpty());
     }
 
     private static Map<String, Object> json(Rehearsal.Result r) {

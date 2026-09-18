@@ -361,6 +361,22 @@ public final class HostedAgent {
         }
     }
 
+    /**
+     * One of the agent's tools, as an operator reviews it: where it comes from, what it declares, and what the agent
+     * definition adds — a confirmation, arguments bound to the person.
+     */
+    public record ToolInfo(String connector, String name, String description, String effect, String system,
+                           boolean confirmed, Map<String, String> bound, String sideEffects) {
+    }
+
+    /** The agent's tools, in the order it is given them. */
+    public List<ToolInfo> toolInfo() {
+        return selected.stream().map(s -> new ToolInfo(s.connector(), s.entry().tool().name(),
+                s.entry().tool().description(), s.entry().declaration().effect().wire(),
+                s.entry().declaration().system(), confirmed.contains(s.entry().tool().name()), s.bindings(),
+                s.entry().tool().sideEffects().name().toLowerCase(java.util.Locale.ROOT))).toList();
+    }
+
     /** The names of tools that stop for the person's confirmation. */
     public Set<String> confirmed() {
         return confirmed;

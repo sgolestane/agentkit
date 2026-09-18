@@ -2,7 +2,7 @@
   "people": [
     {"email": "priya.natarajan@acme.example", "name": "Priya Natarajan", "title": "Senior Backend Engineer", "department": "Payments", "manager": "dana.kim@acme.example"},
     {"email": "dana.kim@acme.example", "name": "Dana Kim", "title": "Engineering Manager", "department": "Payments", "manager": "sam.okafor@acme.example", "groups": ["managers"]},
-    {"email": "sam.okafor@acme.example", "name": "Sam Okafor", "title": "Head of Security", "department": "Security", "manager": "", "groups": ["managers"]},
+    {"email": "sam.okafor@acme.example", "name": "Sam Okafor", "title": "Head of Security", "department": "Security", "manager": "", "groups": ["managers", "agent-operators"]},
     {"email": "lena.ortiz@acme.example", "name": "Lena Ortiz", "title": "Sales Director", "department": "Sales", "manager": "", "groups": ["managers"]}
   ],
   "resources": [

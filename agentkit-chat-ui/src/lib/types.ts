@@ -206,5 +206,114 @@ export interface Overview {
   problems?: string[]
   /** The agents on offer; absent in a single-agent console. */
   agents?: AgentInfo[]
+  /** Whether the person may see the organization's admin view. */
+  admin?: boolean
   [key: string]: unknown
+}
+
+// --- the admin view -------------------------------------------------------------------------
+
+export interface AdminAgentSummary {
+  id: string
+  name: string
+  description: string
+  pattern: string
+  audience: string[]
+  evals: number
+  unavailable?: string
+}
+
+export interface AdminOverview {
+  org: string
+  current: string
+  admins: string[]
+  versions: { version: string; current: boolean; agents: AdminAgentSummary[] }[]
+  connectors: { name: string; reached: boolean; failure?: string; tools: number }[]
+}
+
+export interface AdminTool {
+  connector: string
+  name: string
+  description: string
+  effect: string
+  system: string
+  confirmed: boolean
+  bound: Record<string, string>
+  sideEffects: string
+  refusedInRehearsal: boolean
+}
+
+export interface AdminEvalCase {
+  name: string
+  as: string
+  say?: string
+  input?: Record<string, unknown>
+  answers: string[]
+  expect: string[]
+}
+
+export interface AdminAgent {
+  id: string
+  name: string
+  description: string
+  version: string
+  pattern: string
+  model: string
+  audience: string[]
+  limits: { maxSteps: number; maxTokens: number }
+  unavailable?: string
+  prompts: Record<string, string>
+  tools: AdminTool[]
+  input: InputSchema | null
+  deferred?: { actor: string; subjects: Record<string, string> }
+  mcpDirect: string[]
+  evals: AdminEvalCase[]
+}
+
+export interface AdminDeferredAction {
+  id: string
+  subject: string
+  runAt: string
+  when: string
+  status: string
+  scheduledBy: string
+  scheduledAt: string | null
+  goal: string
+  outcome: string
+  finishedAt: string | null
+}
+
+export interface RehearsalCall {
+  tool: string
+  arguments: Record<string, unknown>
+  refused: boolean
+  would: string | null
+}
+
+export interface RehearsalResult {
+  agent: string
+  case: string
+  as: string
+  passed: boolean
+  state: string
+  millis: number
+  plan: string[]
+  questions: string[]
+  calls: RehearsalCall[]
+  checks: { name: string; passed: boolean; detail: string }[]
+  answer: string
+}
+
+export interface RehearsalReport {
+  org: string
+  version: string
+  at: string
+  receivedAt: string
+  pullRequest?: string
+  title?: string
+  ref?: string
+  held: number
+  cases: number
+  untested: string[]
+  results: RehearsalResult[]
 }

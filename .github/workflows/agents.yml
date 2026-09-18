@@ -69,6 +69,12 @@ jobs:
         env:
           AGENTKIT_REHEARSE_SINCE: ${{ github.event.pull_request.base.sha }}
           AGENTKIT_REHEARSE_REPORT: ${{ github.workspace }}/rehearsal.json
+          AGENTKIT_REHEARSE_PULL_REQUEST: ${{ github.event.pull_request.html_url }}
+          AGENTKIT_REHEARSE_TITLE: ${{ github.event.pull_request.title }}
+          # When a host serves the organization, its admin view shows the report: set the repository
+          # variable AGENTKIT_HOST_URL and the secret AGENTKIT_REHEARSAL_TOKEN (the org's REHEARSAL_TOKEN).
+          AGENTKIT_REHEARSE_POST_URL: ${{ vars.AGENTKIT_HOST_URL }}
+          AGENTKIT_REHEARSE_POST_TOKEN: ${{ secrets.AGENTKIT_REHEARSAL_TOKEN }}
         run: ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Rehearse -Dexec.appArgs="$ORG"
 
       - name: Say why nothing was rehearsed

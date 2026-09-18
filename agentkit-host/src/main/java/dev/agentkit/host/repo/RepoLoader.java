@@ -29,7 +29,7 @@ import java.util.stream.Stream;
  * Reads an organization's repository of agents from a directory — normally a checkout of its Git repository.
  *
  * <pre>
- * org.yaml                     org, model, directory
+ * org.yaml                     org, model, directory, admins
  * connectors/&lt;name&gt;.yaml      url or command, headers, trustAnnotations, authoritative, timeoutSeconds, tools
  * agents/&lt;id&gt;/agent.yaml       name, description, pattern, model, audience, prompt, tools, confirm, bind, limits
  * agents/&lt;id&gt;/…               the prompt files agent.yaml names
@@ -49,7 +49,7 @@ public final class RepoLoader {
 
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
-    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory");
+    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins");
     private static final Set<String> DIRECTORY_KEYS = Set.of("connector", "tool", "argument");
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
@@ -100,6 +100,7 @@ public final class RepoLoader {
         String org = null;
         String model = null;
         Optional<DirectorySpec> directory = Optional.empty();
+        List<String> admins = List.of();
         Optional<JsonNode> orgFile = yaml("org.yaml", true);
         if (orgFile.isPresent()) {
             JsonNode node = orgFile.get();
@@ -109,6 +110,7 @@ public final class RepoLoader {
             if (node.has("directory")) {
                 directory = directory(node.get("directory"));
             }
+            admins = strings("org.yaml", "admins", node.get("admins"));
         }
 
         Map<String, ConnectorSpec> connectors = new LinkedHashMap<>();
@@ -149,7 +151,7 @@ public final class RepoLoader {
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
-        return new OrgRepo(org, version, model, directory, connectors, agents);
+        return new OrgRepo(org, version, model, directory, connectors, agents, admins);
     }
 
     // ---------------------------------------------------------------- org and connectors

@@ -90,12 +90,34 @@ class RehearseTest {
         Files.writeString(repo.resolve("agents/security-desk/policy.md"), "Changed too.");
         Path summary = dir.resolve("summary.md");
         Path report = dir.resolve("report.json");
+        // The host, taking the report for its admin view.
+        List<String> posted = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.sun.net.httpserver.HttpServer host = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        host.createContext("/host/rehearsals/acme", exchange -> {
+            posted.add(exchange.getRequestHeaders().getFirst("Authorization") + " "
+                    + new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            exchange.sendResponseHeaders(202, -1);
+            exchange.close();
+        });
+        host.start();
         Output out = new Output();
-        int status = Rehearse.run(List.of(repo.toString()), env(Map.of("AGENTKIT_REHEARSE_SINCE", "HEAD",
-                "GITHUB_ACTIONS", "true", "GITHUB_STEP_SUMMARY", summary.toString(),
-                "AGENTKIT_REHEARSE_REPORT", report.toString(), "AGENTKIT_VALIDATE_PATH_PREFIX", "orgs/acme/")),
-                out.stream, Optional.of(new Scripted(
-                        call("open_ticket", Map.of("summary", "Lost phone")), text("I would open a ticket."))));
+        int status;
+        try {
+            status = Rehearse.run(List.of(repo.toString()), env(Map.of("AGENTKIT_REHEARSE_SINCE", "HEAD",
+                    "GITHUB_ACTIONS", "true", "GITHUB_STEP_SUMMARY", summary.toString(),
+                    "AGENTKIT_REHEARSE_REPORT", report.toString(), "AGENTKIT_VALIDATE_PATH_PREFIX", "orgs/acme/",
+                    "AGENTKIT_REHEARSE_POST_URL", "http://127.0.0.1:" + host.getAddress().getPort() + "/",
+                    "AGENTKIT_REHEARSE_POST_TOKEN", "report-token",
+                    "AGENTKIT_REHEARSE_PULL_REQUEST", "https://github.com/acme/agents/pull/7")),
+                    out.stream, Optional.of(new Scripted(
+                            call("open_ticket", Map.of("summary", "Lost phone")), text("I would open a ticket."))));
+        } finally {
+            host.stop(0);
+        }
+        assertThat(posted).singleElement().satisfies(p -> assertThat(p).startsWith("Bearer report-token {")
+                .contains("\"pullRequest\" : \"https://github.com/acme/agents/pull/7\"").contains("\"held\" : 1"));
+        assertThat(out.text()).contains("The report was sent to http://127.0.0.1:");
 
         assertThat(status).as(out.text()).isZero();
         assertThat(out.text()).contains("helpdesk — IT Helpdesk: 1 case(s)")

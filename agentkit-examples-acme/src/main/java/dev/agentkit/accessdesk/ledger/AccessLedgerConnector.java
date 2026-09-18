@@ -212,17 +212,31 @@ public final class AccessLedgerConnector implements AutoCloseable {
      *   java -cp ... dev.agentkit.accessdesk.ledger.AccessLedgerConnector
      * </pre>
      * {@code LEDGER_PORT} (default 8120), {@code LEDGER_DATA_DIR} (default {@code data/access-ledger}),
-     * {@code LEDGER_BACKSTOP_SECONDS} (default 60).
+     * {@code LEDGER_BACKSTOP_SECONDS} (default 60). It waits up to a minute for the company systems to answer, so the
+     * two can be started together.
      */
     public static void main(String[] args) throws Exception {
         Map<String, String> env = System.getenv();
         String token = Objects.requireNonNull(env.get("LEDGER_TOKEN"), "Set LEDGER_TOKEN");
         Path dataDir = Path.of(env.getOrDefault("LEDGER_DATA_DIR", "data/access-ledger")).toAbsolutePath();
         Files.createDirectories(dataDir);
-        HttpMcpConnection company = HttpMcpConnection.builder(URI.create(Objects.requireNonNull(env.get("COMPANY_MCP_URL"),
-                        "Set COMPANY_MCP_URL")))
-                .header("Authorization", "Bearer " + Objects.requireNonNull(env.get("COMPANY_MCP_TOKEN"), "Set COMPANY_MCP_TOKEN"))
-                .connect();
+        HttpMcpConnection.Builder builder = HttpMcpConnection.builder(URI.create(Objects.requireNonNull(
+                        env.get("COMPANY_MCP_URL"), "Set COMPANY_MCP_URL")))
+                .header("Authorization", "Bearer " + Objects.requireNonNull(env.get("COMPANY_MCP_TOKEN"), "Set COMPANY_MCP_TOKEN"));
+        HttpMcpConnection company = null;
+        for (int attempt = 1; company == null; attempt++) {
+            try {
+                company = builder.connect();
+            } catch (dev.agentkit.mcp.McpException e) {
+                if (attempt == 60) {
+                    throw e;
+                }
+                if (attempt == 1) {
+                    System.out.println("Waiting for the company systems at " + env.get("COMPANY_MCP_URL") + "…");
+                }
+                Thread.sleep(1_000);
+            }
+        }
         AccessLedgerConnector served = serve(Integer.parseInt(env.getOrDefault("LEDGER_PORT", "8120")), token,
                 AccessLedger.open(dataDir.resolve("ledger.json")), new CompanyClient(company), Instant::now,
                 Long.parseLong(env.getOrDefault("LEDGER_BACKSTOP_SECONDS", "60")));

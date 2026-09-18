@@ -1,10 +1,14 @@
 import type {
+  AdminAgent,
+  AdminDeferredAction,
+  AdminOverview,
   AgentInfo,
   Attachment,
   Conversation,
   ConversationDetail,
   Overview,
   PendingDecision,
+  RehearsalReport,
   Turn,
 } from './types'
 
@@ -39,7 +43,12 @@ export class ApiError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  return at<T>(`/api${path}`, init)
+}
+
+/** {@link call}, at a path of the application's own beside the console's `/api`, such as the host's `/host`. */
+async function at<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
@@ -62,6 +71,18 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   overview: () => call<Overview>('/overview'),
+
+  /** The organization's admin view: read-only, for the admins its org.yaml names. */
+  admin: {
+    overview: () => at<AdminOverview>('/host/admin'),
+    agent: (id: string, version?: string) =>
+      at<AdminAgent>(
+        `/host/admin/agents/${encodeURIComponent(id)}${version ? `?version=${encodeURIComponent(version)}` : ''}`,
+      ),
+    deferred: () =>
+      at<{ agents: { id: string; name: string; actions: AdminDeferredAction[] }[] }>('/host/admin/deferred'),
+    rehearsals: () => at<{ reports: RehearsalReport[] }>('/host/admin/rehearsals'),
+  },
 
   conversations: () => call<Conversation[]>('/conversations'),
 

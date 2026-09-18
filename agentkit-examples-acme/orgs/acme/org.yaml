@@ -7,3 +7,7 @@ directory:
   connector: company
   tool: directory_lookup
   argument: email
+
+# Who sees the admin view: what each version of these agents can do, the pull requests'
+# rehearsals, and the deferred work. Groups from the directory.
+admins: [agent-operators]

@@ -100,6 +100,7 @@ export function Console() {
         onFilter={threads.setFilter}
         onOpen={threads.open}
         agents={overview?.agents ?? []}
+        admin={overview?.admin === true}
         onCreate={(agent) => void threads.create(agent)}
         onRename={(id, title) => void threads.rename(id, title)}
         onForget={(id) => void threads.forget(id)}

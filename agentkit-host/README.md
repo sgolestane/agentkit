@@ -33,6 +33,7 @@ directory:                             # optional: who someone is
   connector: helpdesk
   tool: directory_lookup
   argument: email
+admins: [agent-operators]              # optional: directory groups that see the admin view
 ```
 
 The directory tool is called with the email of the person the host authenticated. It returns
@@ -249,6 +250,28 @@ AGENTKIT_HOST_DATABASE_USER=agentkit AGENTKIT_HOST_DATABASE_PASSWORD=... \
   sweep, one runs an action. If the host that claimed it stops, the action is due again once the
   claim is 30 minutes old (at least once, as for every deferred store).
 
+## The admin view
+
+At `/admin`, for the people in a group `org.yaml` names under `admins` (nobody when it names
+none), and linked from their console. It only reads. A change to an agent is a pull request to the
+organization's repository, and this is where its effect is seen:
+
+- **Agents, by version.** The version new conversations start on, and the earlier ones still
+  serving the conversations pinned to them.
+- **What each agent can do.** Its tools grouped by effect, and what the definition adds to each:
+  a confirmation, arguments bound to the person, whether a rehearsal refuses it. Also its form,
+  its deferred work, its eval cases and its prompts, at any loaded version.
+- **Rehearsals.** The reports `rehearse` sent for the organization's pull requests: what held,
+  the plans, and what each agent would have done. A report arrives at `POST /host/rehearsals/<org>`
+  with the organization's `REHEARSAL_TOKEN` secret (`AGENTKIT_SECRET_<ORG>_REHEARSAL_TOKEN`).
+  Reports are kept in Postgres when the host has a database, and in memory otherwise.
+- **Deferred work.** Every action the organization's agents have scheduled, its goal and how it
+  ended.
+- **Connectors.** Whether each is reached, and how many tools it declares.
+
+The same answers are JSON at `/host/admin`, `/host/admin/agents/<id>?version=`,
+`/host/admin/rehearsals` and `/host/admin/deferred`.
+
 ## Over MCP
 
 The host is also an MCP server, at `/mcp` on the console's port. For each agent a caller may use,
@@ -338,6 +361,9 @@ OPENROUTER_API_KEY=sk-or-... AGENTKIT_SECRET_ACME_...=... AGENTKIT_REHEARSE_SINC
   agent, what it asked, its answer, and what it would have done — each refused call with its
   arguments. Under GitHub Actions a case that failed is an annotation on `evals.yaml`, and the
   report is the job's summary. `AGENTKIT_REHEARSE_REPORT` also writes it as JSON.
+- **In the app.** With `AGENTKIT_REHEARSE_POST_URL` (the host) and `AGENTKIT_REHEARSE_POST_TOKEN`
+  (the organization's `REHEARSAL_TOKEN`), the report is sent to the host's admin view.
+  `AGENTKIT_REHEARSE_PULL_REQUEST` and `AGENTKIT_REHEARSE_TITLE` say which pull request it is for.
 - **Which agents.** With `AGENTKIT_REHEARSE_SINCE`, the agents whose files changed since that
   ref, or all of them when `org.yaml` or a connector changed. `AGENTKIT_REHEARSE_AGENTS` names
   them instead. A changed agent with no eval cases is a warning: the pull request cannot show what

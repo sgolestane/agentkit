@@ -100,6 +100,11 @@ public final class AgentHost implements AutoCloseable {
         return agents.values().stream().filter(a -> a.admits(principal)).toList();
     }
 
+    /** Whether {@code principal} may see the organization's admin view: they are in a group {@code org.yaml} names. */
+    public boolean isAdmin(Principal principal) {
+        return principal.org().equals(repo.org()) && repo.admins().stream().anyMatch(principal.groups()::contains);
+    }
+
     /** Who someone the host has authenticated as {@code email} is in this organization. */
     public Optional<Principal> principal(String email) {
         return directory.principal(email);

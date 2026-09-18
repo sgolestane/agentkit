@@ -1,6 +1,7 @@
 package dev.agentkit.host.repo;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,9 +16,10 @@ import java.util.Optional;
  * @param directory    where a person's record is looked up, if the organization says
  * @param connectors   each connector by name
  * @param agents       each agent by id
+ * @param admins       the directory groups whose members see the organization's admin view; empty for nobody
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
-                      Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents) {
+                      Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins) {
 
     public OrgRepo {
         Objects.requireNonNull(org, "org");
@@ -25,6 +27,7 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         Objects.requireNonNull(defaultModel, "defaultModel");
         Objects.requireNonNull(directory, "directory");
         connectors = Map.copyOf(connectors);
+        admins = admins == null ? List.of() : List.copyOf(admins);
         agents = Map.copyOf(agents);
     }
 

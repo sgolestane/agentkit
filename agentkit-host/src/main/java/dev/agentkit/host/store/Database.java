@@ -98,6 +98,14 @@ public final class Database implements AutoCloseable {
                 loaded_at timestamptz not null,
                 primary key (org_id, version)
             );
+            """, """
+            create table rehearsal (
+                id          bigserial primary key,
+                org_id      text not null,
+                received_at timestamptz not null,
+                report      json not null
+            );
+            create index rehearsal_by_org on rehearsal (org_id, received_at desc);
             """);
 
     private final HikariDataSource pool;

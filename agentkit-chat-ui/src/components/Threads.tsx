@@ -14,6 +14,7 @@ export function Threads({
   filter,
   working,
   agents = [],
+  admin = false,
   onFilter,
   onOpen,
   onCreate,
@@ -26,6 +27,8 @@ export function Threads({
   working: boolean
   /** The agents on offer. With more than one, "+" asks which; with one or none it just starts. */
   agents?: AgentInfo[]
+  /** Whether the person may see the organization's admin view, which is then linked at the foot. */
+  admin?: boolean
   onFilter: (value: string) => void
   onOpen: (id: string) => void
   onCreate: (agent?: string) => void
@@ -67,6 +70,11 @@ export function Threads({
           <li className="px-3 py-2 text-xs text-muted">Nothing matches that.</li>
         ) : null}
       </ul>
+      {admin ? (
+        <a href="/admin" className="border-t border-line px-3 py-2 text-xs text-muted hover:text-ink">
+          Admin: agents, versions and rehearsals
+        </a>
+      ) : null}
     </aside>
   )
 }

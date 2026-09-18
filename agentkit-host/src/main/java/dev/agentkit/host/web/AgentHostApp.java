@@ -15,11 +15,13 @@ import dev.agentkit.mcp.server.McpServer;
 import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
+import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.VersionLog;
 import dev.agentkit.host.repo.DefinitionException;
 import dev.agentkit.host.store.Database;
 import dev.agentkit.host.store.PostgresChatStore;
 import dev.agentkit.host.store.PostgresDeferredActionStore;
+import dev.agentkit.host.store.PostgresRehearsalLog;
 import dev.agentkit.host.store.PostgresVersionLog;
 import dev.agentkit.chat.store.ChatStore;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
@@ -127,6 +129,12 @@ public final class AgentHostApp {
             server.mount("/sign-in", signIn);
             server.mount("/sign-out", signIn);
         }
+        // The admin view reads; a report of a pull request's rehearsal comes in with the org's REHEARSAL_TOKEN.
+        RehearsalLog rehearsals = database.<RehearsalLog>map(PostgresRehearsalLog::new).orElseGet(RehearsalLog::inMemory);
+        AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
+                Instant::now);
+        server.mount("/host/admin", admin.admin());
+        server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,
                 conversation -> "http://localhost:" + port + "/c/" + conversation, java.time.Duration.ofMinutes(5));
         server.mount("/mcp", new HttpMcpEndpoint(new McpServer("agentkit-host", "0.1.0",
@@ -214,7 +222,10 @@ public final class AgentHostApp {
         tenant.ifPresent(t -> {
             described.put("user", t.email());
             described.put("org", t.org());
-            Optional.ofNullable(orgs.get(t.org())).ifPresent(org -> described.put("version", org.current().repo().version()));
+            Optional.ofNullable(orgs.get(t.org())).ifPresent(org -> {
+                described.put("version", org.current().repo().version());
+                described.put("admin", org.current().principal(t.email()).map(org.current()::isAdmin).orElse(false));
+            });
         });
         List<String> problems = new ArrayList<>();
         if (llm.isEmpty()) {
