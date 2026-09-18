@@ -1070,6 +1070,9 @@ What makes it safe enough to leave on:
 - **A replay is visible.** It is a run of its own, named `routine`: observers see it start, see every
   call with its `Disposition`, and see it finish.
 
+`agentkit-examples`' `routine.UnlockDeskApp` runs it against a live model: ten account unlocks,
+three worked out, three replayed with no model call, one handed back mid-replay, three re-learned.
+
 It holds no results: a replay talks to the same systems and gets whatever they say now. What it
 removes is the deliberation, which is the part that is charged per token. The book lives in
 memory, for one process — a fresh process starts by watching again.
