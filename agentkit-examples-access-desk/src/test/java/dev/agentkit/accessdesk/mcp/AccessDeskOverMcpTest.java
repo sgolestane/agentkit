@@ -28,6 +28,8 @@ import dev.agentkit.core.message.ProposedCall;
 import dev.agentkit.core.message.Role;
 import dev.agentkit.core.message.TextBlock;
 import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.core.tool.ToolInvocation;
+import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.mcp.InProcessMcpConnection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +39,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -108,6 +111,56 @@ class AccessDeskOverMcpTest {
         JsonNode access = mcp("""
                 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"my_access","arguments":{}}}""", PRIYA);
         assertThat(access.path("result").path("content").get(0).path("text").asText()).contains("GR-1001");
+    }
+
+    @Test
+    void aDecisionThatNeedsConfirmingIsReportedAtOnceRatherThanWaitedOut() throws Exception {
+        String dana = "dana.kim@acme.example";
+        ToolResult submitted = new DeskTools(PRIYA, ledger, company, scheduler, clock).catalog()
+                .entry("submit_access_request").orElseThrow().tool()
+                .execute(new ToolInvocation("t0", "submit_access_request", new HashMap<>(Map.of(
+                        "resource_id", "db-payments-prod", "level", "read", "hours", 2,
+                        "justification", "INC-4211", "approver_email", dana))));
+        assertThat(submitted.isError()).isFalse();
+        LlmClient approves = request -> LlmResponse.of(Message.of(Role.ASSISTANT, ProposedCall.of("c1", "decide_request",
+                Map.of("request_id", "REQ-1001", "decision", "approve", "hours", 1))), LlmStopReason.TOOL_USE, TokenUsage.ZERO);
+        try (ChatRuntime approving = new ChatRuntime(new InMemoryChatStore(), new ChatEvents(), session -> {
+            DeskTools desk = new DeskTools(session.tenantId(), ledger, company, scheduler, clock);
+            return session.agent(approves, DeskAgent.conversationTools(desk, systems.catalog()).registry(),
+                            AgentConfig.builder("scripted").systemPrompt("desk").build())
+                    .toolGate(DeskAgent.gate(session.approver()))
+                    .build();
+        })) {
+            McpBridge bridge = new McpBridge(approving, Set.of(dana), caller -> new DeskTools(caller, ledger, company,
+                    scheduler, clock), caller -> "http://localhost:8102", Duration.ofSeconds(60));
+            DeskServer desk = new DeskServer(0, clock, null, store, List.of(), bridge);
+            desk.start();
+            try {
+                long start = System.nanoTime();
+                HttpResponse<String> response = http.send(HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + desk.port() + "/mcp"))
+                        .header("Content-Type", "application/json").header(DeskServer.USER_HEADER, dana)
+                        .POST(HttpRequest.BodyPublishers.ofString("""
+                                {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_access_desk",
+                                 "arguments":{"message":"Approve REQ-1001 for one hour"}}}""")).build(),
+                        HttpResponse.BodyHandlers.ofString());
+                Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+                JsonNode result = MAPPER.readTree(response.body()).path("result");
+                assertThat(result.path("isError").asBoolean()).isFalse();
+                assertThat(result.path("content").get(0).path("text").asText())
+                        .contains("waiting for your confirmation to run decide_request")
+                        .contains("REQ-1001")
+                        .contains("http://localhost:8102");
+                assertThat(took).isLessThan(Duration.ofSeconds(15));
+                // Nothing was decided behind the confirmation card.
+                assertThat(ledger.request("REQ-1001")).hasValueSatisfying(r ->
+                        assertThat(r.status()).isEqualTo(AccessLedger.AccessRequest.Status.PENDING));
+                assertThat(approving.pending(dana)).hasSize(1);
+            } finally {
+                desk.close();
+            }
+        }
     }
 
     @Test

@@ -88,16 +88,25 @@ public final class McpBridge {
         Turn turn = runtime.say(caller, conversation.id(), message.strip(), List.of());
         long deadline = System.nanoTime() + patience.toNanos();
         while (System.nanoTime() < deadline) {
+            // The desk's confirmation gate blocks the turn, which stays RUNNING while it waits: what says it is
+            // waiting is the pending decision. A gate that ends the run instead leaves WAITING_FOR_HUMAN, which is
+            // terminal, so both are checked before the turn is taken as finished.
+            Optional<ChatRuntime.PendingDecision> owed = runtime.pending(caller).stream()
+                    .filter(d -> d.conversationId().equals(conversation.id()) && d.turnId().equals(turn.id()))
+                    .findFirst();
             Optional<Turn> now = runtime.store().turn(caller, conversation.id(), turn.id());
+            if (owed.isPresent() || now.isPresent() && now.get().state() == Turn.State.WAITING_FOR_HUMAN) {
+                String what = owed.map(d -> d.kind() == ChatRuntime.PendingDecision.Kind.QUESTION
+                        ? "an answer to: " + d.question()
+                        : "your confirmation to run " + d.tool() + " " + d.arguments()).orElse("your confirmation");
+                return ToolResult.ok("Access Desk is waiting for " + what + ". Open your console at "
+                        + consoleFor.apply(caller) + " (conversation \"" + CONVERSATION_TITLE + "\") to decide.");
+            }
             if (now.isPresent() && now.get().state().isTerminal()) {
                 Turn done = now.get();
                 return done.state() == Turn.State.COMPLETED
                         ? ToolResult.ok(done.answer())
                         : ToolResult.error("Access Desk could not finish: " + (done.detail() == null ? done.state() : done.detail()));
-            }
-            if (now.isPresent() && now.get().state() == Turn.State.WAITING_FOR_HUMAN) {
-                return ToolResult.ok("Access Desk is waiting for your confirmation. Open your console at "
-                        + consoleFor.apply(caller) + " (conversation \"" + CONVERSATION_TITLE + "\") to confirm or refuse.");
             }
             try {
                 Thread.sleep(250);
