@@ -1,11 +1,8 @@
-package dev.agentkit.accessdesk.mcp;
+package dev.agentkit.mcp;
 
 import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
-import dev.agentkit.mcp.McpCallResult;
-import dev.agentkit.mcp.McpConnection;
-import dev.agentkit.mcp.McpToolInfo;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +24,7 @@ public final class InProcessMcpConnection implements McpConnection {
     public List<McpToolInfo> listTools() {
         return tools.entries().stream()
                 .map(e -> new McpToolInfo(e.tool().name(), e.tool().description(), e.tool().inputSchema(),
-                        Map.of(McpServer.META_EFFECT, e.declaration().effect().wire())))
+                        McpDeclarations.meta(e.declaration())))
                 .toList();
     }
 

@@ -7,7 +7,6 @@ import dev.agentkit.accessdesk.desk.DeskAgent;
 import dev.agentkit.accessdesk.desk.DeskConfig;
 import dev.agentkit.accessdesk.desk.DeskTools;
 import dev.agentkit.accessdesk.desk.ExpiryBackstop;
-import dev.agentkit.accessdesk.mcp.Connectors;
 import dev.agentkit.chat.ChatEvents;
 import dev.agentkit.chat.ChatRuntime;
 import dev.agentkit.chat.store.FileChatStore;
@@ -19,6 +18,7 @@ import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.deferred.DeferredRunner;
 import dev.agentkit.core.llm.LlmClient;
 import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.mcp.McpConnectors;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -76,7 +76,7 @@ public final class AccessDeskApp {
                 : List.of("No model is configured. Set OPENROUTER_API_KEY (and optionally ACCESS_DESK_MODEL), then restart.");
 
         DemoClock clock = new DemoClock();
-        Connectors.Connected connected = Connectors.connect(config.connectors(), Map.of(
+        McpConnectors.Connected connected = McpConnectors.connect(config.connectors(), Map.of(
                 "java", Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "classpath", System.getProperty("java.class.path"),
                 "dataDir", dataDir.toString()));

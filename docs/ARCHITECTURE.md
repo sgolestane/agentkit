@@ -33,7 +33,7 @@ agentkit-llm-anthropic/  LlmClient over the Anthropic Java SDK
 agentkit-llm-bedrock/    the Anthropic adapter on Claude via Amazon Bedrock
 agentkit-llm-openrouter/ LlmClient over OpenRouter's OpenAI-compatible API
 agentkit-temporal/       the loop as a Temporal workflow (durable execution)
-agentkit-mcp/            tools from a Model Context Protocol server
+agentkit-mcp/            MCP client (stdio, streamable HTTP) and server; declared connector tools
 agentkit-eval/           dataset evals: outcome, tool-use, trajectory, LLM-judge
 agentkit-json/           schemas derived from Java types, replies parsed back
 agentkit-otel/           OpenTelemetry traces and metrics (GenAI conventions)

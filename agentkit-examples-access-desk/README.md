@@ -98,11 +98,12 @@ time comes, `DeferredRunner` runs the goal. The desk supplies only the subject (
 `ExpiryBackstop` deterministically revokes anything still active 5 minutes after expiry, in case a
 deferred action was never scheduled or failed.
 
-**MCP.** The client is `agentkit-mcp`'s. Tool annotations are hints a server could lie in, so a
-server's are acted on only when `connectors.json` marks it `"trustAnnotations": true`, as the
-bundled company systems are. The server side lives in this app: `mcp/McpServer` implements the tool
-subset of the protocol, with transports for stdio (`StdioMcpServer`) and streamable HTTP
-(`HttpMcpEndpoint`).
+**MCP.** Both sides are `agentkit-mcp`'s: `McpConnectors` reads `connectors.json` (a server is a
+`command` run over stdio, or a `url` reached over streamable HTTP), and `dev.agentkit.mcp.server`
+serves the company systems over stdio and the desk itself over HTTP. Tool annotations are hints a
+server could lie in, so a server's are acted on only when `connectors.json` marks it
+`"trustAnnotations": true`, as the bundled company systems are. How a tool's declaration travels is
+in [`docs/MCP-CONNECTORS.md`](../docs/MCP-CONNECTORS.md).
 
 ## Tests and evals
 

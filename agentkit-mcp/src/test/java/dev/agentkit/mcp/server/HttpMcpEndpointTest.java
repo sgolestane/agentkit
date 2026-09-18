@@ -1,12 +1,12 @@
-package dev.agentkit.accessdesk.mcp;
+package dev.agentkit.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
-import dev.agentkit.accessdesk.systems.CompanySystems;
 import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.mcp.ExampleTools;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +21,7 @@ import java.util.Optional;
 class HttpMcpEndpointTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String USER_HEADER = "X-Test-User";
     private static final String PRIYA = "priya.natarajan@acme.example";
 
     private HttpServer server;
@@ -29,10 +30,10 @@ class HttpMcpEndpointTest {
 
     @BeforeEach
     void start() throws Exception {
-        DeclaredTools catalog = CompanySystems.open(null).catalog();
+        DeclaredTools catalog = ExampleTools.catalog();
         McpServer mcp = new McpServer("access-desk", "0.1.0", "Ask for access.");
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/mcp", new HttpMcpEndpoint(mcp, user -> PRIYA.equals(user)
+        server.createContext("/mcp", new HttpMcpEndpoint(mcp, HttpMcpEndpoint.Callers.header(USER_HEADER), user -> PRIYA.equals(user)
                 ? Optional.of(catalog) : Optional.empty()));
         server.start();
         endpoint = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/mcp");
@@ -102,13 +103,52 @@ class HttpMcpEndpointTest {
         assertThat(get.statusCode()).isEqualTo(405);
     }
 
+    @Test
+    void eachToolCarriesItsDeclarationBesideTheStandardHints() throws Exception {
+        JsonNode tools = MAPPER.readTree(post("""
+                {"jsonrpc":"2.0","id":7,"method":"tools/list"}""", PRIYA, null).body()).path("result").path("tools");
+
+        JsonNode grant = null;
+        JsonNode read = null;
+        for (JsonNode tool : tools) {
+            if (tool.path("name").asText().equals("grant_access")) {
+                grant = tool;
+            } else if (tool.path("name").asText().equals("list_resources")) {
+                read = tool;
+            }
+        }
+        assertThat(grant.path("_meta").path("dev.agentkit/effect").asText()).isEqualTo("grant");
+        assertThat(grant.path("_meta").path("dev.agentkit/system").asText()).isEqualTo("iam");
+        assertThat(grant.path("_meta").path("dev.agentkit/subject").asText()).isEqualTo("email");
+        assertThat(grant.path("annotations").path("readOnlyHint").asBoolean()).isFalse();
+        assertThat(read.path("_meta").has("dev.agentkit/subject")).isFalse();
+        assertThat(read.path("annotations").path("readOnlyHint").asBoolean()).isTrue();
+    }
+
+    @Test
+    void theOriginsAllowedCanBeWidenedForADeployedServer() throws Exception {
+        server.createContext("/wide", new HttpMcpEndpoint(new McpServer("wide", "1", ""),
+                HttpMcpEndpoint.Callers.header(USER_HEADER), user -> Optional.of(ExampleTools.catalog()),
+                origin -> origin.equals("https://console.example.com")));
+        URI wide = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/wide");
+        String ping = """
+                {"jsonrpc":"2.0","id":8,"method":"ping"}""";
+
+        assertThat(post(wide, ping, PRIYA, "https://console.example.com").statusCode()).isEqualTo(200);
+        assertThat(post(wide, ping, PRIYA, "http://localhost:3000").statusCode()).isEqualTo(403);
+    }
+
     private HttpResponse<String> post(String body, String user, String origin) throws Exception {
+        return post(endpoint, body, user, origin);
+    }
+
+    private HttpResponse<String> post(URI endpoint, String body, String user, String origin) throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body));
         if (user != null) {
-            request.header(HttpMcpEndpoint.USER_HEADER, user);
+            request.header(USER_HEADER, user);
         }
         if (origin != null) {
             request.header("Origin", origin);

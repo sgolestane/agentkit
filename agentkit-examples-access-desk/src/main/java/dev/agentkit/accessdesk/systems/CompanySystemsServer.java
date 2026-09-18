@@ -1,7 +1,7 @@
 package dev.agentkit.accessdesk.systems;
 
-import dev.agentkit.accessdesk.mcp.McpServer;
-import dev.agentkit.accessdesk.mcp.StdioMcpServer;
+import dev.agentkit.mcp.server.McpServer;
+import dev.agentkit.mcp.server.StdioMcpServer;
 import java.nio.file.Path;
 
 /**

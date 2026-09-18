@@ -4,10 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import dev.agentkit.accessdesk.mcp.HttpMcpEndpoint;
-import dev.agentkit.accessdesk.mcp.McpServer;
 import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.core.deferred.DeferredRunner;
+import dev.agentkit.mcp.server.HttpMcpEndpoint;
+import dev.agentkit.mcp.server.McpServer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -38,6 +38,12 @@ public final class DeskServer implements AutoCloseable {
     public record Console(String email, String name, String title, String url) {
     }
 
+    /**
+     * The header an MCP client names its person in. A demo identity: nothing authenticates it, which is why the
+     * endpoint only answers on localhost.
+     */
+    public static final String USER_HEADER = "X-Access-Desk-User";
+
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules()
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
@@ -59,7 +65,8 @@ public final class DeskServer implements AutoCloseable {
         server.createContext("/api/deferred", this::deferred);
         server.createContext("/mcp", new HttpMcpEndpoint(new McpServer("access-desk", "0.1.0",
                 "Access Desk grants temporary access under the company's access policy. Use ask_access_desk to ask for "
-                        + "access, check on requests, or decide requests waiting for you."), bridge::toolsFor));
+                        + "access, check on requests, or decide requests waiting for you."), HttpMcpEndpoint.Callers.header(USER_HEADER),
+                bridge::toolsFor));
         server.createContext("/", this::landing);
     }
 
@@ -80,7 +87,7 @@ public final class DeskServer implements AutoCloseable {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("consoles", consoles);
         body.put("mcp", "http://localhost:" + port() + "/mcp");
-        body.put("mcpUserHeader", HttpMcpEndpoint.USER_HEADER);
+        body.put("mcpUserHeader", USER_HEADER);
         body.put("now", clock.get());
         json(exchange, 200, body);
     }

@@ -9,7 +9,9 @@ import java.util.Map;
  *
  * <p>This is the seam the tool bridge ({@link McpTools}) depends on, so the bridge
  * is testable against a fake connection and independent of transport. The shipped
- * transport is {@link StdioMcpConnection} (JSON-RPC over a subprocess's stdio).
+ * transports are {@link StdioMcpConnection} (JSON-RPC over a subprocess's stdio) and
+ * {@link HttpMcpConnection} (streamable HTTP, for a server that runs elsewhere);
+ * {@link InProcessMcpConnection} skips the transport for tests.
  * Implementations are not required to be thread-safe.
  */
 public interface McpConnection extends AutoCloseable {

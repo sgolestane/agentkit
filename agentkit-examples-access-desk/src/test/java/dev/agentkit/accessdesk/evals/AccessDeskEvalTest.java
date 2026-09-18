@@ -8,7 +8,7 @@ import dev.agentkit.accessdesk.desk.AccessLedger;
 import dev.agentkit.accessdesk.desk.CompanyClient;
 import dev.agentkit.accessdesk.desk.DeskConfig;
 import dev.agentkit.accessdesk.desk.DeskTools;
-import dev.agentkit.accessdesk.mcp.InProcessMcpConnection;
+import dev.agentkit.mcp.InProcessMcpConnection;
 import dev.agentkit.accessdesk.systems.CompanySystems;
 import dev.agentkit.accessdesk.web.DeskChat;
 import dev.agentkit.chat.ChatEvents;

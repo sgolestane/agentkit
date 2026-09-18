@@ -2,7 +2,7 @@ package dev.agentkit.accessdesk.desk;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.agentkit.accessdesk.mcp.InProcessMcpConnection;
+import dev.agentkit.mcp.InProcessMcpConnection;
 import dev.agentkit.accessdesk.systems.CompanySystems;
 import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.agent.AgentConfig;

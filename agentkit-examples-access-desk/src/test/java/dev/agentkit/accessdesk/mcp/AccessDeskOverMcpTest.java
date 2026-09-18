@@ -28,6 +28,7 @@ import dev.agentkit.core.message.ProposedCall;
 import dev.agentkit.core.message.Role;
 import dev.agentkit.core.message.TextBlock;
 import dev.agentkit.core.tool.DeclaredTools;
+import dev.agentkit.mcp.InProcessMcpConnection;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -123,7 +124,7 @@ class AccessDeskOverMcpTest {
 
     private HttpResponse<String> post(String body, String user) throws Exception {
         return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/mcp"))
-                .header("Content-Type", "application/json").header(HttpMcpEndpoint.USER_HEADER, user)
+                .header("Content-Type", "application/json").header(DeskServer.USER_HEADER, user)
                 .POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString());
     }
 }

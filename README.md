@@ -32,7 +32,7 @@ dumped, and actions are verified and gated rather than trusted.
 | **Rehearsal mode** | Run an agent end to end with every tool that changes anything refused, to see what it would do. |
 | **Token & cost budgets** | Cap tokens and dollar spend across a run, in-process or durably; stop as soon as the cap is reached. |
 | **OpenTelemetry** | Traces and metrics for runs, model calls and tool calls, on the GenAI semantic conventions. |
-| **MCP tools** | Use any Model Context Protocol server's tools as ordinary tools. |
+| **MCP tools** | Use any Model Context Protocol server's tools as ordinary tools, over stdio or streamable HTTP — and serve your own tools as an MCP server. |
 | **Programmatic tool calling** | Let the model orchestrate tools by writing a script run in a sandbox. |
 | **Learning from failure** | Reflexion-style lessons distilled from failed attempts, replayed into later runs. |
 | **Evaluation harness** | Dataset evals over outcome, tool-use, trajectory, and LLM-judge checks. |
@@ -67,7 +67,7 @@ agentkit-llm-anthropic/  # LlmClient over the Anthropic Java SDK (claude-opus-4-
 agentkit-llm-bedrock/    # the Anthropic adapter on Claude via Amazon Bedrock
 agentkit-llm-openrouter/ # LlmClient over OpenRouter's OpenAI-compatible API (many providers)
 agentkit-temporal/       # agent loop as a Temporal workflow
-agentkit-mcp/            # tools from a Model Context Protocol server
+agentkit-mcp/            # MCP client (stdio, streamable HTTP) and server; declared connector tools
 agentkit-eval/           # dataset evals: outcome, tool-use, trajectory, LLM-judge
 agentkit-json/           # schemas derived from Java types; replies parsed back into them
 agentkit-otel/           # OpenTelemetry traces and metrics (GenAI semantic conventions)
@@ -477,6 +477,25 @@ transport is behind an `McpConnection` seam, so the bridge is provider-agnostic 
 testable without a live server. Each JSON-RPC message is read up to a bounded line
 length (~64M characters) so a misbehaving or hostile server cannot exhaust heap with
 an unterminated line; a message over the cap fails with an `McpException`.
+
+**A server elsewhere** is reached over streamable HTTP with `HttpMcpConnection`, which reads a
+JSON or event-stream answer, keeps the session, and asks for its headers on every request so a
+refreshed credential is used at once:
+
+```java
+try (McpConnection mcp = HttpMcpConnection.builder(URI.create("https://ledger.example.com/mcp"))
+        .header("Authorization", "Bearer " + token)
+        .connect()) {
+    ToolRegistry tools = McpTools.registry(mcp);
+}
+```
+
+**Serving tools, and saying what they do.** `dev.agentkit.mcp.server.McpServer` serves a
+`DeclaredTools` over stdio (`StdioMcpServer`) or HTTP (`HttpMcpEndpoint`, which serves each caller
+the catalog that acts as them). Each tool's `ToolDeclaration` — its effect, system and subject —
+travels in `_meta`, and `McpConnectors` reads a connectors file into a `DeclaredTools`, leaving out
+any tool nobody declared. The contract, for connectors in any language, is
+[`docs/MCP-CONNECTORS.md`](docs/MCP-CONNECTORS.md).
 
 ### Programmatic tool calling (code execution)
 

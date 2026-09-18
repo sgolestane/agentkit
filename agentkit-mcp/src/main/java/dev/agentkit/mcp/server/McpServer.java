@@ -1,4 +1,4 @@
-package dev.agentkit.accessdesk.mcp;
+package dev.agentkit.mcp.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +11,7 @@ import dev.agentkit.core.tool.ToolDeclaration;
 import dev.agentkit.core.tool.ToolEffect;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
+import dev.agentkit.mcp.McpDeclarations;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,15 +32,13 @@ import java.util.UUID;
  * {@code readOnlyHint} for {@link ToolEffect#READ}, {@code destructiveHint} for {@link ToolEffect#REVOKE},
  * {@code idempotentHint} from its {@link SideEffects}. The annotations cannot say <em>grant</em> or
  * <em>revoke</em>, or which argument names the person, so the full declaration also travels in
- * {@code _meta} under {@link #META_EFFECT}, {@link #META_SYSTEM} and {@link #META_SUBJECT}. A client
- * that knows these keys needs no configuration to bound what the tools may do; one that does not
- * still gets the standard hints.
+ * {@code _meta} under the keys in {@link McpDeclarations}. A client that knows these keys needs no
+ * configuration to bound what the tools may do; one that does not still gets the standard hints.
+ *
+ * <p>Transport-independent and stateless: the catalog is passed with each message, so one server can serve
+ * each caller the tools that act as them.
  */
 public final class McpServer {
-
-    public static final String META_EFFECT = "dev.agentkit/effect";
-    public static final String META_SYSTEM = "dev.agentkit/system";
-    public static final String META_SUBJECT = "dev.agentkit/subject";
 
     /** Protocol revisions this server speaks, newest first. */
     static final List<String> PROTOCOL_VERSIONS = List.of("2025-06-18", "2025-03-26", "2024-11-05");
@@ -121,12 +120,7 @@ public final class McpServer {
             annotations.put("idempotentHint", tool.sideEffects() == SideEffects.NONE
                     || tool.sideEffects() == SideEffects.IDEMPOTENT);
             annotations.put("openWorldHint", false);
-            ObjectNode meta = listed.putObject("_meta");
-            meta.put(META_EFFECT, info.effect().wire());
-            meta.put(META_SYSTEM, info.system());
-            if (info.subjectParam() != null) {
-                meta.put(META_SUBJECT, info.subjectParam());
-            }
+            listed.set("_meta", MAPPER.valueToTree(McpDeclarations.meta(info)));
         }
         return result;
     }
