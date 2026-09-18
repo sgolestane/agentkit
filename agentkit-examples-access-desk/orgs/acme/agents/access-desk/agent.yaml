@@ -30,6 +30,10 @@ deferred:
   subjects:
     grant: {tool: ledger/get_grant, argument: grant_id}
 
+# Offered to MCP callers directly, beside ask_access_desk: reads only.
+mcp:
+  direct: [ledger/my_access, ledger/my_requests, ledger/pending_approvals]
+
 limits:
   maxSteps: 20
   maxTokens: 2048

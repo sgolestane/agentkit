@@ -34,6 +34,11 @@ import java.util.function.Supplier;
  * <p><strong>Credentials</strong> are headers from {@link Builder#headers}, asked for on every request, so a token
  * that is refreshed elsewhere is picked up without reconnecting.
  *
+ * <p><strong>Questions from the server.</strong> With an {@link Elicitor} ({@link Builder#elicitation}), the client
+ * says when it connects that it can be asked things, and answers {@code elicitation/create} requests that arrive on a
+ * call's event stream by posting the person's reply back. It answers {@code ping} too; any other request from the
+ * server is refused as not supported.
+ *
  * <p><strong>Bounds.</strong> {@link Builder#timeout} bounds how long a request waits for the server to start
  * answering; a body or stream is then read until it ends, up to {@link Builder#maxMessageBytes} per message, so a
  * server cannot exhaust the heap. Safe for use from several threads: requests are independent HTTP exchanges, and
@@ -58,6 +63,7 @@ public final class HttpMcpConnection implements McpConnection {
     private final Supplier<Map<String, String>> headers;
     private final Duration timeout;
     private final int maxMessageBytes;
+    private final Elicitor elicitor;
     private final AtomicLong nextId = new AtomicLong(1);
     private final Object sessionLock = new Object();
     private volatile String sessionId;
@@ -70,6 +76,7 @@ public final class HttpMcpConnection implements McpConnection {
         this.headers = builder.headers;
         this.timeout = builder.timeout;
         this.maxMessageBytes = builder.maxMessageBytes;
+        this.elicitor = builder.elicitor;
     }
 
     /** Connects to {@code endpoint} with no credentials and the default bounds. */
@@ -88,6 +95,7 @@ public final class HttpMcpConnection implements McpConnection {
         private Supplier<Map<String, String>> headers = Map::of;
         private Duration timeout = DEFAULT_TIMEOUT;
         private int maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES;
+        private Elicitor elicitor;
 
         private Builder(URI endpoint) {
             this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
@@ -129,6 +137,12 @@ public final class HttpMcpConnection implements McpConnection {
                 throw new IllegalArgumentException("maxMessageBytes must be > 0");
             }
             this.maxMessageBytes = maxMessageBytes;
+            return this;
+        }
+
+        /** Answers the server's questions for the person; without one the server is told it cannot ask. */
+        public Builder elicitation(Elicitor elicitor) {
+            this.elicitor = Objects.requireNonNull(elicitor, "elicitor");
             return this;
         }
 
@@ -204,7 +218,7 @@ public final class HttpMcpConnection implements McpConnection {
         synchronized (sessionLock) {
             sessionId = null;
             protocolVersion = null;
-            Exchange opened = send("initialize", McpMessages.initializeParams(), true);
+            Exchange opened = send("initialize", McpMessages.initializeParams(elicitor != null), true);
             JsonNode result = opened.result();
             protocolVersion = result.path("protocolVersion").asText(McpMessages.PROTOCOL_VERSION);
             sessionId = opened.sessionId();
@@ -342,6 +356,7 @@ public final class HttpMcpConnection implements McpConnection {
                     if (isResponseTo(message, id)) {
                         return message;
                     }
+                    answerIfAsked(message);
                 }
                 continue;
             }
@@ -364,6 +379,43 @@ public final class HttpMcpConnection implements McpConnection {
             }
         }
         throw new McpException("the event stream ended before the response to " + method);
+    }
+
+    /** Answers a request the server sent on a stream: a question for the person, a ping, or a refusal. */
+    private void answerIfAsked(JsonNode message) {
+        if (message == null || !message.isObject() || !message.has("method") || !message.hasNonNull("id")) {
+            return;
+        }
+        ObjectNode reply = McpMessages.MAPPER.createObjectNode();
+        reply.put("jsonrpc", "2.0");
+        reply.set("id", message.get("id"));
+        String method = message.get("method").asText();
+        if (method.equals("elicitation/create") && elicitor != null) {
+            JsonNode params = message.path("params");
+            Elicitor.Reply answer;
+            try {
+                answer = elicitor.answer(params.path("message").asText(""), McpMessages.toMap(params.get("requestedSchema")));
+            } catch (RuntimeException e) {
+                answer = Elicitor.Reply.cancel();
+            }
+            ObjectNode result = reply.putObject("result");
+            result.put("action", answer.action());
+            if (answer.action().equals("accept")) {
+                result.set("content", McpMessages.MAPPER.valueToTree(answer.content()));
+            }
+        } else if (method.equals("ping")) {
+            reply.putObject("result");
+        } else {
+            ObjectNode error = reply.putObject("error");
+            error.put("code", -32601);
+            error.put("message", "This client does not answer " + method);
+        }
+        HttpResponse<InputStream> response = post(reply, "the answer to " + method);
+        try (InputStream body = response.body()) {
+            body.readAllBytes();
+        } catch (IOException ignored) {
+            // The server has what it needs or has given up; either way the call's own answer follows.
+        }
     }
 
     /** One line of an event stream, without its terminator; null at the end. Bounded like a message. */

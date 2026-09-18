@@ -207,6 +207,18 @@ class AnAgentIsAssembledFromWhatItsToolsDeclareTest {
     }
 
     @Test
+    void onlyAnAgentsOwnReadsAreOfferedDirectlyOverMcp() {
+        repo.edit("agents/helpdesk/agent.yaml", "direct: [helpdesk/directory_lookup]",
+                "direct: [helpdesk/directory_lookup, helpdesk/reset_mfa, helpdesk/delete_account]");
+
+        assertThatThrownBy(this::open).isInstanceOfSatisfying(DefinitionException.class, e ->
+                assertThat(e.problems()).extracting(Object::toString).containsExactlyInAnyOrder(
+                        "agents/helpdesk/agent.yaml mcp.direct[1]: helpdesk/reset_mfa is declared grant; only a tool that "
+                                + "reads is offered outside a conversation, where nothing would stop it for the person",
+                        "agents/helpdesk/agent.yaml mcp.direct[2]: helpdesk/delete_account is not one of this agent's tools"));
+    }
+
+    @Test
     void twoConnectorsOfferingTheSameToolNameCannotBothBeSelected() throws Exception {
         try (HelpdeskConnector chat = new HelpdeskConnector(name -> name.equals("send_message"))) {
             repo.write("connectors/chat.yaml", "url: " + chat.url() + "\nheaders: {Authorization: Bearer "

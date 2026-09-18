@@ -81,7 +81,15 @@ AGENTKIT_SECRET_ACME_LEDGER_URL=http://127.0.0.1:8120/mcp AGENTKIT_SECRET_ACME_L
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
 
-Then open <http://localhost:8400> and sign in as `priya.natarajan@acme.example`.
+Then open <http://localhost:8400> and sign in as `priya.natarajan@acme.example`. For Claude
+Code, the host's MCP endpoint offers `ask_access_desk`, and `my_access`, `my_requests` and
+`pending_approvals` directly. An approval is put to the person through the client when the client
+supports elicitation:
+
+```bash
+claude mcp add --transport http access-desk http://localhost:8400/mcp \
+  --header "X-AgentKit-User: acme/dana.kim@acme.example"
+```
 
 `AccessDeskOnTheHostEvalTest` runs the same six conversations as `AccessDeskEvalTest`, scored by
 the same checks, against this configuration. `AccessDeskIsConfigurationOnTheHostTest` pins the

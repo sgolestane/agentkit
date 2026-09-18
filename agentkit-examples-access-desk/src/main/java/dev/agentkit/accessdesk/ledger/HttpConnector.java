@@ -36,6 +36,12 @@ public final class HttpConnector implements AutoCloseable {
         }
         byte[] expected = ("Bearer " + token).getBytes(StandardCharsets.UTF_8);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        // Concurrent, so a call that asks the person something can be answered while it waits.
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread thread = new Thread(r, name + "-http");
+            thread.setDaemon(true);
+            return thread;
+        }));
         server.createContext("/mcp", new HttpMcpEndpoint(new McpServer(name, "0.1.0", instructions),
                 HttpMcpEndpoint.Callers.header("Authorization"),
                 caller -> MessageDigest.isEqual(caller.getBytes(StandardCharsets.UTF_8), expected)

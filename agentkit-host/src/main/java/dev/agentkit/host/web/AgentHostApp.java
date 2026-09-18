@@ -9,6 +9,9 @@ import dev.agentkit.core.deferred.DeferredActionStore;
 import dev.agentkit.host.AgentHost;
 import dev.agentkit.host.DeferredWork;
 import dev.agentkit.host.HostChat;
+import dev.agentkit.host.HostMcp;
+import dev.agentkit.mcp.server.HttpMcpEndpoint;
+import dev.agentkit.mcp.server.McpServer;
 import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
@@ -103,6 +106,11 @@ public final class AgentHostApp {
             server.mount("/sign-in", signIn);
             server.mount("/sign-out", signIn);
         }
+        HostMcp mcp = new HostMcp(orgs, chat, self::get,
+                conversation -> "http://localhost:" + port + "/c/" + conversation, java.time.Duration.ofMinutes(5));
+        server.mount("/mcp", new HttpMcpEndpoint(new McpServer("agentkit-host", "0.1.0",
+                "Your organization's agents. Use ask_<agent> to ask one in plain language, as you would in the console."),
+                devSignIn ? DevSignIn.MCP_CALLERS : headers -> Optional.empty(), mcp::toolsFor));
         server.start();
 
         ScheduledExecutorService reloader = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -127,6 +135,8 @@ public final class AgentHostApp {
         banner.append("  model: ").append(llm.isPresent() ? "OpenRouter" : "not configured — set OPENROUTER_API_KEY")
                 .append('\n');
         banner.append("  sign-in: ").append(devSignIn ? "DEVELOPMENT (unauthenticated) at /sign-in" : "none").append('\n');
+        banner.append("  MCP: http://localhost:").append(port).append("/mcp").append(devSignIn
+                ? " (header " + DevSignIn.MCP_HEADER + ": <org>/<email>)" : " (no sign-in configured)").append('\n');
         banner.append("  data: ").append(dataDir).append('\n');
         System.out.println(banner);
         Thread.currentThread().join();

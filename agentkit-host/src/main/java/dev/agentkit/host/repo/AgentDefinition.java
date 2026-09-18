@@ -27,11 +27,12 @@ import java.util.Set;
  * @param maxSteps     how many steps one turn may take
  * @param maxTokens    the most a model call may produce
  * @param deferred     how the agent schedules work for later, or null when it does not
+ * @param mcpDirect    the agent's read tools also offered directly to MCP callers, beside asking the agent
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
-                              int maxTokens, Deferred deferred) {
+                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
@@ -53,6 +54,7 @@ public record AgentDefinition(String id, String name, String description, Patter
         tools = List.copyOf(tools);
         confirm = List.copyOf(confirm);
         bind = Map.copyOf(bind);
+        mcpDirect = mcpDirect == null ? List.of() : List.copyOf(mcpDirect);
     }
 
     /**

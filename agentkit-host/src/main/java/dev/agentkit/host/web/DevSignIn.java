@@ -27,6 +27,13 @@ public final class DevSignIn implements ChatServer.Tenants, HttpHandler {
 
     static final String COOKIE = "agentkit-dev-tenant";
 
+    /** The header an MCP client names its person in, as {@code org/email}. Unauthenticated, like the cookie. */
+    public static final String MCP_HEADER = "X-AgentKit-User";
+
+    /** Who an MCP request is from, by {@link #MCP_HEADER}, for development. */
+    public static final dev.agentkit.mcp.server.HttpMcpEndpoint.Callers MCP_CALLERS = headers ->
+            Optional.ofNullable(headers.getFirst(MCP_HEADER)).flatMap(Tenant::parse).map(Tenant::id);
+
     private final Map<String, OrgHost> orgs;
 
     public DevSignIn(Map<String, OrgHost> orgs) {

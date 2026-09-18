@@ -17,7 +17,8 @@ sides of it in Java: `dev.agentkit.mcp.server` for writing a connector, and `Mcp
 | Streamable HTTP, a JSON response per request (`application/json`) | Supported; the production transport |
 | Streamable HTTP, a response on an event stream (`text/event-stream`) | Supported; events before the response are skipped |
 | stdio | Supported for local development; a hosted deployment does not run connector processes |
-| Server-initiated requests (sampling, elicitation, roots) | Not answered |
+| Elicitation: the server asks the client's person something mid-call | Supported both ways: `HttpMcpEndpoint` asks through `McpCall`; `HttpMcpConnection` answers with an `Elicitor` |
+| Other server-initiated requests (sampling, roots) | Refused as not supported; `ping` is answered |
 
 The client sends `Mcp-Session-Id` back when the server issued one, `MCP-Protocol-Version` on
 every request after `initialize`, and starts a new session once if the server answers `404` to

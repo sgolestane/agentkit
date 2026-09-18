@@ -60,6 +60,12 @@ public final class DeskServer implements AutoCloseable {
         this.store = Objects.requireNonNull(store, "store");
         this.consoles = List.copyOf(consoles);
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+        // Concurrent, so an MCP call that asks the person something can be answered while it waits.
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread thread = new Thread(r, "access-desk-http");
+            thread.setDaemon(true);
+            return thread;
+        }));
         server.createContext("/api/desk", this::desk);
         server.createContext("/api/clock", this::clock);
         server.createContext("/api/deferred", this::deferred);

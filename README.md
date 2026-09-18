@@ -495,7 +495,9 @@ try (McpConnection mcp = HttpMcpConnection.builder(URI.create("https://ledger.ex
 `DeclaredTools` over stdio (`StdioMcpServer`) or HTTP (`HttpMcpEndpoint`, which serves each caller
 the catalog that acts as them). Each tool's `ToolDeclaration` — its effect, system and subject —
 travels in `_meta`, and `McpConnectors` reads a connectors file into a `DeclaredTools`, leaving out
-any tool nobody declared. The contract, for connectors in any language, is
+any tool nobody declared. A tool served over HTTP can ask the client's person something mid-call
+(MCP elicitation) through `McpCall.current()`, and `HttpMcpConnection` answers such a question
+with an `Elicitor`. The contract, for connectors in any language, is
 [`docs/MCP-CONNECTORS.md`](docs/MCP-CONNECTORS.md).
 
 ### Programmatic tool calling (code execution)

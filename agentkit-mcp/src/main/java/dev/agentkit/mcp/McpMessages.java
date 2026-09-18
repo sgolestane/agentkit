@@ -32,9 +32,17 @@ final class McpMessages {
     }
 
     static ObjectNode initializeParams() {
+        return initializeParams(false);
+    }
+
+    /** @param canBeAsked whether this client answers {@code elicitation/create}, which a server may then send */
+    static ObjectNode initializeParams(boolean canBeAsked) {
         ObjectNode params = MAPPER.createObjectNode();
         params.put("protocolVersion", PROTOCOL_VERSION);
-        params.set("capabilities", MAPPER.createObjectNode());
+        ObjectNode capabilities = params.putObject("capabilities");
+        if (canBeAsked) {
+            capabilities.putObject("elicitation");
+        }
         ObjectNode clientInfo = MAPPER.createObjectNode();
         clientInfo.put("name", "agentkit");
         clientInfo.put("version", "0.1.0");

@@ -72,15 +72,17 @@ public final class HostedAgent {
     private final Set<String> confirmed;
     private final Optional<String> unavailable;
     private final Optional<SubjectResolver> subjects;
+    private final OrgConnectors connectors;
 
     private HostedAgent(OrgRepo repo, AgentDefinition definition, List<Selected> selected, Set<String> confirmed,
-                        Optional<String> unavailable, Optional<SubjectResolver> subjects) {
+                        Optional<String> unavailable, Optional<SubjectResolver> subjects, OrgConnectors connectors) {
         this.repo = repo;
         this.definition = definition;
         this.selected = List.copyOf(selected);
         this.confirmed = Set.copyOf(confirmed);
         this.unavailable = unavailable;
         this.subjects = subjects;
+        this.connectors = connectors;
     }
 
     /**
@@ -100,7 +102,7 @@ public final class HostedAgent {
         if (!down.isEmpty()) {
             String why = down.stream().map(c -> connectors.failure(c).orElse("The " + c + " connector is not connected."))
                     .collect(Collectors.joining(" "));
-            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why), Optional.empty());
+            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why), Optional.empty(), connectors);
         }
 
         // Which tools, in the order the selectors and each connector list them.
@@ -181,6 +183,19 @@ public final class HostedAgent {
             }
         }
 
+        // Tools offered to MCP callers directly: the agent's own, and only ones that read.
+        for (int i = 0; i < definition.mcpDirect().size(); i++) {
+            ToolRef ref = definition.mcpDirect().get(i);
+            Selected tool = byName.get(ref.tool());
+            if (tool == null || !tool.connector().equals(ref.connector())) {
+                problems.add(new Problem(file, "mcp.direct[" + i + "]", ref + " is not one of this agent's tools"));
+            } else if (tool.entry().declaration().effect() != ToolEffect.READ) {
+                problems.add(new Problem(file, "mcp.direct[" + i + "]", ref + " is declared "
+                        + tool.entry().declaration().effect().wire() + "; only a tool that reads is offered outside a "
+                        + "conversation, where nothing would stop it for the person"));
+            }
+        }
+
         // Deferred work: every subject is looked up by a tool that exists and takes the argument named.
         Optional<SubjectResolver> subjects = Optional.empty();
         if (definition.deferred() != null) {
@@ -204,7 +219,7 @@ public final class HostedAgent {
         List<Selected> tools = byName.values().stream()
                 .map(s -> new Selected(s.connector(), s.entry(), bindings.getOrDefault(s.entry().tool().name(), Map.of())))
                 .toList();
-        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty(), subjects);
+        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty(), subjects, connectors);
     }
 
     public AgentDefinition definition() {
@@ -239,6 +254,48 @@ public final class HostedAgent {
             tools.add(tool, s.entry().declaration());
         }
         return tools;
+    }
+
+    /**
+     * The agent's tools offered directly to an MCP caller, bound to them as in a conversation. They answer with the
+     * connector's own result: the fence a result gets on its way to this host's model is this host's, and is not
+     * passed on to a caller that has its own.
+     */
+    public DeclaredTools directTools(Principal principal) {
+        DeclaredTools direct = new DeclaredTools();
+        for (ToolRef ref : definition.mcpDirect()) {
+            selected.stream().filter(s -> s.connector().equals(ref.connector()) && s.entry().tool().name().equals(ref.tool()))
+                    .findFirst()
+                    .ifPresent(s -> connectors.client(s.connector()).ifPresent(client -> {
+                        Tool raw = new ConnectorResult(s.entry().tool(), client);
+                        direct.add(s.bindings().isEmpty() ? raw : new BoundTool(raw, s.bindings(), principal),
+                                s.entry().declaration());
+                    }));
+        }
+        return direct;
+    }
+
+    /** A connector's tool as it describes itself, answering with the connector's result as it came. */
+    private static final class ConnectorResult extends dev.agentkit.core.tool.ForwardingTool {
+        private final Tool described;
+        private final dev.agentkit.mcp.McpConnection client;
+
+        ConnectorResult(Tool described, dev.agentkit.mcp.McpConnection client) {
+            this.described = described;
+            this.client = client;
+        }
+
+        @Override
+        protected Tool delegate() {
+            return described;
+        }
+
+        @Override
+        public dev.agentkit.core.tool.ToolResult execute(dev.agentkit.core.tool.ToolInvocation invocation) {
+            dev.agentkit.mcp.McpCallResult result = client.callTool(invocation.name(), invocation.arguments());
+            return result.isError() ? dev.agentkit.core.tool.ToolResult.error(result.text())
+                    : dev.agentkit.core.tool.ToolResult.ok(result.text());
+        }
     }
 
     /** The names of tools that stop for the person's confirmation. */

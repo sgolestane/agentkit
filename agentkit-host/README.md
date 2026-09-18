@@ -89,6 +89,9 @@ bind:                               # hidden from the model, filled from the per
 
 limits: {maxSteps: 12, maxTokens: 1024}
 
+mcp:                                # optional: reads also offered directly to MCP callers
+  direct: [helpdesk/directory_lookup]
+
 deferred:                           # optional: work scheduled for later
   prompt: deferred-prompt.md        # the system prompt a deferred action runs with
   actor: access-desk                # who it acts as; bindings get this for principal.email
@@ -179,6 +182,44 @@ OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
   - A conversation whose version was let go is told to start a new one. It is never moved.
   - Pulling the checkout on merge is the deployment's job.
 
+## Over MCP
+
+The host is also an MCP server, at `/mcp` on the console's port. For each agent a caller may use,
+it offers `ask_<agent>`: a turn with that agent, as the caller, in their "<Agent> over MCP"
+conversation. That conversation is pinned like any other and appears in their console. An
+agent's `mcp.direct` tools are offered too, bound to the caller. Only tools that read may be
+listed there, because nothing outside a conversation would stop a call for the person.
+
+- **Confirmations.** When the turn needs the person's word (a confirmed tool, or a question from
+  the agent), a client that supports MCP elicitation shows it to the person, not to its model.
+  Their answer decides.
+- **Clients without elicitation.** A client that can't be asked, or a person who dismisses the
+  question, gets a reply saying what is waiting and linking to the conversation in the console.
+
+In development, a client names its person in the `X-AgentKit-User: <org>/<email>` header. Like
+the development sign-in, nothing authenticates it, and it is off unless development sign-in is on:
+
+```bash
+claude mcp add --transport http agents http://localhost:8400/mcp --header "X-AgentKit-User: acme/priya.natarajan@acme.example"
+```
+
+## Checking a pull request
+
+`validate` loads a repository the way the host will, and lists every problem with its file and
+field. Under GitHub Actions each problem is also an annotation on the pull request. It exits 1
+when there are problems.
+
+```bash
+./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Validate -Dexec.appArgs=$PWD/orgs/acme
+```
+
+- **Connected mode.** With `AGENTKIT_VALIDATE_CONNECT=true` and the organization's secrets,
+  `validate` also reaches the connectors and assembles every agent. It then prints what each
+  agent can do, grouped by effect, with its confirmations, bindings, deferred work and direct MCP
+  tools. That summary is what a reviewer of the change needs to see.
+- **Annotation paths.** `AGENTKIT_VALIDATE_PATH_PREFIX` prefixes the paths in annotations, for a
+  repository kept in a subdirectory.
+
 ## Tests
 
 ```bash
@@ -190,6 +231,5 @@ AGENTKIT_HOST_LIVE=true OPENROUTER_API_KEY=sk-or-... \
 ## Not yet
 
 - **Real sign-in.** Only development sign-in exists; OIDC per organization comes next.
-- **No MCP front door or `validate` CLI** yet.
 - **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller
   assertion in the connector contract comes later.

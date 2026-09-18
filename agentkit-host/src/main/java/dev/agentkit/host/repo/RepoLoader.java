@@ -53,7 +53,8 @@ public final class RepoLoader {
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
     private static final Set<String> AGENT_KEYS = Set.of("name", "description", "pattern", "model", "audience",
-            "prompt", "tools", "confirm", "bind", "limits", "deferred");
+            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp");
+    private static final Set<String> MCP_KEYS = Set.of("direct");
     private static final Set<String> DEFERRED_KEYS = Set.of("prompt", "actor", "subjects");
     private static final Set<String> SUBJECT_KEYS = Set.of("tool", "argument");
     private static final Set<String> PROMPT_KEYS = Set.of("system", "policy");
@@ -310,11 +311,25 @@ public final class RepoLoader {
             deferred = deferred(file, dir, deferredNode, connectors);
         }
 
+        List<ToolRef> direct = new ArrayList<>();
+        JsonNode mcp = node.get("mcp");
+        if (mcp != null) {
+            if (!mcp.isObject()) {
+                problem(file, "mcp", "must be a mapping with direct: a list of connector/tool");
+            } else {
+                unknownKeys(file, "mcp.", mcp, MCP_KEYS);
+                List<String> named = strings(file, "mcp.direct", mcp.get("direct"));
+                for (int i = 0; i < named.size(); i++) {
+                    toolRef(file, "mcp.direct[" + i + "]", named.get(i), connectors, false).ifPresent(direct::add);
+                }
+            }
+        }
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred));
+                confirm, bind, maxSteps, maxTokens, deferred, direct));
     }
 
     private AgentDefinition.Deferred deferred(String file, Path dir, JsonNode node, Set<String> connectors) {

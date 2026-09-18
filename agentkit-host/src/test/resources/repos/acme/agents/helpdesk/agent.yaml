@@ -21,6 +21,10 @@ bind:
   helpdesk/open_ticket: {requester: principal.email}
   helpdesk/reset_mfa: {email: principal.email}
 
+# Offered to MCP callers directly, beside ask_helpdesk.
+mcp:
+  direct: [helpdesk/directory_lookup]
+
 limits:
   maxSteps: 12
   maxTokens: 1024
