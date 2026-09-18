@@ -29,7 +29,7 @@ import java.util.stream.Stream;
  * Reads an organization's repository of agents from a directory — normally a checkout of its Git repository.
  *
  * <pre>
- * org.yaml                     org, model, directory, admins
+ * org.yaml                     org, model, directory, admins, repository
  * connectors/&lt;name&gt;.yaml      url or command, headers, trustAnnotations, authoritative, timeoutSeconds, tools
  * agents/&lt;id&gt;/agent.yaml       name, description, pattern, model, audience, prompt, tools, confirm, bind, limits
  * agents/&lt;id&gt;/…               the prompt files agent.yaml names
@@ -49,7 +49,9 @@ public final class RepoLoader {
 
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
-    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins");
+    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins", "repository");
+    private static final Set<String> REPOSITORY_KEYS = Set.of("github", "path", "base", "api");
+    private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Set<String> DIRECTORY_KEYS = Set.of("connector", "tool", "argument");
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
@@ -101,6 +103,7 @@ public final class RepoLoader {
         String model = null;
         Optional<DirectorySpec> directory = Optional.empty();
         List<String> admins = List.of();
+        Optional<OrgRepo.RepositorySpec> repository = Optional.empty();
         Optional<JsonNode> orgFile = yaml("org.yaml", true);
         if (orgFile.isPresent()) {
             JsonNode node = orgFile.get();
@@ -111,6 +114,9 @@ public final class RepoLoader {
                 directory = directory(node.get("directory"));
             }
             admins = strings("org.yaml", "admins", node.get("admins"));
+            if (node.has("repository")) {
+                repository = repository(node.get("repository"));
+            }
         }
 
         Map<String, ConnectorSpec> connectors = new LinkedHashMap<>();
@@ -151,7 +157,7 @@ public final class RepoLoader {
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
-        return new OrgRepo(org, version, model, directory, connectors, agents, admins);
+        return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository);
     }
 
     // ---------------------------------------------------------------- org and connectors
@@ -167,6 +173,31 @@ public final class RepoLoader {
         String argument = text("org.yaml", "directory.argument", node.get("argument"), true);
         return connector == null || tool == null || argument == null ? Optional.empty()
                 : Optional.of(new DirectorySpec(connector, tool, argument));
+    }
+
+    private Optional<OrgRepo.RepositorySpec> repository(JsonNode node) {
+        if (!node.isObject()) {
+            problem("org.yaml", "repository", "must be a mapping of github, and optionally path, base and api");
+            return Optional.empty();
+        }
+        unknownKeys("org.yaml", "repository.", node, REPOSITORY_KEYS);
+        String github = text("org.yaml", "repository.github", node.get("github"), true);
+        if (github != null && !GITHUB_REPOSITORY.matcher(github).matches()) {
+            problem("org.yaml", "repository.github", "is owner/name, such as acme/agents");
+            return Optional.empty();
+        }
+        String path = text("org.yaml", "repository.path", node.get("path"), false);
+        if (path != null && (path.startsWith("/") || java.util.Arrays.asList(path.split("/")).contains(".."))) {
+            problem("org.yaml", "repository.path", "is a directory inside the repository, such as orgs/acme");
+            return Optional.empty();
+        }
+        String base = text("org.yaml", "repository.base", node.get("base"), false);
+        String api = text("org.yaml", "repository.api", node.get("api"), false);
+        if (api != null && !api.startsWith("https://") && !api.startsWith("http://")) {
+            problem("org.yaml", "repository.api", "is the API's URL, such as https://api.github.com");
+            return Optional.empty();
+        }
+        return github == null ? Optional.empty() : Optional.of(new OrgRepo.RepositorySpec(github, path, base, api));
     }
 
     private Optional<ConnectorSpec> connector(String file, String name, JsonNode node) {

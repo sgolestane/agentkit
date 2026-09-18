@@ -83,7 +83,9 @@ Open <http://localhost:8400> and sign in as one of the demo people:
 
 The managers (Dana, Sam and Lena) are also offered Onboarding. Sam is in `agent-operators`, the
 group `org.yaml` names as admins, so he also sees the admin view at <http://localhost:8400/admin>:
-what each version of the agents can do, the pull requests' rehearsals, and the deferred work. The HRIS holds seven hires, in
+what each version of the agents can do, the pull requests' rehearsals, and the deferred work. From
+an agent's page he can propose a change to its files. The host checks it and opens it as a pull
+request on the repository `org.yaml` names, or as a local branch with `AGENTKIT_HOST_PROPOSALS=local`. The HRIS holds seven hires, in
 [`onboarding/hr.json`](src/main/resources/onboarding/hr.json); a manager can onboard only their own:
 Lena has Marcus Bell (W-1002), Sam has Maria Chen (W-1003), and Dana has the rest.
 

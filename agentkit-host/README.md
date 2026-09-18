@@ -34,6 +34,10 @@ directory:                             # optional: who someone is
   tool: directory_lookup
   argument: email
 admins: [agent-operators]              # optional: directory groups that see the admin view
+repository:                            # optional: where changes proposed in the admin view go
+  github: acme/agents                  # as pull requests, with the org's GITHUB_TOKEN secret
+  path: orgs/acme                      # optional: where these files are in that repository
+  base: main                           # optional: the branch pull requests are opened against
 ```
 
 The directory tool is called with the email of the person the host authenticated. It returns
@@ -271,6 +275,32 @@ organization's repository, and this is where its effect is seen:
 
 The same answers are JSON at `/host/admin`, `/host/admin/agents/<id>?version=`,
 `/host/admin/rehearsals` and `/host/admin/deferred`.
+
+### Proposing a change
+
+An admin can edit an agent's files at the current version and propose the change: **Propose a
+change** on the agent's page. The host never applies it. It opens it for review, and serves it once
+it is merged, like any other commit.
+
+- **Checked first.** The edits are applied to a copy of the version the host runs, and the copy is
+  loaded against the organization's connectors: every field, reference and tool, and no grant
+  without a person. A change the host would refuse is refused with every problem, and nothing is
+  opened.
+- **One commit on the running one.** The change is a commit whose parent is the commit the host
+  runs, on a new `agentkit/…` branch, with a pull request into `repository.base`. If the base has
+  moved on since, the pull request shows the conflict instead of undoing what was merged in
+  between.
+- **What it does, for the reviewer.** The pull request says who proposed it, why, and what changes
+  for each agent it touches: tools it can now use or no longer, confirmations, bindings, audience,
+  eval cases. Its checks then rehearse those agents.
+- **Only an agent's own files.** `agents/<id>/…`, not `org.yaml` or a connector: those changes are
+  an operator's, made in the repository.
+- **Where it goes.** GitHub, per `org.yaml`'s `repository` and the org's `GITHUB_TOKEN` secret
+  (`AGENTKIT_SECRET_<ORG>_GITHUB_TOKEN`, with permission to write contents and pull requests). For
+  development, `AGENTKIT_HOST_PROPOSALS=local` opens a branch in the checkout's own repository
+  instead.
+- **When it cannot.** The host must be running a commit: a checkout with uncommitted changes has
+  nothing to build on, and the page says so.
 
 ## Over MCP
 

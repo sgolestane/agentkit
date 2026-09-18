@@ -17,6 +17,9 @@ import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
 import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.VersionLog;
+import dev.agentkit.host.change.GitHubProposer;
+import dev.agentkit.host.change.LocalBranchProposer;
+import dev.agentkit.host.change.Proposals;
 import dev.agentkit.host.repo.DefinitionException;
 import dev.agentkit.host.store.Database;
 import dev.agentkit.host.store.PostgresChatStore;
@@ -66,6 +69,10 @@ import java.util.stream.Stream;
  * conversations, deferred actions and the versions each organization was loaded at are in Postgres, keyed by
  * organization, and a restart serves again the versions conversations are pinned to. Without it they are files under
  * the data directory, for one process, and a restart serves only each checkout's current version.
+ *
+ * <p><strong>Proposed changes.</strong> An admin's change from the admin view is opened as a pull request on the
+ * repository the organization's {@code org.yaml} names, with its {@code GITHUB_TOKEN} secret. For development,
+ * {@code AGENTKIT_HOST_PROPOSALS=local} opens it as a branch in the checkout's own repository instead.
  */
 public final class AgentHostApp {
 
@@ -131,8 +138,14 @@ public final class AgentHostApp {
         }
         // The admin view reads; a report of a pull request's rehearsal comes in with the org's REHEARSAL_TOKEN.
         RehearsalLog rehearsals = database.<RehearsalLog>map(PostgresRehearsalLog::new).orElseGet(RehearsalLog::inMemory);
+        boolean localProposals = "local".equalsIgnoreCase(env.get("AGENTKIT_HOST_PROPOSALS"));
+        Proposals proposals = new Proposals(org -> localProposals
+                ? Optional.of(new LocalBranchProposer(org.checkout()))
+                : org.current().repo().repository().flatMap(spec -> secretsFor(org.org()).get("GITHUB_TOKEN")
+                        .map(token -> new GitHubProposer(spec, token))),
+                name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal));
         AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
-                Instant::now);
+                Instant::now, proposals);
         server.mount("/host/admin", admin.admin());
         server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../lib/api'
+import { ProposeChange } from './ProposeChange'
 import type {
   AdminAgent,
   AdminDeferredAction,
@@ -94,7 +95,13 @@ export function Admin() {
           </nav>
           <main className="min-w-0 flex-1 overflow-y-auto p-4">
             {section === 'agents' && open ? (
-              <AgentDetail id={open.id} version={open.version} onBack={() => setOpen(null)} />
+              <AgentDetail
+                id={open.id}
+                version={open.version}
+                current={open.version === overview.current}
+                proposals={overview.proposals}
+                onBack={() => setOpen(null)}
+              />
             ) : section === 'agents' ? (
               <Versions overview={overview} onOpen={(id, version) => setOpen({ id, version })} />
             ) : section === 'rehearsals' ? (
@@ -157,9 +164,22 @@ function Versions({
   )
 }
 
-function AgentDetail({ id, version, onBack }: { id: string; version: string; onBack: () => void }) {
+function AgentDetail({
+  id,
+  version,
+  current,
+  proposals,
+  onBack,
+}: {
+  id: string
+  version: string
+  current: boolean
+  proposals?: AdminOverview['proposals']
+  onBack: () => void
+}) {
   const [agent, setAgent] = useState<AdminAgent | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [proposing, setProposing] = useState(false)
 
   useEffect(() => {
     api.admin
@@ -190,7 +210,23 @@ function AgentDetail({ id, version, onBack }: { id: string; version: string; onB
           most {agent.limits.maxSteps} steps
         </p>
         {agent.unavailable ? <p className="mt-1 text-sm text-bad">Unavailable: {agent.unavailable}</p> : null}
+        {current && proposals?.enabled ? (
+          <button
+            type="button"
+            onClick={() => setProposing((open) => !open)}
+            aria-expanded={proposing}
+            className="mt-2 rounded border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+          >
+            {proposing ? 'Close the change' : 'Propose a change'}
+          </button>
+        ) : current && proposals?.why ? (
+          <p className="mt-2 text-xs text-muted">Changes cannot be proposed from here now: {proposals.why}</p>
+        ) : null}
       </header>
+
+      {proposing && proposals?.where ? (
+        <ProposeChange agentId={agent.id} agentName={agent.name} where={proposals.where} />
+      ) : null}
 
       <section aria-label="What it can do">
         <h3 className="mb-1 text-sm font-semibold">What it can do</h3>

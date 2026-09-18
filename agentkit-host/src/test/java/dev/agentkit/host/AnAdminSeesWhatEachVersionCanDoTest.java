@@ -51,7 +51,9 @@ class AnAdminSeesWhatEachVersionCanDoTest {
         AdminApi admin = new AdminApi(Map.of("acme", org), Map.of(),
                 exchange -> Optional.ofNullable(exchange.getRequestHeaders().getFirst("X-Who")),
                 rehearsals, name -> name.equals("acme") ? Optional.of("report-token") : Optional.empty(),
-                () -> Instant.parse("2026-09-18T20:00:00Z"));
+                () -> Instant.parse("2026-09-18T20:00:00Z"),
+                new dev.agentkit.host.change.Proposals(o -> Optional.empty(), name -> AgentHost.Options.hosted(
+                        Secrets.of(Map.of("HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN)))));
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/host/admin", admin.admin());
         server.createContext("/host/rehearsals/", admin.reports());

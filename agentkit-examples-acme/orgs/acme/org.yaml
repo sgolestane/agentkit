@@ -11,3 +11,10 @@ directory:
 # Who sees the admin view: what each version of these agents can do, the pull requests'
 # rehearsals, and the deferred work. Groups from the directory.
 admins: [agent-operators]
+
+# Where a change proposed in the admin view is opened as a pull request, with the org's
+# GITHUB_TOKEN secret. The host never applies a change itself: it serves what is merged.
+repository:
+  github: sgolestane/agentkit
+  path: agentkit-examples-acme/orgs/acme
+  base: main

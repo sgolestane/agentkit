@@ -204,6 +204,11 @@ public final class OrgHost implements AutoCloseable {
         return loaded.repo().version();
     }
 
+    /** The directory the organization's repository is checked out in: what the current version was loaded from. */
+    public Path checkout() {
+        return checkout;
+    }
+
     public synchronized String org() {
         return current.repo().org();
     }

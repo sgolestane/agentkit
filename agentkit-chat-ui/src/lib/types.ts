@@ -229,6 +229,23 @@ export interface AdminOverview {
   admins: string[]
   versions: { version: string; current: boolean; agents: AdminAgentSummary[] }[]
   connectors: { name: string; reached: boolean; failure?: string; tools: number }[]
+  /** Whether an admin can propose a change from here, where it goes, and if not, why. */
+  proposals?: { enabled: boolean; where?: string; why?: string }
+}
+
+export interface AgentFile {
+  path: string
+  content: string
+}
+
+/** What became of a proposal: opened for review, or refused with every reason. */
+export interface ProposalOutcome {
+  opened: boolean
+  branch?: string
+  url?: string | null
+  where?: string
+  summary?: string
+  problems?: string[]
 }
 
 export interface AdminTool {

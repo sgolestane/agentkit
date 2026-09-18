@@ -12,6 +12,7 @@ import dev.agentkit.host.OrgHost;
 import dev.agentkit.host.Principal;
 import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.Tenant;
+import dev.agentkit.host.change.Proposals;
 import dev.agentkit.host.repo.AgentDefinition;
 import dev.agentkit.host.repo.EvalCase;
 import java.io.IOException;
@@ -39,11 +40,13 @@ import java.util.function.Supplier;
  *                                   tools by effect with confirmations and bindings, its form, deferred work and evals
  * GET  /host/admin/deferred          every deferred action the organization's agents hold
  * GET  /host/admin/rehearsals        the rehearsals its pull requests reported, newest first
+ * GET  /host/admin/agents/{id}/files the agent's files at the current version, to edit for a proposal
+ * POST /host/admin/proposals         a change to agents' files, checked and opened as a pull request ({@link Proposals})
  * POST /host/rehearsals/{org}        a pull request's rehearsal report, from rehearse, with the org's REHEARSAL_TOKEN
  * </pre>
  *
- * Nothing here changes an agent: a change is a pull request to the organization's repository, and this is where its
- * effect is read.
+ * Nothing here changes what the host runs: a change is proposed as a pull request to the organization's repository,
+ * and served once it is merged.
  */
 public final class AdminApi {
 
@@ -58,26 +61,33 @@ public final class AdminApi {
     private final RehearsalLog rehearsals;
     private final Function<String, Optional<String>> reportToken;
     private final Supplier<Instant> clock;
+    private final Proposals proposals;
 
     /**
      * @param reportToken the token a rehearsal report for an organization must carry; empty when it takes none
+     * @param proposals   where changes proposed from the admin view go
      */
     public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
-                    RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock) {
+                    RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
+                    Proposals proposals) {
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
         this.tenants = Objects.requireNonNull(tenants, "tenants");
         this.rehearsals = Objects.requireNonNull(rehearsals, "rehearsals");
         this.reportToken = Objects.requireNonNull(reportToken, "reportToken");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.proposals = Objects.requireNonNull(proposals, "proposals");
     }
 
     /** The admin view's API, for {@code /host/admin}. */
     public HttpHandler admin() {
         return exchange -> {
             try (exchange) {
-                if (!"GET".equals(exchange.getRequestMethod())) {
-                    send(exchange, 405, Map.of("error", "The admin view only reads."));
+                String path = exchange.getRequestURI().getPath().substring("/host/admin".length());
+                boolean proposing = path.equals("/proposals");
+                if (!(proposing ? "POST" : "GET").equals(exchange.getRequestMethod())) {
+                    send(exchange, 405, Map.of("error", proposing ? "Post a proposal here."
+                            : "The admin view only reads; a change is a proposal."));
                     return;
                 }
                 Optional<Tenant> tenant = tenants.of(exchange).flatMap(Tenant::parse);
@@ -92,9 +102,18 @@ public final class AdminApi {
                     send(exchange, 403, Map.of("error", "Only the admins org.yaml names see this organization's admin view."));
                     return;
                 }
-                String path = exchange.getRequestURI().getPath().substring("/host/admin".length());
-                if (path.isEmpty() || path.equals("/")) {
+                if (proposing) {
+                    propose(exchange, org, principal.get());
+                } else if (path.isEmpty() || path.equals("/")) {
                     send(exchange, 200, overview(org));
+                } else if (path.startsWith("/agents/") && path.endsWith("/files")) {
+                    String id = URLDecoder.decode(path.substring("/agents/".length(), path.length() - "/files".length()),
+                            StandardCharsets.UTF_8);
+                    if (org.current().agent(id).isEmpty()) {
+                        send(exchange, 404, Map.of("error", "There is no agent " + id + "."));
+                    } else {
+                        send(exchange, 200, Map.of("version", org.current().repo().version(), "files", files(org, id)));
+                    }
                 } else if (path.startsWith("/agents/")) {
                     String id = URLDecoder.decode(path.substring("/agents/".length()), StandardCharsets.UTF_8);
                     String version = query(exchange, "version").orElse(org.current().repo().version());
@@ -159,6 +178,65 @@ public final class AdminApi {
         };
     }
 
+    /** Checks a proposal and, if the host would load it, opens it for review. */
+    private void propose(HttpExchange exchange, OrgHost org, Principal by) throws IOException {
+        // JSON only: a form posted from another site cannot be JSON without asking first, so a proposal comes from here.
+        String type = Objects.toString(exchange.getRequestHeaders().getFirst("Content-Type"), "");
+        if (!type.startsWith("application/json")) {
+            send(exchange, 415, Map.of("error", "A proposal is JSON."));
+            return;
+        }
+        byte[] body = read(exchange.getRequestBody());
+        Map<String, Object> proposal;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = body == null ? null : JSON.readValue(body, Map.class);
+            proposal = parsed;
+        } catch (IOException e) {
+            proposal = null;
+        }
+        if (proposal == null || !(proposal.get("files") instanceof Map<?, ?> given)) {
+            send(exchange, 400, Map.of("error", "A proposal is {title, description, files: {path: content}}."));
+            return;
+        }
+        Map<String, String> files = new LinkedHashMap<>();
+        given.forEach((path, content) -> files.put(String.valueOf(path), content == null ? null : String.valueOf(content)));
+        Proposals.Outcome outcome = proposals.propose(org, by, Objects.toString(proposal.get("title"), ""),
+                Objects.toString(proposal.get("description"), ""), files);
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("opened", outcome.opened());
+        if (outcome.opened()) {
+            answer.put("branch", outcome.branch());
+            answer.put("url", outcome.url());
+            answer.put("where", outcome.where());
+            answer.put("summary", outcome.summary());
+        } else {
+            answer.put("problems", outcome.problems());
+        }
+        send(exchange, outcome.opened() ? 201 : 422, answer);
+    }
+
+    /** The agent's own files at the current version, as its checkout holds them: what a proposal starts from. */
+    private static List<Map<String, Object>> files(OrgHost org, String id) throws IOException {
+        java.nio.file.Path dir = org.checkout().resolve("agents").resolve(id);
+        List<Map<String, Object>> files = new ArrayList<>();
+        if (!java.nio.file.Files.isDirectory(dir)) {
+            return files;
+        }
+        try (java.util.stream.Stream<java.nio.file.Path> walk = java.nio.file.Files.walk(dir)) {
+            for (java.nio.file.Path file : walk.sorted().toList()) {
+                String relative = org.checkout().relativize(file).toString().replace('\\', '/');
+                if (!java.nio.file.Files.isRegularFile(file) || relative.contains("/.")
+                        || java.nio.file.Files.size(file) > Proposals.MAX_FILE_BYTES) {
+                    continue;
+                }
+                files.add(Map.of("path", relative, "content",
+                        java.nio.file.Files.readString(file, StandardCharsets.UTF_8)));
+            }
+        }
+        return files;
+    }
+
     // ---------------------------------------------------------------- what is shown
 
     private Map<String, Object> overview(OrgHost org) {
@@ -190,6 +268,16 @@ public final class AdminApi {
             });
         }
         view.put("versions", versions);
+        Proposals.Availability availability = proposals.availability(org);
+        Map<String, Object> proposing = new LinkedHashMap<>();
+        proposing.put("enabled", availability.enabled());
+        if (availability.where() != null) {
+            proposing.put("where", availability.where());
+        }
+        if (availability.why() != null) {
+            proposing.put("why", availability.why());
+        }
+        view.put("proposals", proposing);
         view.put("connectors", current.repo().connectors().keySet().stream().map(name -> {
             Map<String, Object> c = new LinkedHashMap<>();
             c.put("name", name);

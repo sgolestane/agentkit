@@ -2,12 +2,14 @@ import type {
   AdminAgent,
   AdminDeferredAction,
   AdminOverview,
+  AgentFile,
   AgentInfo,
   Attachment,
   Conversation,
   ConversationDetail,
   Overview,
   PendingDecision,
+  ProposalOutcome,
   RehearsalReport,
   Turn,
 } from './types'
@@ -82,6 +84,25 @@ export const api = {
     deferred: () =>
       at<{ agents: { id: string; name: string; actions: AdminDeferredAction[] }[] }>('/host/admin/deferred'),
     rehearsals: () => at<{ reports: RehearsalReport[] }>('/host/admin/rehearsals'),
+    files: (id: string) =>
+      at<{ version: string; files: AgentFile[] }>(`/host/admin/agents/${encodeURIComponent(id)}/files`),
+    /** A refused proposal is an answer, not a failure: its reasons come back to be shown. */
+    propose: async (proposal: {
+      title: string
+      description: string
+      files: Record<string, string>
+    }): Promise<ProposalOutcome> => {
+      const response = await fetch('/host/admin/proposals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proposal),
+      })
+      const body = (await response.json().catch(() => null)) as (ProposalOutcome & { error?: string }) | null
+      if (response.status === 201 || response.status === 422) {
+        return body ?? { opened: false, problems: ['The host gave no answer.'] }
+      }
+      throw new ApiError(response.status, body?.error ?? `The host answered ${response.status}.`)
+    },
   },
 
   conversations: () => call<Conversation[]>('/conversations'),

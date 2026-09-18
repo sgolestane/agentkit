@@ -17,9 +17,11 @@ import java.util.Optional;
  * @param connectors   each connector by name
  * @param agents       each agent by id
  * @param admins       the directory groups whose members see the organization's admin view; empty for nobody
+ * @param repository   where a change proposed in the admin view goes as a pull request, if the organization says
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
-                      Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins) {
+                      Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
+                      Optional<RepositorySpec> repository) {
 
     public OrgRepo {
         Objects.requireNonNull(org, "org");
@@ -29,6 +31,24 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         connectors = Map.copyOf(connectors);
         admins = admins == null ? List.of() : List.copyOf(admins);
         agents = Map.copyOf(agents);
+        repository = repository == null ? Optional.empty() : repository;
+    }
+
+    /**
+     * The organization's repository on GitHub, where a change proposed in the admin view is opened as a pull request.
+     *
+     * @param github the repository, {@code owner/name}
+     * @param path   where the organization's files are in it: empty for its root
+     * @param base   the branch pull requests are opened against
+     * @param api    GitHub's API, or a GitHub Enterprise server's
+     */
+    public record RepositorySpec(String github, String path, String base, String api) {
+        public RepositorySpec {
+            Objects.requireNonNull(github, "github");
+            path = path == null ? "" : path.replaceAll("^/+|/+$", "");
+            base = base == null || base.isBlank() ? "main" : base;
+            api = api == null || api.isBlank() ? "https://api.github.com" : api.replaceAll("/+$", "");
+        }
     }
 
     /**
