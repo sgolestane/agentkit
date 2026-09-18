@@ -18,10 +18,11 @@ import java.util.Optional;
  * @param agents       each agent by id
  * @param admins       the directory groups whose members see the organization's admin view; empty for nobody
  * @param repository   where a change proposed in the admin view goes as a pull request, if the organization says
+ * @param signIn       the organization's identity provider, which its people sign in with, if the organization says
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
                       Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
-                      Optional<RepositorySpec> repository) {
+                      Optional<RepositorySpec> repository, Optional<SignInSpec> signIn) {
 
     public OrgRepo {
         Objects.requireNonNull(org, "org");
@@ -32,6 +33,26 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         admins = admins == null ? List.of() : List.copyOf(admins);
         agents = Map.copyOf(agents);
         repository = repository == null ? Optional.empty() : repository;
+        signIn = signIn == null ? Optional.empty() : signIn;
+    }
+
+    /**
+     * The organization's identity provider: an OpenID Connect issuer its people sign in to the console with, and whose
+     * access tokens its MCP callers present.
+     *
+     * @param issuer      the issuer, as its discovery document and tokens name it
+     * @param clientId    the host's client id there; the client secret, if any, is the org's OIDC_CLIENT_SECRET secret
+     * @param emailClaim  the claim holding the person's email, which the directory looks them up by
+     * @param mcpAudience the audience an MCP access token must carry; empty for the org's MCP address
+     */
+    public record SignInSpec(String issuer, String clientId, String emailClaim, String mcpAudience) {
+        public SignInSpec {
+            Objects.requireNonNull(issuer, "issuer");
+            Objects.requireNonNull(clientId, "clientId");
+            issuer = issuer.replaceAll("/+$", "");
+            emailClaim = emailClaim == null || emailClaim.isBlank() ? "email" : emailClaim;
+            mcpAudience = mcpAudience == null ? "" : mcpAudience;
+        }
     }
 
     /**

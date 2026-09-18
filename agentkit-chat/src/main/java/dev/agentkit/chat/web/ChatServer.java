@@ -193,6 +193,16 @@ public final class ChatServer implements AutoCloseable {
      */
     public ChatServer(int port, ChatRuntime runtime, Tenants tenants, TenantOverview overview,
             AgentCatalog catalog, dev.agentkit.core.reliability.ModelPricing pricing) throws IOException {
+        this(new InetSocketAddress(port), runtime, tenants, overview, catalog, pricing);
+    }
+
+    /**
+     * {@link #ChatServer(int, ChatRuntime, Tenants, TenantOverview, AgentCatalog,
+     * dev.agentkit.core.reliability.ModelPricing)}, listening on {@code address}: on {@code 127.0.0.1}, reachable from
+     * this machine only.
+     */
+    public ChatServer(InetSocketAddress address, ChatRuntime runtime, Tenants tenants, TenantOverview overview,
+            AgentCatalog catalog, dev.agentkit.core.reliability.ModelPricing pricing) throws IOException {
         this.pricing = pricing;
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.store = runtime.store();
@@ -208,7 +218,7 @@ public final class ChatServer implements AutoCloseable {
         // hand a tab a stamp that tab had already seen, and the reload this exists to trigger
         // would not happen. That is the one case the feature is for.
         this.buildStamp = Long.toHexString(new java.security.SecureRandom().nextLong());
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this.server = HttpServer.create(address, 0);
         // Cached rather than fixed: every open event stream holds a thread for as long as the
         // browser tab is open, so a fixed pool of eight would stop answering anything at all
         // once eight tabs were watching. The work these threads do is blocking-and-waiting,

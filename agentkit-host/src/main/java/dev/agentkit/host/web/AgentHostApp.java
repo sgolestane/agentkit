@@ -17,6 +17,9 @@ import dev.agentkit.host.Secrets;
 import dev.agentkit.host.Tenant;
 import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.VersionLog;
+import dev.agentkit.host.auth.Oidc;
+import dev.agentkit.host.auth.OidcSignIn;
+import dev.agentkit.host.auth.OrgMcp;
 import dev.agentkit.host.change.GitHubProposer;
 import dev.agentkit.host.change.LocalBranchProposer;
 import dev.agentkit.host.change.Proposals;
@@ -29,6 +32,7 @@ import dev.agentkit.host.store.PostgresVersionLog;
 import dev.agentkit.chat.store.ChatStore;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -61,7 +65,8 @@ import java.util.stream.Stream;
  * <p>Configuration: {@code OPENROUTER_API_KEY}; {@code AGENTKIT_HOST_PORT} (default 8400);
  * {@code AGENTKIT_HOST_DATA_DIR} (default {@code data/agentkit-host}); {@code AGENTKIT_SECRET_<ORG>_<NAME>} for each
  * {@code ${secret:NAME}}; {@code AGENTKIT_HOST_ALLOW_LOCAL_CONNECTORS=true} for connectors run as local commands;
- * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which is the only sign-in so far;
+ * {@code AGENTKIT_HOST_PUBLIC_URL} (default {@code http://localhost:<port>}), the address people reach the host at;
+ * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which listens on this machine only;
  * {@code AGENTKIT_HOST_DEFERRED_SECONDS} (default 30), how often due deferred actions are run.
  *
  * <p><strong>Where it keeps things.</strong> With {@code AGENTKIT_HOST_DATABASE_URL} ({@code jdbc:postgresql://...},
@@ -69,6 +74,10 @@ import java.util.stream.Stream;
  * conversations, deferred actions and the versions each organization was loaded at are in Postgres, keyed by
  * organization, and a restart serves again the versions conversations are pinned to. Without it they are files under
  * the data directory, for one process, and a restart serves only each checkout's current version.
+ *
+ * <p><strong>Signing in.</strong> Each organization's people sign in with the identity provider its {@code org.yaml}
+ * names under {@code signIn} ({@link OidcSignIn}), with the org's {@code OIDC_CLIENT_SECRET} secret if its client has
+ * one; its MCP clients present that provider's access tokens at {@code /orgs/<org>/mcp} ({@link OrgMcp}).
  *
  * <p><strong>Proposed changes.</strong> An admin's change from the admin view is opened as a pull request on the
  * repository the organization's {@code org.yaml} names, with its {@code GITHUB_TOKEN} secret. For development,
@@ -106,9 +115,15 @@ public final class AgentHostApp {
             System.err.println("No organization loaded from " + orgsDir + "; nothing to serve.");
             System.exit(2);
         }
-        if (!devSignIn) {
-            System.err.println("No sign-in is configured, so every request will be refused. Set "
-                    + "AGENTKIT_HOST_DEV_SIGN_IN=true for development.");
+        URI publicUrl = URI.create(env.getOrDefault("AGENTKIT_HOST_PUBLIC_URL", "http://localhost:" + port).strip());
+        // Each org's identity provider, from its org.yaml, made again when that changes.
+        Map<String, Oidc> providersByOrg = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.function.Function<OrgHost, Optional<Oidc>> providers = org -> org.current().repo().signIn()
+                .map(spec -> providersByOrg.compute(org.org(), (name, known) -> known != null && known.spec().equals(spec)
+                        ? known : new Oidc(spec, secretsFor(name).get("OIDC_CLIENT_SECRET"))));
+        if (!devSignIn && orgs.values().stream().noneMatch(org -> org.current().repo().signIn().isPresent())) {
+            System.err.println("No organization names an identity provider (signIn in org.yaml), so nobody can sign in. "
+                    + "For development, set AGENTKIT_HOST_DEV_SIGN_IN=true.");
         }
 
         Files.createDirectories(dataDir);
@@ -129,13 +144,16 @@ public final class AgentHostApp {
         ChatRuntime runtime = new ChatRuntime(store, new ChatEvents(), chat);
         self.set(runtime);
 
-        DevSignIn signIn = new DevSignIn(orgs);
-        ChatServer.Tenants tenants = devSignIn ? signIn : exchange -> Optional.empty();
-        ChatServer server = new ChatServer(port, runtime, tenants, tenant -> overview(tenant, orgs, llm), chat, null);
-        if (devSignIn) {
-            server.mount("/sign-in", signIn);
-            server.mount("/sign-out", signIn);
-        }
+        // Development sign-in trusts whoever says who they are, so a host running it answers this machine only.
+        DevSignIn devSignInPage = new DevSignIn(orgs);
+        OidcSignIn oidcSignIn = new OidcSignIn(orgs, providers, publicUrl, Instant::now);
+        ChatServer.Tenants tenants = devSignIn ? devSignInPage : oidcSignIn;
+        java.net.InetSocketAddress address = devSignIn
+                ? new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port)
+                : new java.net.InetSocketAddress(port);
+        ChatServer server = new ChatServer(address, runtime, tenants, tenant -> overview(tenant, orgs, llm), chat, null);
+        server.mount("/sign-in", devSignIn ? devSignInPage : oidcSignIn);
+        server.mount("/sign-out", devSignIn ? devSignInPage : oidcSignIn);
         // The admin view reads; a report of a pull request's rehearsal comes in with the org's REHEARSAL_TOKEN.
         RehearsalLog rehearsals = database.<RehearsalLog>map(PostgresRehearsalLog::new).orElseGet(RehearsalLog::inMemory);
         boolean localProposals = "local".equalsIgnoreCase(env.get("AGENTKIT_HOST_PROPOSALS"));
@@ -149,10 +167,15 @@ public final class AgentHostApp {
         server.mount("/host/admin", admin.admin());
         server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,
-                conversation -> "http://localhost:" + port + "/c/" + conversation, java.time.Duration.ofMinutes(5));
-        server.mount("/mcp", new HttpMcpEndpoint(new McpServer("agentkit-host", "0.1.0",
-                "Your organization's agents. Use ask_<agent> to ask one in plain language, as you would in the console."),
-                devSignIn ? DevSignIn.MCP_CALLERS : headers -> Optional.empty(), mcp::toolsFor));
+                conversation -> publicUrl + "/c/" + conversation, java.time.Duration.ofMinutes(5));
+        java.util.function.Supplier<McpServer> mcpServer = () -> new McpServer("agentkit-host", "0.1.0",
+                "Your organization's agents. Use ask_<agent> to ask one in plain language, as you would in the console.");
+        OrgMcp orgMcp = new OrgMcp(orgs, providers, publicUrl, mcp::toolsFor, mcpServer);
+        server.mount("/orgs/", orgMcp.endpoints());
+        server.mount("/.well-known/oauth-protected-resource/", orgMcp.metadata());
+        if (devSignIn) {
+            server.mount("/mcp", new HttpMcpEndpoint(mcpServer.get(), DevSignIn.MCP_CALLERS, mcp::toolsFor));
+        }
         server.start();
 
         ScheduledExecutorService reloader = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -177,9 +200,17 @@ public final class AgentHostApp {
                 .append(": ").append(String.join(", ", org.current().agents().keySet())).append('\n'));
         banner.append("  model: ").append(llm.isPresent() ? "OpenRouter" : "not configured — set OPENROUTER_API_KEY")
                 .append('\n');
-        banner.append("  sign-in: ").append(devSignIn ? "DEVELOPMENT (unauthenticated) at /sign-in" : "none").append('\n');
-        banner.append("  MCP: http://localhost:").append(port).append("/mcp").append(devSignIn
-                ? " (header " + DevSignIn.MCP_HEADER + ": <org>/<email>)" : " (no sign-in configured)").append('\n');
+        if (devSignIn) {
+            banner.append("  sign-in: DEVELOPMENT (unauthenticated) at /sign-in; listening on this machine only\n");
+            banner.append("  MCP: http://localhost:").append(port).append("/mcp (header ").append(DevSignIn.MCP_HEADER)
+                    .append(": <org>/<email>)\n");
+        } else {
+            banner.append("  sign-in: each organization's identity provider; register ").append(oidcSignIn.redirect())
+                    .append(" as its redirect URI\n");
+            orgs.values().stream().filter(org -> org.current().repo().signIn().isPresent()).forEach(org -> banner
+                    .append("  MCP for ").append(org.org()).append(": ").append(orgMcp.resource(org.org()))
+                    .append(" (OAuth with ").append(org.current().repo().signIn().get().issuer()).append(")\n"));
+        }
         banner.append("  data: ").append(database.isPresent() ? "Postgres (schema version "
                 + database.get().schemaVersion() + ")" : dataDir.toString()).append('\n');
         System.out.println(banner);

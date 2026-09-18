@@ -59,6 +59,7 @@
         <slf4j.version>2.0.16</slf4j.version>
         <postgresql.version>42.7.13</postgresql.version>
         <hikaricp.version>7.1.0</hikaricp.version>
+        <nimbus.jose.version>10.10</nimbus.jose.version>
 
         <!-- Plugin versions -->
         <surefire.version>3.5.2</surefire.version>
@@ -185,6 +186,11 @@
                 <groupId>com.zaxxer</groupId>
                 <artifactId>HikariCP</artifactId>
                 <version>${hikaricp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.nimbusds</groupId>
+                <artifactId>nimbus-jose-jwt</artifactId>
+                <version>${nimbus.jose.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.dataformat</groupId>

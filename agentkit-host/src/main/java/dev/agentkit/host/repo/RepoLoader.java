@@ -29,7 +29,7 @@ import java.util.stream.Stream;
  * Reads an organization's repository of agents from a directory — normally a checkout of its Git repository.
  *
  * <pre>
- * org.yaml                     org, model, directory, admins, repository
+ * org.yaml                     org, model, directory, admins, repository, signIn
  * connectors/&lt;name&gt;.yaml      url or command, headers, trustAnnotations, authoritative, timeoutSeconds, tools
  * agents/&lt;id&gt;/agent.yaml       name, description, pattern, model, audience, prompt, tools, confirm, bind, limits
  * agents/&lt;id&gt;/…               the prompt files agent.yaml names
@@ -49,7 +49,8 @@ public final class RepoLoader {
 
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
-    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins", "repository");
+    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins", "repository", "signIn");
+    private static final Set<String> SIGN_IN_KEYS = Set.of("issuer", "clientId", "emailClaim", "mcpAudience");
     private static final Set<String> REPOSITORY_KEYS = Set.of("github", "path", "base", "api");
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     private static final Set<String> DIRECTORY_KEYS = Set.of("connector", "tool", "argument");
@@ -104,6 +105,7 @@ public final class RepoLoader {
         Optional<DirectorySpec> directory = Optional.empty();
         List<String> admins = List.of();
         Optional<OrgRepo.RepositorySpec> repository = Optional.empty();
+        Optional<OrgRepo.SignInSpec> signIn = Optional.empty();
         Optional<JsonNode> orgFile = yaml("org.yaml", true);
         if (orgFile.isPresent()) {
             JsonNode node = orgFile.get();
@@ -116,6 +118,9 @@ public final class RepoLoader {
             admins = strings("org.yaml", "admins", node.get("admins"));
             if (node.has("repository")) {
                 repository = repository(node.get("repository"));
+            }
+            if (node.has("signIn")) {
+                signIn = signIn(node.get("signIn"));
             }
         }
 
@@ -157,7 +162,7 @@ public final class RepoLoader {
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
-        return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository);
+        return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository, signIn);
     }
 
     // ---------------------------------------------------------------- org and connectors
@@ -187,7 +192,7 @@ public final class RepoLoader {
             return Optional.empty();
         }
         String path = text("org.yaml", "repository.path", node.get("path"), false);
-        if (path != null && (path.startsWith("/") || java.util.Arrays.asList(path.split("/")).contains(".."))) {
+        if (path != null && java.util.Arrays.asList(path.split("/")).contains("..")) {
             problem("org.yaml", "repository.path", "is a directory inside the repository, such as orgs/acme");
             return Optional.empty();
         }
@@ -198,6 +203,25 @@ public final class RepoLoader {
             return Optional.empty();
         }
         return github == null ? Optional.empty() : Optional.of(new OrgRepo.RepositorySpec(github, path, base, api));
+    }
+
+    private Optional<OrgRepo.SignInSpec> signIn(JsonNode node) {
+        if (!node.isObject()) {
+            problem("org.yaml", "signIn", "must be a mapping of issuer and clientId, and optionally emailClaim and mcpAudience");
+            return Optional.empty();
+        }
+        unknownKeys("org.yaml", "signIn.", node, SIGN_IN_KEYS);
+        String issuer = text("org.yaml", "signIn.issuer", node.get("issuer"), true);
+        if (issuer != null && !issuer.startsWith("https://") && !issuer.startsWith("http://localhost")
+                && !issuer.startsWith("http://127.0.0.1")) {
+            problem("org.yaml", "signIn.issuer", "is an https URL: an identity provider is only trusted over TLS");
+            return Optional.empty();
+        }
+        String clientId = text("org.yaml", "signIn.clientId", node.get("clientId"), true);
+        String emailClaim = text("org.yaml", "signIn.emailClaim", node.get("emailClaim"), false);
+        String audience = text("org.yaml", "signIn.mcpAudience", node.get("mcpAudience"), false);
+        return issuer == null || clientId == null ? Optional.empty()
+                : Optional.of(new OrgRepo.SignInSpec(issuer, clientId, emailClaim, audience));
     }
 
     private Optional<ConnectorSpec> connector(String file, String name, JsonNode node) {

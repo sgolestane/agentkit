@@ -85,6 +85,7 @@ public final class HttpMcpEndpoint implements HttpHandler {
     private final Function<String, Optional<DeclaredTools>> toolsFor;
     private final Predicate<String> origins;
     private final Map<String, Session> sessions = new ConcurrentHashMap<>();
+    private volatile String challenge;
 
     /**
      * Allows localhost origins only.
@@ -102,6 +103,16 @@ public final class HttpMcpEndpoint implements HttpHandler {
         this.callers = Objects.requireNonNull(callers, "callers");
         this.toolsFor = Objects.requireNonNull(toolsFor, "toolsFor");
         this.origins = Objects.requireNonNull(origins, "origins");
+    }
+
+    /**
+     * What a refused caller is told about signing in: the {@code WWW-Authenticate} header of every {@code 401}, such as
+     * {@code Bearer resource_metadata="https://host/.well-known/oauth-protected-resource/mcp"}, from which an MCP
+     * client finds the authorization server to get a token from.
+     */
+    public HttpMcpEndpoint challenge(String wwwAuthenticate) {
+        this.challenge = wwwAuthenticate;
+        return this;
     }
 
     @Override
@@ -136,6 +147,9 @@ public final class HttpMcpEndpoint implements HttpHandler {
             Optional<String> caller = callers.identify(exchange.getRequestHeaders());
             Optional<DeclaredTools> tools = caller.flatMap(toolsFor);
             if (tools.isEmpty()) {
+                if (challenge != null) {
+                    exchange.getResponseHeaders().set("WWW-Authenticate", challenge);
+                }
                 send(exchange, 401, McpServer.error(message == null ? null : message.get("id"), -32001,
                         "Unknown caller"));
                 return;

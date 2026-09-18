@@ -18,6 +18,8 @@
         turn over MCP connectors.</description>
 
     <properties>
+        <!-- test, to run the fake identity provider: -Dexec.classpathScope=test -->
+        <exec.classpathScope>runtime</exec.classpathScope>
         <exec.mainClass>dev.agentkit.host.web.AgentHostApp</exec.mainClass>
         <!-- One argument for the program, e.g. -Dexec.appArgs=$PWD/orgs/acme for Validate; blank is ignored. -->
         <exec.appArgs></exec.appArgs>
@@ -66,6 +68,11 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
         </dependency>
+        <!-- Signing in: an organization's identity provider's tokens, checked against its published keys. -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
@@ -81,7 +88,7 @@
                 <version>3.5.0</version>
                 <configuration>
                     <executable>java</executable>
-                    <classpathScope>runtime</classpathScope>
+                    <classpathScope>${exec.classpathScope}</classpathScope>
                     <arguments>
                         <argument>-classpath</argument>
                         <classpath/>

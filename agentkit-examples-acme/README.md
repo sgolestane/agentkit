@@ -70,6 +70,11 @@ AGENTKIT_SECRET_ACME_ONBOARDING_URL=http://127.0.0.1:8140/mcp AGENTKIT_SECRET_AC
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 ```
 
+The development sign-in above takes whoever says who they are, and the host then answers this
+machine only. To sign in the way a customer would, with an identity provider, add `signIn` to
+`org.yaml` and drop `AGENTKIT_HOST_DEV_SIGN_IN`. The host's tests include a fake provider for
+trying that on one machine: see [Signing in](../agentkit-host/README.md#signing-in).
+
 To keep conversations, deferred actions and loaded versions in Postgres rather than in files, add
 `AGENTKIT_HOST_DATABASE_URL=jdbc:postgresql://...` to the host's command (see
 [Where it keeps things](../agentkit-host/README.md#where-it-keeps-things)).

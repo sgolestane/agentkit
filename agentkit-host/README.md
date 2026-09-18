@@ -34,6 +34,11 @@ directory:                             # optional: who someone is
   tool: directory_lookup
   argument: email
 admins: [agent-operators]              # optional: directory groups that see the admin view
+signIn:                                # optional: the org's identity provider (OpenID Connect)
+  issuer: https://login.acme.example   # its issuer; https only
+  clientId: agentkit-host              # the host's client there; a secret, if any, is OIDC_CLIENT_SECRET
+  emailClaim: email                    # optional: the claim the directory looks people up by
+  mcpAudience: api://agentkit          # optional: the audience MCP access tokens carry (default: the org's MCP URL)
 repository:                            # optional: where changes proposed in the admin view go
   github: acme/agents                  # as pull requests, with the org's GITHUB_TOKEN secret
   path: orgs/acme                      # optional: where these files are in that repository
@@ -210,14 +215,14 @@ OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
   as an absolute path: `exec:exec` runs from the module's own directory.
 - `AGENTKIT_SECRET_<ORG>_<NAME>` fills `${secret:NAME}` for that organization.
 - The console is at http://localhost:8400 (`AGENTKIT_HOST_PORT` to change it).
+  `AGENTKIT_HOST_PUBLIC_URL` is the address people reach it at, which identity providers send
+  them back to.
 - Due deferred actions run every `AGENTKIT_HOST_DEFERRED_SECONDS` (default 30).
 - Acme's example agents run on the host as configuration only: see
   [`agentkit-examples-acme`](../agentkit-examples-acme/README.md).
 
 - **Who is asking.** A person signs in to an organization, and their conversations are theirs
-  within it: the chat tenant is `org/email`. Development sign-in (`/sign-in`) trusts whoever
-  says who they are. It stands in for each organization's identity provider and is off
-  unless enabled.
+  within it: the chat tenant is `org/email`. See [Signing in](#signing-in).
 - **Which agent.** The console offers the agents of the organization's current version whose
   audience includes the person. A new conversation is pinned to the agent chosen and that
   version (`Conversation.Pin`).
@@ -253,6 +258,43 @@ AGENTKIT_HOST_DATABASE_USER=agentkit AGENTKIT_HOST_DATABASE_PASSWORD=... \
 - **Deferred actions are claimed once.** A claim is one conditional update, so however many hosts
   sweep, one runs an action. If the host that claimed it stops, the action is due again once the
   claim is 30 minutes old (at least once, as for every deferred store).
+
+## Signing in
+
+Each organization's people sign in with its own identity provider: the OpenID Connect issuer
+its `org.yaml` names under `signIn`.
+
+- **The console.** `/sign-in` sends the person to the provider: the authorization code flow, with
+  PKCE, a state tied to their browser, and a nonce tied to the ID token. Back at
+  `/sign-in/callback`, the ID token is checked against the keys the provider publishes: an
+  asymmetric signature, the issuer, the audience (the client id), expiry and the nonce. Then:
+  - the email must be one the provider says is verified;
+  - the organization's directory must know it. Someone the provider knows and the directory
+    does not is refused.
+  - A session is then a random id in an `HttpOnly` cookie (`Secure` on https), for 8 hours.
+  - Sessions are kept in memory, so a restart signs everyone out.
+- **Registering the host.** Create a client with the provider, with
+  `<AGENTKIT_HOST_PUBLIC_URL>/sign-in/callback` as its redirect URI. The client secret, if it has
+  one, is the org's `OIDC_CLIENT_SECRET` secret.
+- **MCP clients.** Each organization's agents are also at `<public URL>/orgs/<org>/mcp`, for
+  callers with an access token from the same provider, following MCP's authorization spec.
+  - A request without a valid token gets `401` with
+    `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/orgs/<org>/mcp"`.
+    That metadata names the provider, which the client signs its person in with.
+  - The token must be signed by the provider, unexpired, and for this address: its audience is
+    the org's MCP URL, or `signIn.mcpAudience`.
+  - Its email must be in the directory. One organization per address, so a token from one
+    organization's provider is never read as another's.
+- **Development sign-in.** `AGENTKIT_HOST_DEV_SIGN_IN=true` replaces all of this with a page
+  that takes whoever says who they are, and `/mcp` with an `X-AgentKit-User` header. The host
+  then listens on `127.0.0.1` only, so it cannot be reached from another machine.
+- **Trying it on one machine.** A small fake identity provider comes with the tests. Run it and
+  point an organization's `signIn.issuer` at it, with `clientId: agentkit-host`:
+
+```bash
+./mvnw -q -pl agentkit-host exec:exec -Dexec.classpathScope=test \
+  -Dexec.mainClass=dev.agentkit.host.auth.FakeIdentityProvider -Dexec.appArgs=8600
+```
 
 ## The admin view
 
@@ -304,7 +346,9 @@ it is merged, like any other commit.
 
 ## Over MCP
 
-The host is also an MCP server, at `/mcp` on the console's port. For each agent a caller may use,
+The host is also an MCP server: each organization's at `/orgs/<org>/mcp` on the console's port,
+for callers signed in with the organization's identity provider ([Signing in](#signing-in)). For
+each agent a caller may use,
 it offers `ask_<agent>`: a turn with that agent, as the caller, in their "<Agent> over MCP"
 conversation. That conversation is pinned like any other and appears in their console. An
 agent's `mcp.direct` tools are offered too, bound to the caller. Only tools that read may be
@@ -316,8 +360,16 @@ listed there, because nothing outside a conversation would stop a call for the p
 - **Clients without elicitation.** A client that can't be asked, or a person who dismisses the
   question, gets a reply saying what is waiting and linking to the conversation in the console.
 
-In development, a client names its person in the `X-AgentKit-User: <org>/<email>` header. Like
-the development sign-in, nothing authenticates it, and it is off unless development sign-in is on:
+A client that follows MCP's authorization spec finds the provider from the `401`, signs its
+person in, and brings the token:
+
+```bash
+claude mcp add --transport http acme https://agents.example.com/orgs/acme/mcp
+```
+
+In development, the host serves `/mcp` instead, where a client names its person in the
+`X-AgentKit-User: <org>/<email>` header. Like the development sign-in, nothing authenticates it,
+and it is off unless development sign-in is on:
 
 ```bash
 claude mcp add --transport http agents http://localhost:8400/mcp --header "X-AgentKit-User: acme/priya.natarajan@acme.example"
@@ -420,6 +472,7 @@ service container.
   running or waiting for a confirmation when the host stopped is not resumed. Its live stream
   and pending confirmations are in the process that ran it, so a person should also stay on one
   instance while a turn runs.
-- **Real sign-in.** Only development sign-in exists; OIDC per organization comes next.
+- **Sessions across instances.** Console sessions are kept in the process, so each instance of
+  the host signs people in separately, and a restart signs everyone out.
 - **Caller identity to connectors.** `bind` passes identity in arguments. The signed caller
   assertion in the connector contract comes later.
