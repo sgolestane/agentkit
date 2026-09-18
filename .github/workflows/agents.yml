@@ -1,0 +1,85 @@
+name: Acme's agents
+
+# The checks an organization's repository of agents gets on every pull request, run here on the
+# example organization: validate the change the way the host will load it, then rehearse the eval
+# cases of every agent it touches, with every tool that could change something refused and
+# recorded. Acme's connectors are started from this repository as stand-ins for its staging
+# systems; a real organization points its secrets at its own.
+on:
+  pull_request:
+    paths:
+      - "agentkit-examples-acme/**"
+      - "agentkit-host/**"
+      - ".github/workflows/agents.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      ORG: ${{ github.workspace }}/agentkit-examples-acme/orgs/acme
+      AGENTKIT_VALIDATE_PATH_PREFIX: agentkit-examples-acme/orgs/acme/
+      AGENTKIT_SECRET_ACME_COMPANY_URL: http://127.0.0.1:8130/mcp
+      AGENTKIT_SECRET_ACME_COMPANY_TOKEN: company-secret
+      AGENTKIT_SECRET_ACME_LEDGER_URL: http://127.0.0.1:8120/mcp
+      AGENTKIT_SECRET_ACME_LEDGER_TOKEN: ledger-secret
+      AGENTKIT_SECRET_ACME_ONBOARDING_URL: http://127.0.0.1:8140/mcp
+      AGENTKIT_SECRET_ACME_ONBOARDING_TOKEN: onboarding-secret
+      # Absent on a pull request from a fork, and then the rehearsal is skipped and says so.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The rehearsal compares the change with its base to choose the agents it touches.
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build the host and the example connectors
+        run: >-
+          ./mvnw -B -ntp -q install -DskipTests -Dmaven.javadoc.skip=true -Dfrontend.skip=true
+          -pl agentkit-host,agentkit-examples-acme -am
+
+      - name: Start Acme's connectors
+        run: |
+          COMPANY_HTTP_TOKEN=company-secret nohup ./mvnw -q -pl agentkit-examples-acme exec:exec \
+            -Dexec.mainClass=dev.agentkit.accessdesk.systems.CompanySystemsServer > company.log 2>&1 &
+          LEDGER_TOKEN=ledger-secret COMPANY_MCP_URL=http://127.0.0.1:8130/mcp COMPANY_MCP_TOKEN=company-secret \
+            nohup ./mvnw -q -pl agentkit-examples-acme exec:exec > ledger.log 2>&1 &
+          ONBOARDING_TOKEN=onboarding-secret nohup ./mvnw -q -pl agentkit-examples-acme exec:exec \
+            -Dexec.mainClass=dev.agentkit.onboarding.OnboardingConnector > onboarding.log 2>&1 &
+          for port in 8130 8120 8140; do
+            for i in $(seq 1 90); do (echo > /dev/tcp/127.0.0.1/$port) 2>/dev/null && break; sleep 1; done
+          done
+
+      - name: Validate
+        env:
+          AGENTKIT_VALIDATE_CONNECT: "true"
+        run: ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Validate -Dexec.appArgs="$ORG"
+
+      - name: Rehearse the agents this change touches
+        if: env.OPENROUTER_API_KEY != ''
+        env:
+          AGENTKIT_REHEARSE_SINCE: ${{ github.event.pull_request.base.sha }}
+          AGENTKIT_REHEARSE_REPORT: ${{ github.workspace }}/rehearsal.json
+        run: ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Rehearse -Dexec.appArgs="$ORG"
+
+      - name: Say why nothing was rehearsed
+        if: env.OPENROUTER_API_KEY == ''
+        run: |
+          echo "::notice title=Not rehearsed::No OPENROUTER_API_KEY secret is available to this pull request, so its agents were validated but not rehearsed."
+          echo "Validated, not rehearsed: no OPENROUTER_API_KEY secret is available to this pull request." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the rehearsal's report
+        if: always() && hashFiles('rehearsal.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: rehearsal
+          path: rehearsal.json

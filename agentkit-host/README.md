@@ -18,6 +18,7 @@ A connector enforces its own domain rules. The host enforces what applies to eve
 org.yaml
 connectors/<name>.yaml
 agents/<id>/agent.yaml
+agents/<id>/evals.yaml     optional: the cases a pull request rehearses
 agents/<id>/...            prompt files agent.yaml names
 ```
 
@@ -271,6 +272,11 @@ claude mcp add --transport http agents http://localhost:8400/mcp --header "X-Age
 
 ## Checking a pull request
 
+A change to an organization's repository gets two checks before it is merged. The
+[`agents.yml`](../.github/workflows/agents.yml) workflow runs both on Acme's repository in this one.
+
+### Validate
+
 `validate` loads a repository the way the host will, and lists every problem with its file and
 field. Under GitHub Actions each problem is also an annotation on the pull request. It exits 1
 when there are problems.
@@ -281,10 +287,62 @@ when there are problems.
 
 - **Connected mode.** With `AGENTKIT_VALIDATE_CONNECT=true` and the organization's secrets,
   `validate` also reaches the connectors and assembles every agent. It then prints what each
-  agent can do, grouped by effect, with its confirmations, bindings, deferred work and direct MCP
-  tools. That summary is what a reviewer of the change needs to see.
+  agent can do, grouped by effect, with its confirmations, bindings, deferred work, direct MCP
+  tools, eval cases, and what a rehearsal would refuse. That summary is what a reviewer of the
+  change needs to see.
 - **Annotation paths.** `AGENTKIT_VALIDATE_PATH_PREFIX` prefixes the paths in annotations, for a
   repository kept in a subdirectory.
+
+### Eval cases
+
+An agent's `evals.yaml` holds conversations with it, and what must be true of each:
+
+```yaml
+cases:
+  - name: needs-incident
+    as: priya.natarajan@acme.example          # someone in the directory
+    say: Give me read access to payments-prod for 2 hours.   # or input: {the agent's form}
+    answers: ["It's for INC-4211."]           # what they say when the agent asks
+    expect:
+      - asks: true
+      - calls: submit_access_request
+        with: {resource_id: db-payments-prod, approver_email: dana.kim@acme.example}
+      - never: grant_low_risk_access
+      - answer_contains: Dana                 # ignoring case
+      - judge: The answer says who will decide and that Priya will be told.
+```
+
+- **Expectations.** `calls` and `never` are about the calls the agent made, with the arguments in
+  `with` if given (equal ignoring case; a list must hold every item). `asks` is whether it asked
+  the person anything, in a question or at the end of its reply. `answer_contains` checks the last
+  answer. `judge` has the model rule on the conversation against a rubric.
+- **Checked like the rest.** The file is checked when the repository is read, a form's input
+  against the form. When the agent is assembled, every tool a case names must be one of its tools.
+
+### Rehearse
+
+`rehearse` runs the eval cases of the agents a change touches, against the organization's real
+connectors and model, as the people the cases name:
+
+```bash
+OPENROUTER_API_KEY=sk-or-... AGENTKIT_SECRET_ACME_...=... AGENTKIT_REHEARSE_SINCE=origin/main \
+  ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Rehearse -Dexec.appArgs=$PWD/orgs/acme
+```
+
+- **Nothing is changed.** Every tool that could change something is refused before it reaches
+  its connector, and the call is recorded: any tool not declared `read`, a read that may leave
+  something behind (it asks a person something, or records what it found, or its connector does
+  not say it has no side effects), and the host's own tools such as the scheduler. The model is
+  told the call was not run, and carries on. Reads run, so the agent sees what is really there.
+- **What the report shows.** Per case: whether its checks held, the plan for a plan-and-execute
+  agent, what it asked, its answer, and what it would have done — each refused call with its
+  arguments. Under GitHub Actions a case that failed is an annotation on `evals.yaml`, and the
+  report is the job's summary. `AGENTKIT_REHEARSE_REPORT` also writes it as JSON.
+- **Which agents.** With `AGENTKIT_REHEARSE_SINCE`, the agents whose files changed since that
+  ref, or all of them when `org.yaml` or a connector changed. `AGENTKIT_REHEARSE_AGENTS` names
+  them instead. A changed agent with no eval cases is a warning: the pull request cannot show what
+  the change does.
+- **Exit status.** 0 when every case held, 1 when one did not, 2 when nothing could be rehearsed.
 
 ## Tests
 

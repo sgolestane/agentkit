@@ -121,6 +121,7 @@ Everything a customer changes lives in `orgs/acme`, and none of it needs a code 
 | `agents/onboarding/input.yaml`, `goal.md` | the form a manager fills in, and the request it becomes |
 | `agents/onboarding/deferred-prompt.md` | the prompt the reminder and the removal run with |
 | `agents/onboarding/agent.yaml` | plan-and-execute, managers only, confirmed grants, who asks, deferred work |
+| `agents/*/evals.yaml` | the conversations a pull request rehearses, and what must be true of each |
 | `connectors/*.yaml` | where the connectors are, and which secrets reach them |
 | `org.yaml` | the organization, its default model, and its directory |
 
@@ -192,6 +193,23 @@ tools, bindings and confirmations.
   but them and their manager.
 
 ## Tests and evals
+
+**On every pull request** that touches `orgs/acme`, the [`agents.yml`](../.github/workflows/agents.yml)
+workflow validates the repository against the connectors, then rehearses the eval cases of each
+agent the change touches ([`evals.yaml`](orgs/acme/agents/access-desk/evals.yaml)). A rehearsal is
+a real conversation with the real model. Every tool that could change something is refused and
+recorded, so the pull request shows what each agent would have done. See
+[Checking a pull request](../agentkit-host/README.md#checking-a-pull-request). The same, locally,
+with the three connectors running:
+
+```bash
+OPENROUTER_API_KEY=sk-or-... AGENTKIT_SECRET_ACME_COMPANY_URL=http://127.0.0.1:8130/mcp ... \
+  ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Rehearse \
+  -Dexec.appArgs=$PWD/agentkit-examples-acme/orgs/acme
+```
+
+The rehearsal checks what an agent set out to do. The evals below also check what the systems
+hold afterwards, against fresh stand-in connectors, which only a test can set up.
 
 ```bash
 ./mvnw -pl agentkit-examples-acme test          # offline, no model

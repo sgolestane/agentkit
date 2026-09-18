@@ -73,9 +73,11 @@ public final class HostedAgent {
     private final Optional<String> unavailable;
     private final Optional<SubjectResolver> subjects;
     private final OrgConnectors connectors;
+    private final boolean rehearsal;
 
     private HostedAgent(OrgRepo repo, AgentDefinition definition, List<Selected> selected, Set<String> confirmed,
-                        Optional<String> unavailable, Optional<SubjectResolver> subjects, OrgConnectors connectors) {
+                        Optional<String> unavailable, Optional<SubjectResolver> subjects, OrgConnectors connectors,
+                        boolean rehearsal) {
         this.repo = repo;
         this.definition = definition;
         this.selected = List.copyOf(selected);
@@ -83,6 +85,7 @@ public final class HostedAgent {
         this.unavailable = unavailable;
         this.subjects = subjects;
         this.connectors = connectors;
+        this.rehearsal = rehearsal;
     }
 
     /**
@@ -102,7 +105,8 @@ public final class HostedAgent {
         if (!down.isEmpty()) {
             String why = down.stream().map(c -> connectors.failure(c).orElse("The " + c + " connector is not connected."))
                     .collect(Collectors.joining(" "));
-            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why), Optional.empty(), connectors);
+            return new HostedAgent(repo, definition, List.of(), Set.of(), Optional.of(why), Optional.empty(), connectors,
+                    false);
         }
 
         // Which tools, in the order the selectors and each connector list them.
@@ -213,17 +217,76 @@ public final class HostedAgent {
             subjects = Optional.of(new ConnectorSubjects(definition.deferred().subjects(), connectors));
         }
 
+        // Eval cases: every tool an expectation names is one this agent is given.
+        String evals = "agents/" + definition.id() + "/evals.yaml";
+        for (int i = 0; i < definition.evals().size(); i++) {
+            List<dev.agentkit.host.repo.EvalCase.Expectation> expect = definition.evals().get(i).expect();
+            for (int j = 0; j < expect.size(); j++) {
+                String tool = expect.get(j).tool();
+                boolean scheduler = definition.deferred() != null
+                        && dev.agentkit.core.deferred.DeferredActionScheduler.TOOL_NAME.equals(tool);
+                if (tool != null && !byName.containsKey(tool) && !scheduler) {
+                    problems.add(new Problem(evals, "cases[" + i + "].expect[" + j + "]",
+                            tool + " is not one of this agent's tools"));
+                }
+            }
+        }
+
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
         List<Selected> tools = byName.values().stream()
                 .map(s -> new Selected(s.connector(), s.entry(), bindings.getOrDefault(s.entry().tool().name(), Map.of())))
                 .toList();
-        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty(), subjects, connectors);
+        return new HostedAgent(repo, definition, tools, confirmed, Optional.empty(), subjects, connectors, false);
     }
 
     public AgentDefinition definition() {
         return definition;
+    }
+
+    /**
+     * This agent for a rehearsal: the same prompt, policy, tools and bindings, reads run as usual, and every tool that
+     * could change something refused before it runs, with the call recorded in the turn's trace — any not declared
+     * {@link ToolEffect#READ}; a read that may leave something behind (it asks a person, or records what it found, or
+     * its connector does not say it leaves nothing); and the tools the host adds for a turn, such as the scheduler.
+     * What the agent set out to do is visible; nothing is done.
+     */
+    public HostedAgent rehearsing() {
+        return new HostedAgent(repo, definition, selected, confirmed, unavailable, subjects, connectors, true);
+    }
+
+    /** Whether this is the agent {@link #rehearsing()}. */
+    public boolean isRehearsal() {
+        return rehearsal;
+    }
+
+    /** The tools a rehearsal refuses, by name, with what each would have done. */
+    public Map<String, String> changing(List<Tool> alsoGiven) {
+        Map<String, String> changing = new LinkedHashMap<>();
+        for (Selected s : selected) {
+            ToolEffect effect = s.entry().declaration().effect();
+            if (effect != ToolEffect.READ) {
+                changing.put(s.entry().tool().name(), effect.wire());
+            } else if (s.entry().tool().sideEffects() != dev.agentkit.core.tool.SideEffects.NONE) {
+                changing.put(s.entry().tool().name(), "leave something behind");
+            }
+        }
+        alsoGiven.forEach(tool -> changing.putIfAbsent(tool.name(),
+                dev.agentkit.core.deferred.DeferredActionScheduler.TOOL_NAME.equals(tool.name())
+                        ? ToolEffect.SCHEDULE.wire() : "act"));
+        return changing;
+    }
+
+    /** Refuses the {@code changing} tools, saying so in a way that lets the model carry on. */
+    static ToolGate rehearsalGate(Map<String, String> changing) {
+        return (tool, invocation) -> {
+            String effect = changing.get(invocation.name());
+            return effect == null ? dev.agentkit.core.reliability.GateResult.allow()
+                    : dev.agentkit.core.reliability.GateResult.deny("Not run: this is a rehearsal, and "
+                    + invocation.name() + " would " + effect + ". Nothing was changed. Carry on as you would if it had "
+                    + "worked, without trying another way to do it, and say in your answer what you did not do.");
+        };
     }
 
     /** {@code id@version}: which definition, at which commit, a turn ran. */
@@ -418,9 +481,10 @@ public final class HostedAgent {
         List<Tool> tools = new ArrayList<>(tools(principal).entries().stream().map(DeclaredTools.Entry::tool).toList());
         tools.addAll(alsoGiven);
         tools.add(ChatTools.askPerson(runtime, session));
+        ToolGate gate = gate(session.approver());
         return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
-                .name(definition.id())
-                .toolGate(gate(session.approver()));
+                .name(definition.id() + (rehearsal ? "-rehearsal" : ""))
+                .toolGate(rehearsal ? ToolGates.allOf(rehearsalGate(changing(alsoGiven)), gate) : gate);
     }
 
     private void check(Principal principal) {

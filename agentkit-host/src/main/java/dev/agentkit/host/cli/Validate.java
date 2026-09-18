@@ -68,7 +68,8 @@ public final class Validate {
         if (!connect) {
             out.println(repo.org() + " @ " + version + ": " + repo.agents().size() + " agent(s), "
                     + repo.connectors().size() + " connector(s); the files are valid.");
-            repo.agents().values().forEach(a -> out.println("  " + a.id() + " — " + a.name() + selectors(a)));
+            repo.agents().values().forEach(a -> out.println("  " + a.id() + " — " + a.name() + selectors(a)
+                    + (a.evals().isEmpty() ? "; no eval cases" : "; " + a.evals().size() + " eval case(s)")));
             out.println("Connectors were not reached; set AGENTKIT_VALIDATE_CONNECT=true to check the agents against them.");
             return 0;
         }
@@ -119,6 +120,12 @@ public final class Validate {
             out.println("    offered directly over MCP: " + definition.mcpDirect().stream().map(Object::toString)
                     .collect(Collectors.joining(", ")));
         }
+        out.println("    eval cases: " + (definition.evals().isEmpty() ? "none — a pull request cannot show what a change "
+                + "to it does" : definition.evals().stream().map(c -> c.name()).collect(Collectors.joining(", "))));
+        Map<String, String> refused = agent.changing(List.of());
+        if (!refused.isEmpty()) {
+            out.println("    refused in a rehearsal: " + String.join(", ", refused.keySet()));
+        }
     }
 
     private static String selectors(AgentDefinition agent) {
@@ -126,7 +133,7 @@ public final class Validate {
                 .collect(Collectors.joining(", ")) + ")";
     }
 
-    private static int report(List<DefinitionException.Problem> problems, PrintStream out, boolean github, String prefix) {
+    static int report(List<DefinitionException.Problem> problems, PrintStream out, boolean github, String prefix) {
         out.println(problems.size() + " problem" + (problems.size() == 1 ? "" : "s") + ":");
         for (DefinitionException.Problem p : problems) {
             out.println("  " + p);
@@ -139,12 +146,12 @@ public final class Validate {
     }
 
     /** GitHub's workflow-command escaping for a message. */
-    private static String message(String text) {
+    static String message(String text) {
         return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A");
     }
 
     /** GitHub's workflow-command escaping for a property, which also may not hold a colon or a comma. */
-    private static String property(String text) {
+    static String property(String text) {
         return message(text).replace(":", "%3A").replace(",", "%2C");
     }
 }

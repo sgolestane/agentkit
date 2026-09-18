@@ -36,6 +36,11 @@
             <groupId>dev.agentkit</groupId>
             <artifactId>agentkit-chat</artifactId>
         </dependency>
+        <!-- An agent's eval cases are scored with agentkit-eval's checks when a pull request rehearses them. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-eval</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

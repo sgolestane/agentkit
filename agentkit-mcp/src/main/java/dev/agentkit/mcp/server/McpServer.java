@@ -29,8 +29,9 @@ import java.util.UUID;
  * <h2>How a tool describes itself</h2>
  *
  * <p>Each listed tool carries the standard MCP annotations, derived from what it declares:
- * {@code readOnlyHint} for {@link ToolEffect#READ}, {@code destructiveHint} for {@link ToolEffect#REVOKE},
- * {@code idempotentHint} from its {@link SideEffects}. The annotations cannot say <em>grant</em> or
+ * {@code readOnlyHint} for a {@link ToolEffect#READ} that leaves nothing behind ({@link SideEffects#NONE}) — a read
+ * that asks a person something, or records what it found, changes its environment, which is what the hint denies —
+ * {@code destructiveHint} for {@link ToolEffect#REVOKE}, {@code idempotentHint} from its {@link SideEffects}. The annotations cannot say <em>grant</em> or
  * <em>revoke</em>, or which argument names the person, so the full declaration also travels in
  * {@code _meta} under the keys in {@link McpDeclarations}. A client that knows these keys needs no
  * configuration to bound what the tools may do; one that does not still gets the standard hints.
@@ -115,7 +116,7 @@ public final class McpServer {
             listed.put("description", tool.description());
             listed.set("inputSchema", MAPPER.valueToTree(tool.inputSchema()));
             ObjectNode annotations = listed.putObject("annotations");
-            annotations.put("readOnlyHint", info.effect() == ToolEffect.READ);
+            annotations.put("readOnlyHint", info.effect() == ToolEffect.READ && tool.sideEffects() == SideEffects.NONE);
             annotations.put("destructiveHint", info.effect() == ToolEffect.REVOKE);
             annotations.put("idempotentHint", tool.sideEffects() == SideEffects.NONE
                     || tool.sideEffects() == SideEffects.IDEMPOTENT);

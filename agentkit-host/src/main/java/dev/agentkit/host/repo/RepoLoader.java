@@ -33,6 +33,7 @@ import java.util.stream.Stream;
  * connectors/&lt;name&gt;.yaml      url or command, headers, trustAnnotations, authoritative, timeoutSeconds, tools
  * agents/&lt;id&gt;/agent.yaml       name, description, pattern, model, audience, prompt, tools, confirm, bind, limits
  * agents/&lt;id&gt;/…               the prompt files agent.yaml names
+ * agents/&lt;id&gt;/evals.yaml       optional: the cases a pull request rehearses ({@link EvalCase})
  * </pre>
  *
  * <p>Everything a file says is checked here that can be checked without connecting to anything: required fields,
@@ -62,6 +63,10 @@ public final class RepoLoader {
     private static final Set<String> PLAN_EXECUTE_PROMPT_KEYS = Set.of("planner", "executor", "policy");
     private static final Set<String> SELECTOR_KEYS = Set.of("connector", "effects", "tools");
     private static final Set<String> LIMIT_KEYS = Set.of("maxSteps", "maxTokens");
+    private static final Set<String> EVALS_KEYS = Set.of("cases");
+    private static final Set<String> CASE_KEYS = Set.of("name", "as", "say", "input", "answers", "expect");
+    private static final Set<String> EXPECT_KINDS = Set.of("calls", "never", "asks", "answer_contains", "judge");
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     static final int DEFAULT_MAX_STEPS = 20;
     static final int DEFAULT_MAX_TOKENS = 2048;
@@ -342,11 +347,139 @@ public final class RepoLoader {
             input = input(file, dir, inputNode);
         }
 
+        List<EvalCase> evals = evals("agents/" + id + "/evals.yaml", input);
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input));
+                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input, evals));
+    }
+
+    /**
+     * The agent's eval cases, if it has an {@code evals.yaml}. What needs the connectors — that a tool an expectation
+     * names is one of the agent's — is checked when the agent is assembled.
+     */
+    private List<EvalCase> evals(String file, TaskInput input) {
+        Optional<JsonNode> read = yaml(file, false);
+        if (read.isEmpty()) {
+            return List.of();
+        }
+        JsonNode node = read.get();
+        if (!node.isObject()) {
+            problem(file, "", "must be a mapping with cases: a list of eval cases");
+            return List.of();
+        }
+        unknownKeys(file, "", node, EVALS_KEYS);
+        JsonNode casesNode = node.get("cases");
+        if (casesNode == null || !casesNode.isArray() || casesNode.isEmpty()) {
+            problem(file, "cases", "is required: a list of {name, as, say or input, answers, expect}");
+            return List.of();
+        }
+        List<EvalCase> cases = new ArrayList<>();
+        Set<String> names = new java.util.HashSet<>();
+        for (int i = 0; i < casesNode.size(); i++) {
+            String where = "cases[" + i + "]";
+            JsonNode c = casesNode.get(i);
+            if (!c.isObject()) {
+                problem(file, where, "must be a mapping of name, as, say or input, answers and expect");
+                continue;
+            }
+            int before = problems.size();
+            unknownKeys(file, where + ".", c, CASE_KEYS);
+            String name = text(file, where + ".name", c.get("name"), true);
+            if (name != null && !names.add(name)) {
+                problem(file, where + ".name", "another case is named " + name);
+            }
+            String as = text(file, where + ".as", c.get("as"), true);
+            if (as != null && !as.contains("@")) {
+                problem(file, where + ".as", "is the email of someone in the directory");
+            }
+            String say = text(file, where + ".say", c.get("say"), false);
+            Map<String, Object> filled = null;
+            JsonNode inputNode = c.get("input");
+            if ((say == null) == (inputNode == null)) {
+                problem(file, where, "starts from say or from input: exactly one of them");
+            } else if (inputNode != null) {
+                if (input == null) {
+                    problem(file, where + ".input", "this agent takes no form; use say");
+                } else if (!inputNode.isObject()) {
+                    problem(file, where + ".input", "must be a mapping of the form's fields");
+                } else {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> given = JSON.convertValue(inputNode, Map.class);
+                    input.problems(given).forEach(p -> problem(file, where + ".input", p));
+                    filled = given;
+                }
+            }
+            List<String> answers = strings(file, where + ".answers", c.get("answers"));
+            List<EvalCase.Expectation> expect = new ArrayList<>();
+            JsonNode expectNode = c.get("expect");
+            if (expectNode == null || !expectNode.isArray() || expectNode.isEmpty()) {
+                problem(file, where + ".expect", "is required: a list of what must be true");
+            } else {
+                for (int j = 0; j < expectNode.size(); j++) {
+                    expectation(file, where + ".expect[" + j + "]", expectNode.get(j)).ifPresent(expect::add);
+                }
+            }
+            if (problems.size() == before) {
+                cases.add(new EvalCase(name, as.toLowerCase(Locale.ROOT), say, filled, answers, expect));
+            }
+        }
+        return cases;
+    }
+
+    private Optional<EvalCase.Expectation> expectation(String file, String where, JsonNode node) {
+        if (!node.isObject()) {
+            problem(file, where, "must be a mapping: one of " + new java.util.TreeSet<>(EXPECT_KINDS));
+            return Optional.empty();
+        }
+        List<String> kinds = new ArrayList<>();
+        node.fieldNames().forEachRemaining(key -> {
+            if (EXPECT_KINDS.contains(key)) {
+                kinds.add(key);
+            } else if (!key.equals("with")) {
+                problem(file, where + "." + key, "is not an expectation; they are " + new java.util.TreeSet<>(EXPECT_KINDS));
+            }
+        });
+        if (kinds.size() != 1) {
+            problem(file, where, "must say exactly one of " + new java.util.TreeSet<>(EXPECT_KINDS));
+            return Optional.empty();
+        }
+        String kind = kinds.get(0);
+        JsonNode with = node.get("with");
+        if (with != null && !kind.equals("calls") && !kind.equals("never")) {
+            problem(file, where + ".with", "goes with calls or never");
+            return Optional.empty();
+        }
+        Map<String, Object> arguments = Map.of();
+        if (with != null) {
+            if (!with.isObject()) {
+                problem(file, where + ".with", "must be a mapping of argument to value");
+                return Optional.empty();
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> converted = JSON.convertValue(with, Map.class);
+            arguments = converted;
+        }
+        JsonNode value = node.get(kind);
+        Map<String, Object> withArguments = arguments;
+        return switch (kind) {
+            case "calls", "never" -> Optional.ofNullable(text(file, where + "." + kind, value, true))
+                    .map(tool -> new EvalCase.Expectation(kind.equals("calls") ? EvalCase.Expectation.Kind.CALLS
+                            : EvalCase.Expectation.Kind.NEVER, tool, withArguments, false, null));
+            case "asks" -> {
+                if (value == null || !value.isBoolean()) {
+                    problem(file, where + ".asks", "is true or false");
+                    yield Optional.empty();
+                }
+                yield Optional.of(new EvalCase.Expectation(EvalCase.Expectation.Kind.ASKS, null, null, value.asBoolean(),
+                        null));
+            }
+            default -> Optional.ofNullable(text(file, where + "." + kind, value, true))
+                    .map(text -> new EvalCase.Expectation(kind.equals("judge") ? EvalCase.Expectation.Kind.JUDGE
+                            : EvalCase.Expectation.Kind.ANSWER_CONTAINS, null, null, false, text));
+        };
     }
 
     private TaskInput input(String file, Path dir, JsonNode node) {

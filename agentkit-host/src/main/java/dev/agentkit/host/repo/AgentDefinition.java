@@ -31,12 +31,13 @@ import java.util.Set;
  * @param plannerPrompt for {@link Pattern#PLAN_EXECUTE}, the prompt the plan is made with; null otherwise
  * @param input        the fields a person fills in to start it, and how they become its request; null when it takes
  *                     only what is said to it
+ * @param evals        the cases a pull request rehearses, from {@code evals.yaml}; empty when there is none
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
                               int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt,
-                              TaskInput input) {
+                              TaskInput input, List<EvalCase> evals) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
@@ -65,6 +66,7 @@ public record AgentDefinition(String id, String name, String description, Patter
         confirm = List.copyOf(confirm);
         bind = Map.copyOf(bind);
         mcpDirect = mcpDirect == null ? List.of() : List.copyOf(mcpDirect);
+        evals = evals == null ? List.of() : List.copyOf(evals);
         if (pattern == Pattern.PLAN_EXECUTE) {
             Objects.requireNonNull(plannerPrompt, "plannerPrompt");
         }
