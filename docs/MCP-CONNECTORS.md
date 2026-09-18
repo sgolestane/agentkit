@@ -202,7 +202,7 @@ definition binds, for example `bind: {ledger/*: {acting_as: principal.email}}`.
 - A deferred action fills it with the agent's `deferred.actor` (for example `access-desk`),
   which the connector recognises as the agent itself rather than a person.
 
-The Access Desk ledger (`agentkit-examples-access-desk`, `AccessLedgerConnector`) is a
+The Access Desk ledger (`agentkit-examples-acme`, `AccessLedgerConnector`) is a
 complete connector built this way.
 
 ## Where this is going

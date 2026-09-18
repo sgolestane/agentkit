@@ -62,7 +62,7 @@ import java.util.stream.Stream;
  *
  * <pre>
  * ACCESS_DESK_EVAL=true OPENROUTER_API_KEY=sk-or-... \
- *   ./mvnw -pl agentkit-examples-access-desk test -Dtest=AccessDeskEvalTest
+ *   ./mvnw -pl agentkit-examples-acme test -Dtest=AccessDeskEvalTest
  * </pre>
  * {@code ACCESS_DESK_EVAL_CASES="low-risk-grant approver-shortens"} runs a subset. The model is the one
  * {@code orgs/acme/org.yaml} names.

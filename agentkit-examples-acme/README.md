@@ -31,16 +31,16 @@ Three processes, one terminal each, from the repository root after
 
 ```bash
 COMPANY_HTTP_TOKEN=company-secret \
-  ./mvnw -q -pl agentkit-examples-access-desk exec:exec -Dexec.mainClass=dev.agentkit.accessdesk.systems.CompanySystemsServer
+  ./mvnw -q -pl agentkit-examples-acme exec:exec -Dexec.mainClass=dev.agentkit.accessdesk.systems.CompanySystemsServer
 ```
 
 ```bash
 LEDGER_TOKEN=ledger-secret COMPANY_MCP_URL=http://127.0.0.1:8130/mcp COMPANY_MCP_TOKEN=company-secret \
-  ./mvnw -q -pl agentkit-examples-access-desk exec:exec
+  ./mvnw -q -pl agentkit-examples-acme exec:exec
 ```
 
 ```bash
-AGENTKIT_HOST_ORGS=$PWD/agentkit-examples-access-desk/orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
+AGENTKIT_HOST_ORGS=$PWD/agentkit-examples-acme/orgs AGENTKIT_HOST_DEV_SIGN_IN=true \
 AGENTKIT_SECRET_ACME_COMPANY_URL=http://127.0.0.1:8130/mcp AGENTKIT_SECRET_ACME_COMPANY_TOKEN=company-secret \
 AGENTKIT_SECRET_ACME_LEDGER_URL=http://127.0.0.1:8120/mcp AGENTKIT_SECRET_ACME_LEDGER_TOKEN=ledger-secret \
 OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
@@ -68,7 +68,7 @@ links to the conversation in the console.
 
 ```bash
 ./mvnw -q -pl agentkit-host exec:exec -Dexec.mainClass=dev.agentkit.host.cli.Validate \
-  -Dexec.appArgs=$PWD/agentkit-examples-access-desk/orgs/acme
+  -Dexec.appArgs=$PWD/agentkit-examples-acme/orgs/acme
 ```
 
 ## What a customer changes
@@ -125,7 +125,7 @@ enforce the rules that must hold whatever the model concludes:
 ## Tests and evals
 
 ```bash
-./mvnw -pl agentkit-examples-access-desk test          # offline, no model
+./mvnw -pl agentkit-examples-acme test          # offline, no model
 ```
 
 - **Desk rules** (`DeskRulesTest`): every rule the ledger enforces, and a grant as a subject record.
@@ -141,7 +141,7 @@ enforce the rules that must hold whatever the model concludes:
 
 ```bash
 ACCESS_DESK_EVAL=true OPENROUTER_API_KEY=sk-or-... \
-  ./mvnw -pl agentkit-examples-access-desk test -Dtest=AccessDeskEvalTest
+  ./mvnw -pl agentkit-examples-acme test -Dtest=AccessDeskEvalTest
 ```
 
 Six conversations run against a real model on the host. Each is scored on what the ledger, the

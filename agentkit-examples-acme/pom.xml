@@ -10,12 +10,11 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>agentkit-examples-access-desk</artifactId>
-    <name>AgentKit Example — Access Desk</name>
-    <description>Just-in-time access as an agent on the agent host: Acme's repository of agents
-        (orgs/acme) and two MCP connectors — the company systems, and the access ledger that holds
-        the desk's rules. People ask for access in plain language, a policy decides who approves, and
-        every grant ends on its own.</description>
+    <artifactId>agentkit-examples-acme</artifactId>
+    <name>AgentKit Example — Acme</name>
+    <description>Acme on the agent host: its repository of agents (orgs/acme) and the MCP
+        connectors they use. Access Desk gives temporary access under a policy, through the company
+        systems and an access ledger that holds the desk's rules.</description>
 
     <properties>
         <maven.deploy.skip>true</maven.deploy.skip>

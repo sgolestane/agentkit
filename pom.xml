@@ -30,7 +30,7 @@
         <module>agentkit-examples-itops</module>
         <module>agentkit-examples-workbench</module>
         <module>agentkit-examples-workbench-chat</module>
-        <module>agentkit-examples-access-desk</module>
+        <module>agentkit-examples-acme</module>
         <module>agentkit-pentest</module>
     </modules>
 

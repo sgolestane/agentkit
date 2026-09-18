@@ -204,7 +204,8 @@ OPENROUTER_API_KEY=sk-or-... ./mvnw -q -pl agentkit-host exec:exec
 - `AGENTKIT_SECRET_<ORG>_<NAME>` fills `${secret:NAME}` for that organization.
 - The console is at http://localhost:8400 (`AGENTKIT_HOST_PORT` to change it).
 - Due deferred actions run every `AGENTKIT_HOST_DEFERRED_SECONDS` (default 30).
-- Access Desk runs on the host as configuration only: see its README.
+- Acme's example agents run on the host as configuration only: see
+  [`agentkit-examples-acme`](../agentkit-examples-acme/README.md).
 
 - **Who is asking.** A person signs in to an organization, and their conversations are theirs
   within it: the chat tenant is `org/email`. Development sign-in (`/sign-in`) trusts whoever
