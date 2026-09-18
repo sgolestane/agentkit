@@ -2,6 +2,7 @@ import type {
   AdminAgent,
   AdminDeferredAction,
   AdminOverview,
+  AdminUsage,
   AgentFile,
   AgentInfo,
   Attachment,
@@ -84,6 +85,7 @@ export const api = {
     deferred: () =>
       at<{ agents: { id: string; name: string; actions: AdminDeferredAction[] }[] }>('/host/admin/deferred'),
     rehearsals: () => at<{ reports: RehearsalReport[] }>('/host/admin/rehearsals'),
+    usage: () => at<AdminUsage>('/host/admin/usage'),
     files: (id: string) =>
       at<{ version: string; files: AgentFile[] }>(`/host/admin/agents/${encodeURIComponent(id)}/files`),
     /** A refused proposal is an answer, not a failure: its reasons come back to be shown. */

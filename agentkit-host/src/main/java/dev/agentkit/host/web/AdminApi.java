@@ -13,6 +13,7 @@ import dev.agentkit.host.Principal;
 import dev.agentkit.host.RehearsalLog;
 import dev.agentkit.host.Tenant;
 import dev.agentkit.host.change.Proposals;
+import dev.agentkit.host.models.ModelAccounts;
 import dev.agentkit.host.repo.AgentDefinition;
 import dev.agentkit.host.repo.EvalCase;
 import java.io.IOException;
@@ -40,6 +41,8 @@ import java.util.function.Supplier;
  *                                   tools by effect with confirmations and bindings, its form, deferred work and evals
  * GET  /host/admin/deferred          every deferred action the organization's agents hold
  * GET  /host/admin/rehearsals        the rehearsals its pull requests reported, newest first
+ * GET  /host/admin/usage             its model account: whose, calls at once, budgets, and what it spent today and
+ *                                   this month, by agent
  * GET  /host/admin/agents/{id}/files the agent's files at the current version, to edit for a proposal
  * POST /host/admin/proposals         a change to agents' files, checked and opened as a pull request ({@link Proposals})
  * POST /host/rehearsals/{org}        a pull request's rehearsal report, from rehearse, with the org's REHEARSAL_TOKEN
@@ -62,6 +65,7 @@ public final class AdminApi {
     private final Function<String, Optional<String>> reportToken;
     private final Supplier<Instant> clock;
     private final Proposals proposals;
+    private final Optional<ModelAccounts> models;
 
     /**
      * @param reportToken the token a rehearsal report for an organization must carry; empty when it takes none
@@ -70,6 +74,14 @@ public final class AdminApi {
     public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
                     RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
                     Proposals proposals) {
+        this(orgs, deferred, tenants, rehearsals, reportToken, clock, proposals, null);
+    }
+
+    /** @param models each organization's model account, whose use the admin view shows; null when none is kept */
+    public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
+                    RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
+                    Proposals proposals, ModelAccounts models) {
+        this.models = Optional.ofNullable(models);
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
         this.tenants = Objects.requireNonNull(tenants, "tenants");
@@ -125,6 +137,12 @@ public final class AdminApi {
                     }
                 } else if (path.equals("/deferred")) {
                     send(exchange, 200, deferred(org));
+                } else if (path.equals("/usage")) {
+                    if (models.isEmpty()) {
+                        send(exchange, 404, Map.of("error", "This host keeps no account of model use."));
+                    } else {
+                        send(exchange, 200, models.get().report(org.current().repo()));
+                    }
                 } else if (path.equals("/rehearsals")) {
                     send(exchange, 200, Map.of("reports", rehearsals.recent(org.org(), 20)));
                 } else {

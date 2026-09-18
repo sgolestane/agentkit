@@ -59,6 +59,11 @@
             <groupId>dev.agentkit</groupId>
             <artifactId>agentkit-llm-openrouter</artifactId>
         </dependency>
+        <!-- An organization may run on its own Anthropic account (provider: anthropic in org.yaml). -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-anthropic</artifactId>
+        </dependency>
         <!-- Conversations, deferred actions and loaded versions in Postgres, when a database is configured. -->
         <dependency>
             <groupId>org.postgresql</groupId>

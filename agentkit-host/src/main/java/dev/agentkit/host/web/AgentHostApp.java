@@ -24,11 +24,16 @@ import dev.agentkit.host.auth.OrgMcp;
 import dev.agentkit.host.change.GitHubProposer;
 import dev.agentkit.host.change.LocalBranchProposer;
 import dev.agentkit.host.change.Proposals;
+import dev.agentkit.host.models.HostLimits;
+import dev.agentkit.host.models.ModelAccounts;
+import dev.agentkit.host.models.UsageLedger;
 import dev.agentkit.host.repo.DefinitionException;
+import dev.agentkit.host.repo.OrgRepo;
 import dev.agentkit.host.store.Database;
 import dev.agentkit.host.store.PostgresChatStore;
 import dev.agentkit.host.store.PostgresDeferredActionStore;
 import dev.agentkit.host.store.PostgresRehearsalLog;
+import dev.agentkit.host.store.PostgresUsageLedger;
 import dev.agentkit.host.store.PostgresVersionLog;
 import dev.agentkit.chat.store.ChatStore;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
@@ -69,6 +74,11 @@ import java.util.stream.Stream;
  * {@code AGENTKIT_HOST_PUBLIC_URL} (default {@code http://localhost:<port>}), the address people reach the host at;
  * {@code AGENTKIT_HOST_DEV_SIGN_IN=true} for {@link DevSignIn}, which listens on this machine only;
  * {@code AGENTKIT_HOST_DEFERRED_SECONDS} (default 30), how often due deferred actions are run.
+ *
+ * <p><strong>Models.</strong> An organization runs on the host's OpenRouter account unless its {@code org.yaml} names
+ * a {@code provider}, with its {@code MODEL_API_KEY} secret. {@code AGENTKIT_HOST_LIMITS} is the operator's file of
+ * model prices, and of how many calls each organization may have running at once and what it may spend on the host's
+ * account ({@link HostLimits}); what each spends is recorded with its conversations. See {@link ModelAccounts}.
  *
  * <p><strong>Where it keeps things.</strong> With {@code AGENTKIT_HOST_DATABASE_URL} ({@code jdbc:postgresql://...},
  * and {@code AGENTKIT_HOST_DATABASE_USER} and {@code AGENTKIT_HOST_DATABASE_PASSWORD} if the url does not carry them),
@@ -138,18 +148,27 @@ public final class AgentHostApp {
                     + "For development, set AGENTKIT_HOST_DEV_SIGN_IN=true.");
         }
 
+        // Each organization's model account: the host's unless its org.yaml names its own provider; how many calls it
+        // may have running at once; and its budgets, kept against what every instance of the host records.
+        String limitsFile = env.get("AGENTKIT_HOST_LIMITS");
+        HostLimits limits = limitsFile == null || limitsFile.isBlank() ? HostLimits.none()
+                : HostLimits.load(Path.of(limitsFile.strip()));
+        ModelAccounts models = new ModelAccounts(llm, limits,
+                database.<UsageLedger>map(PostgresUsageLedger::new).orElseGet(UsageLedger::inMemory),
+                AgentHostApp::secretsFor, ModelAccounts.PROVIDERS_OF_RECORD, Instant::now, ModelAccounts.DEFAULT_PATIENCE);
+
         long deferredSeconds = Long.parseLong(env.getOrDefault("AGENTKIT_HOST_DEFERRED_SECONDS", "30").strip());
         Map<String, DeferredWork> deferred = new LinkedHashMap<>();
         orgs.forEach((name, org) -> {
             DeferredWork work = new DeferredWork(org, agent -> database
                     .<DeferredActionStore>map(db -> new PostgresDeferredActionStore(db, name, agent))
                     .orElseGet(() -> DeferredActionStore.inDirectory(dataDir.resolve("deferred").resolve(name).resolve(agent))),
-                    Instant::now, llm);
+                    Instant::now, models);
             work.start(java.time.Duration.ofSeconds(deferredSeconds));
             deferred.put(name, work);
         });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
-        HostChat chat = new HostChat(orgs, deferred, llm, Instant::now, self::get);
+        HostChat chat = new HostChat(orgs, deferred, models, Instant::now, self::get);
         ChatStore store = database.<ChatStore>map(PostgresChatStore::new)
                 .orElseGet(() -> new FileChatStore(dataDir.resolve("chat")));
         ChatRuntime runtime = new ChatRuntime(store, new ChatEvents(), chat);
@@ -162,7 +181,7 @@ public final class AgentHostApp {
         java.net.InetSocketAddress address = devSignIn
                 ? new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port)
                 : new java.net.InetSocketAddress(port);
-        ChatServer server = new ChatServer(address, runtime, tenants, tenant -> overview(tenant, orgs, llm), chat, null);
+        ChatServer server = new ChatServer(address, runtime, tenants, tenant -> overview(tenant, orgs, models), chat, null);
         server.mount("/sign-in", devSignIn ? devSignInPage : oidcSignIn);
         server.mount("/sign-out", devSignIn ? devSignInPage : oidcSignIn);
         // The admin view reads; a report of a pull request's rehearsal comes in with the org's REHEARSAL_TOKEN.
@@ -174,7 +193,7 @@ public final class AgentHostApp {
                         .map(token -> new GitHubProposer(spec, token))),
                 name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal).signedBy(signer));
         AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
-                Instant::now, proposals);
+                Instant::now, proposals, models);
         server.mount("/host/admin", admin.admin());
         server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,
@@ -218,8 +237,18 @@ public final class AgentHostApp {
         StringBuilder banner = new StringBuilder("\nAgentKit host is running on http://localhost:" + port + "\n");
         orgs.forEach((name, org) -> banner.append("  ").append(name).append(" @ ").append(org.current().repo().version())
                 .append(": ").append(String.join(", ", org.current().agents().keySet())).append('\n'));
-        banner.append("  model: ").append(llm.isPresent() ? "OpenRouter" : "not configured — set OPENROUTER_API_KEY")
-                .append('\n');
+        orgs.forEach((name, org) -> {
+            OrgRepo repo = org.current().repo();
+            banner.append("  model for ").append(name).append(": ").append(repo.defaultModel()).append(" on ")
+                    .append(repo.provider().map(p -> "its own " + p + " account").orElse("the host's account"));
+            models.unavailable(repo, repo.defaultModel()).ifPresent(why -> banner.append(" — ").append(why));
+            HostLimits.Limits own = limits.of(name);
+            banner.append("; ").append(own.concurrentCalls()).append(" calls at once");
+            if (!own.budget().isNone()) {
+                banner.append("; host budget ").append(String.join(", ", own.budget().described()));
+            }
+            banner.append('\n');
+        });
         if (devSignIn) {
             banner.append("  sign-in: DEVELOPMENT (unauthenticated) at /sign-in; listening on this machine only\n");
             banner.append("  MCP: http://localhost:").append(port).append("/mcp (header ").append(DevSignIn.MCP_HEADER)
@@ -281,7 +310,7 @@ public final class AgentHostApp {
         }
     }
 
-    static Map<String, Object> overview(String tenantId, Map<String, OrgHost> orgs, Optional<LlmClient> llm) {
+    static Map<String, Object> overview(String tenantId, Map<String, OrgHost> orgs, ModelAccounts models) {
         Map<String, Object> described = new LinkedHashMap<>();
         described.put("product", "AgentKit");
         Optional<Tenant> tenant = Tenant.parse(tenantId);
@@ -294,9 +323,8 @@ public final class AgentHostApp {
             });
         });
         List<String> problems = new ArrayList<>();
-        if (llm.isEmpty()) {
-            problems.add("No model is configured. Set OPENROUTER_API_KEY, then restart.");
-        }
+        tenant.map(t -> orgs.get(t.org())).map(org -> org.current().repo())
+                .flatMap(repo -> models.unavailable(repo, repo.defaultModel())).ifPresent(problems::add);
         described.put("ready", problems.isEmpty());
         described.put("problems", problems);
         return described;

@@ -287,6 +287,28 @@ export interface AdminAgent {
   evals: AdminEvalCase[]
 }
 
+/** What some model calls spent: how many, their tokens, and their estimated cost in US dollars. */
+export interface ModelSpend {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  usd: number
+}
+
+/** An organization's model account: whose, how many calls at once, its budgets and what it spent. */
+export interface AdminUsage {
+  /** 'host' for the host's account, or the provider of the organization's own. */
+  account: string
+  unavailable?: string
+  concurrentCalls: { limit: number; running: number }
+  budgets: { setBy: string; hostAccountOnly: boolean; caps: string[]; reached?: string }[]
+  today: ModelSpend
+  month: ModelSpend
+  byAgent: (ModelSpend & { agent: string; model: string; account: 'host' | 'own' })[]
+  /** Models used this month the host has no price for, whose cost is not counted. */
+  unpriced: string[]
+}
+
 export interface AdminDeferredAction {
   id: string
   subject: string

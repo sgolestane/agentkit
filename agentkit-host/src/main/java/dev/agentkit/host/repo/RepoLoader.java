@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import dev.agentkit.core.tool.ToolEffect;
+import dev.agentkit.host.models.Budget;
+import dev.agentkit.host.models.HostLimits;
+import dev.agentkit.host.models.ModelAccounts;
 import dev.agentkit.host.repo.AgentDefinition.ToolRef;
 import dev.agentkit.host.repo.AgentDefinition.ToolSelector;
 import dev.agentkit.host.repo.DefinitionException.Problem;
@@ -29,7 +32,7 @@ import java.util.stream.Stream;
  * Reads an organization's repository of agents from a directory — normally a checkout of its Git repository.
  *
  * <pre>
- * org.yaml                     org, model, directory, admins, repository, signIn
+ * org.yaml                     org, model, provider, budget, directory, admins, repository, signIn
  * connectors/&lt;name&gt;.yaml      url or command, headers, trustAnnotations, authoritative, timeoutSeconds, tools
  * agents/&lt;id&gt;/agent.yaml       name, description, pattern, model, audience, prompt, tools, confirm, bind, limits
  * agents/&lt;id&gt;/…               the prompt files agent.yaml names
@@ -49,7 +52,8 @@ public final class RepoLoader {
 
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
-    private static final Set<String> ORG_KEYS = Set.of("org", "model", "directory", "admins", "repository", "signIn");
+    private static final Set<String> ORG_KEYS = Set.of("org", "model", "provider", "budget", "directory", "admins",
+            "repository", "signIn");
     private static final Set<String> SIGN_IN_KEYS = Set.of("issuer", "clientId", "emailClaim", "mcpAudience");
     private static final Set<String> REPOSITORY_KEYS = Set.of("github", "path", "base", "api");
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
@@ -106,6 +110,8 @@ public final class RepoLoader {
         List<String> admins = List.of();
         Optional<OrgRepo.RepositorySpec> repository = Optional.empty();
         Optional<OrgRepo.SignInSpec> signIn = Optional.empty();
+        Optional<String> provider = Optional.empty();
+        Budget budget = Budget.NONE;
         Optional<JsonNode> orgFile = yaml("org.yaml", true);
         if (orgFile.isPresent()) {
             JsonNode node = orgFile.get();
@@ -121,6 +127,16 @@ public final class RepoLoader {
             }
             if (node.has("signIn")) {
                 signIn = signIn(node.get("signIn"));
+            }
+            provider = Optional.ofNullable(text("org.yaml", "provider", node.get("provider"), false));
+            if (provider.isPresent() && !ModelAccounts.PROVIDERS.contains(provider.get())) {
+                problem("org.yaml", "provider", "is one of " + String.join(", ", ModelAccounts.PROVIDERS.stream()
+                        .sorted().toList()) + ", with the organization's " + ModelAccounts.KEY_SECRET
+                        + " secret as its key; leave it out to run on the host's account");
+                provider = Optional.empty();
+            }
+            if (node.has("budget")) {
+                budget = HostLimits.budget(node.get("budget"), "budget", (where, what) -> problem("org.yaml", where, what));
             }
         }
 
@@ -162,7 +178,8 @@ public final class RepoLoader {
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
-        return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository, signIn);
+        return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository, signIn, provider,
+                budget);
     }
 
     // ---------------------------------------------------------------- org and connectors

@@ -1,6 +1,7 @@
 package dev.agentkit.host.repo;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.agentkit.host.models.Budget;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,10 +20,21 @@ import java.util.Optional;
  * @param admins       the directory groups whose members see the organization's admin view; empty for nobody
  * @param repository   where a change proposed in the admin view goes as a pull request, if the organization says
  * @param signIn       the organization's identity provider, which its people sign in with, if the organization says
+ * @param provider     the model provider its agents run on with its own key, or empty for the host's account
+ * @param budget       the most its agents may spend on models, whoever pays; {@link Budget#NONE} for no cap of its own
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
                       Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
-                      Optional<RepositorySpec> repository, Optional<SignInSpec> signIn) {
+                      Optional<RepositorySpec> repository, Optional<SignInSpec> signIn, Optional<String> provider,
+                      Budget budget) {
+
+    /** A repository that names no model provider or budget of its own. */
+    public OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
+                   Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
+                   Optional<RepositorySpec> repository, Optional<SignInSpec> signIn) {
+        this(org, version, defaultModel, directory, connectors, agents, admins, repository, signIn, Optional.empty(),
+                Budget.NONE);
+    }
 
     public OrgRepo {
         Objects.requireNonNull(org, "org");
@@ -34,6 +46,8 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         agents = Map.copyOf(agents);
         repository = repository == null ? Optional.empty() : repository;
         signIn = signIn == null ? Optional.empty() : signIn;
+        provider = provider == null ? Optional.empty() : provider;
+        budget = budget == null ? Budget.NONE : budget;
     }
 
     /**

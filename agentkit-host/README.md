@@ -29,6 +29,10 @@ agents/<id>/...            prompt files agent.yaml names
 ```yaml
 org: acme
 model: anthropic/claude-sonnet-5       # for agents that name none
+provider: anthropic                    # optional: the org's own model account, with its MODEL_API_KEY secret
+budget:                                # optional: the most the org's agents spend on models, whoever pays
+  tokensPerDay: 5000000                #   any of tokensPerDay, tokensPerMonth, usdPerDay, usdPerMonth
+  usdPerMonth: 300
 directory:                             # optional: who someone is
   connector: helpdesk
   tool: directory_lookup
@@ -274,6 +278,48 @@ keys that check it at `/.well-known/jwks.json`.
 - As a library, `AgentHost.Options.signedBy(CallerSigner)` signs; without it, calls carry no
   assertion.
 
+## Models, budgets and limits
+
+Each organization's model calls are its own:
+
+- **Whose account.** Without `provider` in `org.yaml`, an organization runs on the host's
+  OpenRouter account (`OPENROUTER_API_KEY`), and the host pays. With `provider: openrouter` or
+  `provider: anthropic`, it runs on its own account, with its `MODEL_API_KEY` secret
+  (`AGENTKIT_SECRET_<ORG>_MODEL_API_KEY`). The key is never in the repository. Anthropic takes
+  the same model ids as OpenRouter, with or without `anthropic/`.
+- **How many at once.** Each organization may have a number of model calls running at once
+  (8 unless the operator says otherwise). One more waits up to two minutes for a place, so one
+  customer's load queues behind itself and not in front of everyone else's.
+- **Budgets.** Every call is recorded: by organization, UTC day, agent, model, and whose account
+  paid. Two budgets can apply:
+  - the organization's own, `budget` in its `org.yaml`, on everything it spends;
+  - the host's, from the operator's limits file, on what it spends on the host's account.
+
+  Once either is reached, a turn is refused with a sentence saying which budget, who set it, and
+  when it starts again (midnight UTC, or the first of the month). The call that crosses a cap is
+  still made; the next one is refused. Deferred actions are counted but never refused: a
+  revocation that is due is carried out whatever has been spent.
+
+The operator's limits are a file, `AGENTKIT_HOST_LIMITS`. An organization's own pull request
+cannot raise them:
+
+```yaml
+prices:                                # US dollars per million tokens, for budgets in dollars
+  anthropic/claude-sonnet-5: {input: 3, output: 15}
+default:                               # every organization
+  concurrentCalls: 4
+  budget: {usdPerMonth: 100}
+orgs:
+  acme:                                # overrides only what it names
+    concurrentCalls: 8
+    budget: {usdPerMonth: 500}
+```
+
+A budget in dollars needs the model's price. Without one, the organization's agents are
+unavailable and say why; the host doesn't guess. What each organization spent is in `model_use`
+with a database (in memory without one, so a restart forgets it). Its admins see it under
+**Model use** in the admin view.
+
 ## Signing in
 
 Each organization's people sign in with its own identity provider: the OpenID Connect issuer
@@ -489,5 +535,7 @@ service container.
   instance while a turn runs.
 - **Sessions across instances.** Console sessions are kept in the process, so each instance of
   the host signs people in separately, and a restart signs everyone out.
+- **Rehearsals are not counted.** `rehearse` runs in CI on the CI's own key, so a pull
+  request's rehearsal is not in the organization's model use or budgets.
 - **Who scheduled a deferred action, to its connectors.** A deferred action's calls say
   `agent:<actor>`, not who scheduled it.

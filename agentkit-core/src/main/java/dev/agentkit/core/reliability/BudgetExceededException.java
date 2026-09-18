@@ -20,6 +20,15 @@ public final class BudgetExceededException extends RuntimeException {
     }
 
     /**
+     * A budget kept somewhere other than a {@link TokenBudget} — an organization's, across many runs — saying which
+     * cap was reached. {@link #spent()} is null.
+     */
+    public BudgetExceededException(String message) {
+        super(message);
+        this.spent = null;
+    }
+
+    /**
      * The cumulative usage that tripped the budget.
      *
      * <p>The field is {@code transient} (its {@code TokenUsage} is not serializable),

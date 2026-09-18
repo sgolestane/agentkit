@@ -6,6 +6,8 @@ import dev.agentkit.chat.Conversation;
 import dev.agentkit.chat.web.ChatServer;
 import dev.agentkit.core.agent.Agent;
 import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.host.models.ModelAccounts;
+import dev.agentkit.host.repo.OrgRepo;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,7 +29,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
 
     private final Map<String, OrgHost> orgs;
     private final Map<String, DeferredWork> deferred;
-    private final Optional<LlmClient> llm;
+    private final ModelAccounts models;
     private final Supplier<Instant> clock;
     private final Supplier<ChatRuntime> runtime;
 
@@ -44,9 +46,15 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     /** @param deferred each organization's deferred work, for agents that schedule it */
     public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, Optional<LlmClient> llm,
                     Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
+        this(orgs, deferred, ModelAccounts.shared(llm), clock, runtime);
+    }
+
+    /** @param models each organization's model account: whose, how many calls at once, and its budgets */
+    public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ModelAccounts models,
+                    Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
-        this.llm = Objects.requireNonNull(llm, "llm");
+        this.models = Objects.requireNonNull(models, "models");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
     }
@@ -117,23 +125,21 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     @Override
     public Agent agentFor(ChatRuntime.Session session) {
         Turn turn = turnFor(session);
-        return turn.agent().turn(session, llm.get(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
+        return turn.agent().turn(session, turn.llm(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
     }
 
     /** The pinned agent's way of carrying out the turn: its own loop, or a plan carried out step by step. */
     @Override
     public ChatRuntime.Runner runnerFor(ChatRuntime.Session session) {
         Turn turn = turnFor(session);
-        return turn.agent().runner(session, llm.get(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
+        return turn.agent().runner(session, turn.llm(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
     }
 
-    private record Turn(HostedAgent agent, Principal principal, List<dev.agentkit.core.tool.Tool> scheduler) {
+    private record Turn(HostedAgent agent, Principal principal, List<dev.agentkit.core.tool.Tool> scheduler,
+                        LlmClient llm) {
     }
 
     private Turn turnFor(ChatRuntime.Session session) {
-        if (llm.isEmpty()) {
-            throw new ChatUnavailable("No model is configured.");
-        }
         Tenant tenant = Tenant.parse(session.tenantId())
                 .orElseThrow(() -> new ChatUnavailable("This conversation belongs to nobody the host knows."));
         Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
@@ -148,7 +154,14 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             throw new ChatUnavailable(agent.definition().name() + " schedules work for later, and this host is not "
                     + "running deferred work for your organization.");
         }
-        return new Turn(agent, principal, scheduler);
+        // The organization's account as it is now — its current org.yaml's provider and budget, not the pinned
+        // version's: a budget lowered today holds for conversations begun yesterday.
+        OrgRepo account = orgs.get(tenant.org()).current().repo();
+        models.unavailable(account, agent.model()).or(() -> models.refusal(account)).ifPresent(why -> {
+            throw new ChatUnavailable(why);
+        });
+        return new Turn(agent, principal, scheduler,
+                models.client(account, agent.definition().id(), ModelAccounts.Purpose.TURN));
     }
 
     /** The agent, at the version, a conversation is pinned to — or a sentence saying why there is none. */

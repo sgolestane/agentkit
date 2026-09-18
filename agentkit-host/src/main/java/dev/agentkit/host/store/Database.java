@@ -106,6 +106,19 @@ public final class Database implements AutoCloseable {
                 report      json not null
             );
             create index rehearsal_by_org on rehearsal (org_id, received_at desc);
+            """, """
+            create table model_use (
+                org_id        text not null,
+                day           date not null,
+                agent_id      text not null,
+                model         text not null,
+                host_paid     boolean not null,
+                calls         bigint not null,
+                input_tokens  bigint not null,
+                output_tokens bigint not null,
+                usd           double precision not null,
+                primary key (org_id, day, agent_id, model, host_paid)
+            );
             """);
 
     private final HikariDataSource pool;

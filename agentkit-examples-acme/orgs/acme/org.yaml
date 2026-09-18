@@ -2,6 +2,11 @@
 org: acme
 model: anthropic/claude-sonnet-5
 
+# The most Acme's agents spend on models in a day, on whichever account. It runs on the host's
+# account; "provider: anthropic" with a MODEL_API_KEY secret would put it on Acme's own.
+budget:
+  tokensPerDay: 5000000
+
 # Who someone is: the company directory.
 directory:
   connector: company

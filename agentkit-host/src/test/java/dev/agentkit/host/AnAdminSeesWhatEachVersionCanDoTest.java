@@ -5,6 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import dev.agentkit.core.llm.TokenUsage;
+import dev.agentkit.host.models.HostLimits;
+import dev.agentkit.host.models.ModelAccounts;
+import dev.agentkit.host.models.Spend;
+import dev.agentkit.host.models.UsageLedger;
 import dev.agentkit.host.web.AdminApi;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -12,7 +17,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -39,6 +46,10 @@ class AnAdminSeesWhatEachVersionCanDoTest {
     private OrgHost org;
     private HttpServer server;
     private final RehearsalLog rehearsals = RehearsalLog.inMemory();
+    private final ModelAccounts models = new ModelAccounts(
+            Optional.of(new ScriptedLlm()), HostLimits.none(),
+            UsageLedger.inMemory(), name -> Secrets.NONE, (p, k) -> new ScriptedLlm(),
+            () -> Instant.parse("2026-09-18T20:00:00Z"), Duration.ofSeconds(5));
 
     @BeforeEach
     void start() throws Exception {
@@ -53,7 +64,8 @@ class AnAdminSeesWhatEachVersionCanDoTest {
                 rehearsals, name -> name.equals("acme") ? Optional.of("report-token") : Optional.empty(),
                 () -> Instant.parse("2026-09-18T20:00:00Z"),
                 new dev.agentkit.host.change.Proposals(o -> Optional.empty(), name -> AgentHost.Options.hosted(
-                        Secrets.of(Map.of("HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN)))));
+                        Secrets.of(Map.of("HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN)))),
+                models);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/host/admin", admin.admin());
         server.createContext("/host/rehearsals/", admin.reports());
@@ -109,6 +121,22 @@ class AnAdminSeesWhatEachVersionCanDoTest {
 
         assertThat(get("/host/admin/agents/nobody", "acme/" + SAM).statusCode()).isEqualTo(404);
         assertThat(json(get("/host/admin/deferred", "acme/" + SAM)).path("agents").isEmpty()).isTrue();
+    }
+
+    @Test
+    void itShowsWhatTheAgentsSpentOnModels() throws Exception {
+        models.ledger().add(new UsageLedger.Key("acme", LocalDate.parse("2026-09-18"),
+                "helpdesk", "anthropic/claude-sonnet-5", true), Spend.of(
+                new TokenUsage(1200, 300), 0));
+
+        JsonNode usage = json(get("/host/admin/usage", "acme/" + SAM));
+
+        assertThat(usage.path("account").asText()).isEqualTo("host");
+        assertThat(usage.path("concurrentCalls").path("limit").asInt())
+                .isEqualTo(HostLimits.DEFAULT_CONCURRENT_CALLS);
+        assertThat(usage.path("today").path("inputTokens").asLong()).isEqualTo(1200);
+        assertThat(usage.path("byAgent").get(0).path("agent").asText()).isEqualTo("helpdesk");
+        assertThat(get("/host/admin/usage", "acme/" + PRIYA).statusCode()).isEqualTo(403);
     }
 
     @Test

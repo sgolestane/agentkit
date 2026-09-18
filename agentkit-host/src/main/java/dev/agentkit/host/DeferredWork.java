@@ -8,6 +8,7 @@ import dev.agentkit.core.deferred.DeferredRunner;
 import dev.agentkit.core.deferred.SubjectRecord;
 import dev.agentkit.core.deferred.SubjectResolver;
 import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.host.models.ModelAccounts;
 import dev.agentkit.core.tool.Tool;
 import java.time.Duration;
 import java.time.Instant;
@@ -46,7 +47,8 @@ public final class DeferredWork implements AutoCloseable {
     private final Function<String, DeferredActionStore> storeFor;
     private final Map<String, DeferredActionStore> stores = new ConcurrentHashMap<>();
     private final Supplier<Instant> clock;
-    private final Optional<LlmClient> llm;
+    private final ModelAccounts models;
+    private final Map<String, String> waiting = new ConcurrentHashMap<>();
     private ScheduledExecutorService timer;
 
     /**
@@ -55,10 +57,19 @@ public final class DeferredWork implements AutoCloseable {
      */
     public DeferredWork(OrgHost org, Function<String, DeferredActionStore> stores, Supplier<Instant> clock,
                         Optional<LlmClient> llm) {
+        this(org, stores, clock, ModelAccounts.shared(llm));
+    }
+
+    /**
+     * @param models each organization's model account. Deferred actions are counted against its budgets, and never
+     *               refused by them: a revocation that is due is carried out whatever has been spent.
+     */
+    public DeferredWork(OrgHost org, Function<String, DeferredActionStore> stores, Supplier<Instant> clock,
+                        ModelAccounts models) {
         this.org = Objects.requireNonNull(org, "org");
         this.storeFor = Objects.requireNonNull(stores, "stores");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.llm = Objects.requireNonNull(llm, "llm");
+        this.models = Objects.requireNonNull(models, "models");
     }
 
     /** The agent's deferred actions. */
@@ -89,19 +100,27 @@ public final class DeferredWork implements AutoCloseable {
 
     /** Runs every due action of every agent in the current version; returns how many ran. */
     public synchronized int runDue() {
-        if (llm.isEmpty()) {
-            return 0;
-        }
         int ran = 0;
+        dev.agentkit.host.repo.OrgRepo account = org.current().repo();
         for (HostedAgent agent : org.current().agents().values()) {
             if (agent.subjects().isEmpty() || agent.unavailable().isPresent()) {
                 continue;
             }
+            Optional<String> noModel = models.unavailable(account, agent.model());
+            if (noModel.isPresent()) {
+                // Said once, not on every sweep, until the reason changes.
+                if (!noModel.get().equals(waiting.put(agent.definition().id(), noModel.get()))) {
+                    LOG.warn("Deferred actions of {} wait: {}", agent.definition().id(), noModel.get());
+                }
+                continue;
+            }
+            waiting.remove(agent.definition().id());
+            LlmClient llm = models.client(account, agent.definition().id(), ModelAccounts.Purpose.DEFERRED);
             Principal actor = agent.actor().orElseThrow();
             AgentConfig config = agent.deferredConfig().orElseThrow();
             DeferredRunner runner = new DeferredRunner(store(agent.definition().id()), agent.subjects().get(),
                     agent.tools(actor),
-                    (goal, tools, gate) -> Agent.builder(llm.get(), tools.registry(), config)
+                    (goal, tools, gate) -> Agent.builder(llm, tools.registry(), config)
                             .name(agent.definition().id() + "-deferred")
                             .toolGate(gate)
                             .build()

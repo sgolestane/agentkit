@@ -6,24 +6,27 @@ import type {
   AdminDeferredAction,
   AdminOverview,
   AdminTool,
+  AdminUsage,
+  ModelSpend,
   RehearsalReport,
   RehearsalResult,
 } from '../lib/types'
 
 /**
  * The organization's admin view: what each loaded version of its agents can do, what its pull
- * requests' rehearsals showed, and the work its agents have scheduled.
+ * requests' rehearsals showed, the work its agents have scheduled, and what their model calls spent.
  *
  * Read-only on purpose. An agent is changed by a pull request to the organization's repository,
  * and this is where the effect of one is read — so there is nothing here to edit, and nothing
  * that could drift from what Git says.
  */
-type Section = 'agents' | 'rehearsals' | 'deferred' | 'connectors'
+type Section = 'agents' | 'rehearsals' | 'deferred' | 'usage' | 'connectors'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'agents', label: 'Agents' },
   { id: 'rehearsals', label: 'Rehearsals' },
   { id: 'deferred', label: 'Deferred work' },
+  { id: 'usage', label: 'Model use' },
   { id: 'connectors', label: 'Connectors' },
 ]
 
@@ -108,6 +111,8 @@ export function Admin() {
               <Rehearsals />
             ) : section === 'deferred' ? (
               <Deferred />
+            ) : section === 'usage' ? (
+              <Usage />
             ) : (
               <Connectors overview={overview} />
             )}
@@ -494,6 +499,103 @@ function Deferred() {
           )}
         </section>
       ))}
+    </div>
+  )
+}
+
+function tokens(spend: ModelSpend): string {
+  return `${(spend.inputTokens + spend.outputTokens).toLocaleString('en-US')} tokens`
+}
+
+function dollars(usd: number): string {
+  return `$${usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function Usage() {
+  const [usage, setUsage] = useState<AdminUsage | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.admin
+      .usage()
+      .then(setUsage)
+      .catch((error: unknown) => setProblem(error instanceof ApiError ? error.message : 'Nothing loaded.'))
+  }, [])
+
+  if (problem) {
+    return <p className="text-sm text-bad">{problem}</p>
+  }
+  if (!usage) {
+    return <p className="text-sm text-muted">Loading…</p>
+  }
+  return (
+    <div className="space-y-4 text-sm">
+      <section aria-label="Account">
+        <h2 className="mb-1 text-sm font-semibold">Account</h2>
+        <p>
+          {usage.account === 'host'
+            ? 'The host’s model account: the host pays.'
+            : `The organization’s own ${usage.account} account, with its MODEL_API_KEY secret.`}{' '}
+          At most {usage.concurrentCalls.limit} calls at once; {usage.concurrentCalls.running} running now.
+        </p>
+        {usage.unavailable ? <p className="mt-1 text-bad">{usage.unavailable}</p> : null}
+      </section>
+
+      <section aria-label="Budgets">
+        <h2 className="mb-1 text-sm font-semibold">Budgets</h2>
+        {usage.budgets.length === 0 ? (
+          <p className="text-xs text-muted">No budget: nothing caps what the agents spend.</p>
+        ) : (
+          <ul className="space-y-1">
+            {usage.budgets.map((budget) => (
+              <li key={budget.setBy} data-testid="budget">
+                {budget.caps.join(', ')}, set {budget.setBy}
+                {budget.hostAccountOnly ? ', on what the host pays for' : ''}
+                {budget.reached ? <Badge tone="bad">spent {budget.reached}</Badge> : <Badge tone="good">within</Badge>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label="Spent">
+        <h2 className="mb-1 text-sm font-semibold">Spent</h2>
+        <p data-testid="spent">
+          Today: {usage.today.calls} calls, {tokens(usage.today)}, {dollars(usage.today.usd)}. This month (UTC):{' '}
+          {usage.month.calls} calls, {tokens(usage.month)}, {dollars(usage.month.usd)}.
+        </p>
+        {usage.unpriced.length > 0 ? (
+          <p className="mt-1 text-xs text-warn">
+            The host has no price for {usage.unpriced.join(', ')}, so its cost is not in these dollars.
+          </p>
+        ) : null}
+        {usage.byAgent.length > 0 ? (
+          <table className="mt-2 w-full text-left text-xs [&_td]:pr-3 [&_th]:pr-3">
+            <thead className="text-muted">
+              <tr>
+                <th className="py-1">Agent</th>
+                <th>Model</th>
+                <th>Paid by</th>
+                <th>Calls</th>
+                <th>Tokens</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usage.byAgent.map((row) => (
+                <tr key={`${row.agent}/${row.model}/${row.account}`} className="border-t border-line">
+                  <td className="py-1">{row.agent}</td>
+                  <td>{row.model}</td>
+                  <td>{row.account === 'host' ? 'the host' : 'the organization'}</td>
+                  <td>{row.calls}</td>
+                  <td>{tokens(row)}</td>
+                  <td>{dollars(row.usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+      </section>
     </div>
   )
 }

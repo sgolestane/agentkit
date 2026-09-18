@@ -106,6 +106,40 @@ describe('The admin view', () => {
     expect(cases[1]).toHaveTextContent('✗ never calls schedule_deferred_action — tool was requested')
   })
 
+  it('shows whose model account the agents run on, its budgets, and what they spent', async () => {
+    serve({
+      '/admin': overview,
+      '/admin/usage': {
+        account: 'host',
+        concurrentCalls: { limit: 8, running: 2 },
+        budgets: [
+          { setBy: 'in its org.yaml', hostAccountOnly: false, caps: ['1,500 tokens a day'],
+            reached: 'for today (1,500 tokens)' },
+          { setBy: 'by the host', hostAccountOnly: true, caps: ['$500.00 a month'] },
+        ],
+        today: { calls: 2, inputTokens: 800, outputTokens: 800, usd: 0.0144 },
+        month: { calls: 40, inputTokens: 16000, outputTokens: 16000, usd: 1.25 },
+        byAgent: [{ agent: 'access-desk', model: 'anthropic/claude-sonnet-5', account: 'host', calls: 40,
+          inputTokens: 16000, outputTokens: 16000, usd: 1.25 }],
+        unpriced: ['some/other-model'],
+      },
+    })
+    render(<Admin />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Model use' }))
+    expect(await screen.findByText(/The host’s model account: the host pays/)).toHaveTextContent(
+      'At most 8 calls at once; 2 running now.')
+    const budgets = screen.getAllByTestId('budget')
+    expect(budgets[0]).toHaveTextContent('1,500 tokens a day, set in its org.yaml')
+    expect(budgets[0]).toHaveTextContent('spent for today (1,500 tokens)')
+    expect(budgets[1]).toHaveTextContent('$500.00 a month, set by the host, on what the host pays for')
+    expect(budgets[1]).toHaveTextContent('within')
+    expect(screen.getByTestId('spent')).toHaveTextContent(
+      'Today: 2 calls, 1,600 tokens, $0.01. This month (UTC): 40 calls, 32,000 tokens, $1.25.')
+    expect(screen.getByText(/no price for some\/other-model/)).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'access-desk' })).toBeInTheDocument()
+  })
+
   it('says why someone who is not an admin sees nothing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
       { error: 'Only the admins org.yaml names see this organization\'s admin view.' }), { status: 403 })))
