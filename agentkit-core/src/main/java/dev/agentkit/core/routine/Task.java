@@ -3,6 +3,7 @@ package dev.agentkit.core.routine;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * What a goal is, for the purpose of recognising that it has been done before: a kind of work, and the values that
@@ -19,6 +20,9 @@ import java.util.Objects;
  */
 public record Task(String kind, Map<String, String> parameters) {
 
+    /** What a parameter may be called: it becomes {@code {name}} in a recorded argument. */
+    static final Pattern NAME = Pattern.compile("[A-Za-z0-9_.-]{1,64}");
+
     public Task {
         Objects.requireNonNull(kind, "kind");
         if (kind.isBlank()) {
@@ -28,6 +32,10 @@ public record Task(String kind, Map<String, String> parameters) {
         Map<String, String> copy = new LinkedHashMap<>();
         parameters.forEach((name, value) -> {
             Objects.requireNonNull(name, "parameter name");
+            if (!NAME.matcher(name).matches()) {
+                throw new IllegalArgumentException("a parameter name is letters, digits, '_', '.' and '-', since it "
+                        + "becomes a placeholder: " + name);
+            }
             Objects.requireNonNull(value, "value of parameter " + name);
             copy.put(name, value);
         });

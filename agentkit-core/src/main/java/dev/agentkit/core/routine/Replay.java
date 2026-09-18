@@ -1,5 +1,6 @@
 package dev.agentkit.core.routine;
 
+import dev.agentkit.core.tool.Provenance;
 import java.util.List;
 import java.util.Objects;
 
@@ -10,18 +11,27 @@ import java.util.Objects;
  * tool, a gate that refused, an error, a placeholder the task does not fill. There is no second attempt and no
  * improvisation: improvising is what the model is for, and {@link #done} says what it has to pick up from.
  *
- * @param routine  what was replayed
- * @param done     one line per step that ran: the tool and what it returned, in order
+ * @param routine   what was replayed
+ * @param done      each step that ran, in order
  * @param stoppedAt the index of the step that stopped it, or {@code -1} if it finished
- * @param reason   why it stopped, or empty if it finished
+ * @param reason    why it stopped, or empty if it finished
+ * @param lowered   whether a step returned somebody else's words, as the run's trust floor counts them — so whoever
+ *                  continues the work must do so under the tightened policy
  */
-public record Replay(Routine routine, List<Step> done, int stoppedAt, String reason) {
+public record Replay(Routine routine, List<Step> done, int stoppedAt, String reason, boolean lowered) {
 
-    /** One step that ran, and what the tool said. */
-    public record Step(String tool, String output) {
+    /**
+     * One step that ran.
+     *
+     * @param tool       the tool
+     * @param output     what it returned, cut to {@link Routines#MAX_OUTPUT_CHARS}
+     * @param provenance whose words the output is
+     */
+    public record Step(String tool, String output, Provenance provenance) {
         public Step {
             Objects.requireNonNull(tool, "tool");
             Objects.requireNonNull(output, "output");
+            Objects.requireNonNull(provenance, "provenance");
         }
     }
 

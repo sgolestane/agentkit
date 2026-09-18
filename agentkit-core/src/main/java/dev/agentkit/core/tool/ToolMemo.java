@@ -21,6 +21,7 @@ import java.util.function.Supplier;
  *
  * <pre>{@code
  * ToolMemo memo = new ToolMemo(Duration.ofSeconds(30));
+ * List<Tool> tools = List.of(directoryLookup, listAccess, grantAccess);
  * ToolRegistry cached = new SimpleToolRegistry(memo.wrapAll(tools));
  * }</pre>
  *
@@ -34,6 +35,10 @@ import java.util.function.Supplier;
  *       caching it turns one bad second into a bad minute.</li>
  *   <li><strong>Never for long.</strong> The time to live is the caller's, and there is no unbounded option: a read
  *       cached past the change it should have seen is a wrong answer delivered confidently.</li>
+ *   <li><strong>Never across a write.</strong> {@link #wrapAll} also wraps every tool that is <em>not</em> a read,
+ *       so that calling one forgets everything remembered — the lookup after a create sees the create. A read that
+ *       was already under way when the write happened does not put its answer back afterwards.</li>
+ *   <li><strong>Never for a tool bound to one run.</strong> Its answer may be that run's, so it is not shared.</li>
  * </ul>
  *
  * <h2>One memo, one reader</h2>
@@ -56,6 +61,8 @@ public final class ToolMemo {
     private final Map<String, Remembered> entries;
     private final AtomicLong hits = new AtomicLong();
     private final AtomicLong misses = new AtomicLong();
+    /** Bumped by every write and every clear; an answer fetched under an older generation is not stored. */
+    private long generation;
 
     public ToolMemo(Duration timeToLive) {
         this(timeToLive, DEFAULT_MAX_ENTRIES, Instant::now);
@@ -86,10 +93,14 @@ public final class ToolMemo {
         return tool.sideEffects() == SideEffects.NONE ? new MemoizingTool(tool, this) : tool;
     }
 
-    /** Every tool, reads wrapped and the rest left alone. */
+    /**
+     * Every tool: reads remembered, and everything else made to forget what is remembered once it has run, so a
+     * read after a write is answered by the tool.
+     */
     public List<Tool> wrapAll(List<Tool> tools) {
         List<Tool> wrapped = new ArrayList<>(tools.size());
-        tools.forEach(tool -> wrapped.add(wrap(tool)));
+        tools.forEach(tool -> wrapped.add(tool.sideEffects() == SideEffects.NONE
+                ? new MemoizingTool(tool, this) : new ForgettingTool(tool, this)));
         return List.copyOf(wrapped);
     }
 
@@ -106,51 +117,101 @@ public final class ToolMemo {
     /** Forgets everything, for a caller that knows the world just changed. */
     public synchronized void clear() {
         entries.clear();
+        generation++;
     }
 
     private ToolResult through(Tool tool, ToolInvocation invocation) {
         String key = keyFor(invocation);
         Instant now = clock.get();
+        long fetchedUnder;
         synchronized (this) {
             Remembered entry = entries.get(key);
-            if (entry != null && Duration.between(entry.storedAt(), now).compareTo(timeToLive) < 0) {
-                hits.incrementAndGet();
-                return entry.result();
+            if (entry != null) {
+                Duration age = Duration.between(entry.storedAt(), now);
+                // A clock that went backwards makes the age negative; that is not a young answer, it is an answer
+                // of unknown age, and it is not trusted.
+                if (!age.isNegative() && age.compareTo(timeToLive) < 0) {
+                    hits.incrementAndGet();
+                    return entry.result();
+                }
+                entries.remove(key);
             }
-            entries.remove(key);
+            fetchedUnder = generation;
         }
         misses.incrementAndGet();
         ToolResult result = tool.execute(invocation);
         if (!result.isError()) {
             synchronized (this) {
-                entries.put(key, new Remembered(result, now));
+                if (generation == fetchedUnder) {
+                    entries.put(key, new Remembered(result, now));
+                }
             }
         }
         return result;
     }
 
     /**
-     * The key for one call: its tool and its arguments, rendered so that two calls that ask the same thing agree
-     * however their maps were built. Nested maps are sorted; everything else is its own text.
+     * The key for one call: its tool and its arguments, rendered so that two calls agree exactly when they ask the
+     * same thing, however their maps were built.
+     *
+     * <p>Every value carries its type and every string is quoted and escaped, so no two different calls share a key:
+     * {@code {a: "1,b=2"}} is not {@code {a: "1", b: "2"}}, and the number 7 is not the string {@code "7"}. Map
+     * entries are ordered by their rendered keys. Anything that is not a string, number, boolean, map or list is
+     * rendered by its type and its text, which is as good as that text.
      */
     static String keyFor(ToolInvocation invocation) {
-        return invocation.name() + "\0" + canonical(invocation.arguments());
+        StringBuilder key = new StringBuilder();
+        quote(invocation.name(), key);
+        key.append(':');
+        canonical(invocation.arguments(), key);
+        return key.toString();
     }
 
-    private static String canonical(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            SortedMap<String, Object> sorted = new TreeMap<>();
-            map.forEach((k, v) -> sorted.put(String.valueOf(k), v));
-            StringBuilder out = new StringBuilder("{");
-            sorted.forEach((k, v) -> out.append(k).append('=').append(canonical(v)).append(','));
-            return out.append('}').toString();
+    private static void canonical(Object value, StringBuilder out) {
+        if (value == null) {
+            out.append("null");
+        } else if (value instanceof String text) {
+            quote(text, out);
+        } else if (value instanceof Boolean flag) {
+            out.append(flag);
+        } else if (value instanceof Number number) {
+            out.append(number.getClass().getSimpleName()).append('(').append(number).append(')');
+        } else if (value instanceof Map<?, ?> map) {
+            SortedMap<String, String> sorted = new TreeMap<>();
+            map.forEach((k, v) -> {
+                StringBuilder renderedKey = new StringBuilder();
+                canonical(k, renderedKey);
+                StringBuilder renderedValue = new StringBuilder();
+                canonical(v, renderedValue);
+                sorted.put(renderedKey.toString(), renderedValue.toString());
+            });
+            out.append('{');
+            sorted.forEach((k, v) -> out.append(k).append(':').append(v).append(','));
+            out.append('}');
+        } else if (value instanceof List<?> list) {
+            out.append('[');
+            list.forEach(item -> {
+                canonical(item, out);
+                out.append(',');
+            });
+            out.append(']');
+        } else {
+            out.append(value.getClass().getName()).append('(');
+            quote(String.valueOf(value), out);
+            out.append(')');
         }
-        if (value instanceof List<?> list) {
-            StringBuilder out = new StringBuilder("[");
-            list.forEach(item -> out.append(canonical(item)).append(','));
-            return out.append(']').toString();
+    }
+
+    private static void quote(String text, StringBuilder out) {
+        out.append('"');
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '"' || c == '\\') {
+                out.append('\\');
+            }
+            out.append(c);
         }
-        return String.valueOf(value);
+        out.append('"');
     }
 
     /** A read that asks the memo first. */
@@ -171,12 +232,45 @@ public final class ToolMemo {
 
         @Override
         protected Tool rebuiltAround(Tool bound) {
-            return new MemoizingTool(bound, memo);
+            // Bound to one run, its answers may be that run's: not shared through a memo other runs read.
+            return bound;
         }
 
         @Override
         public ToolResult execute(ToolInvocation invocation) {
             return memo.through(delegate, invocation);
+        }
+    }
+
+    /** A tool that changes something, and makes the memo forget once it has — whether or not it reported success. */
+    private static final class ForgettingTool extends ForwardingTool {
+
+        private final Tool delegate;
+        private final ToolMemo memo;
+
+        ForgettingTool(Tool delegate, ToolMemo memo) {
+            this.delegate = delegate;
+            this.memo = memo;
+        }
+
+        @Override
+        protected Tool delegate() {
+            return delegate;
+        }
+
+        @Override
+        protected Tool rebuiltAround(Tool bound) {
+            return new ForgettingTool(bound, memo);
+        }
+
+        @Override
+        public ToolResult execute(ToolInvocation invocation) {
+            try {
+                return delegate.execute(invocation);
+            } finally {
+                // A failed write may still have changed something; forgetting costs a read, not a wrong answer.
+                memo.clear();
+            }
         }
     }
 }

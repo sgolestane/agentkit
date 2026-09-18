@@ -152,4 +152,117 @@ class ARepeatedReadIsPaidForOnceTest {
 
         assertThat(call(lookup, Map.of("email", "ana@acme.example")).content()).isEqualTo("directory_lookup #2");
     }
+
+    @Test
+    void callsThatAskDifferentThingsNeverShareAKey() {
+        assertThat(key(Map.of("a", "1,b=2"))).isNotEqualTo(key(Map.of("a", "1", "b", "2")));
+        assertThat(key(Map.of("ids", List.of("x,y")))).isNotEqualTo(key(Map.of("ids", List.of("x", "y"))));
+        assertThat(key(Map.of("id", 7))).isNotEqualTo(key(Map.of("id", "7")));
+        assertThat(key(Map.of("q", "a\"b"))).isNotEqualTo(key(Map.of("q", "a\\\"b")));
+        Map<String, Object> withNull = new HashMap<>();
+        withNull.put("id", null);
+        assertThat(key(withNull)).isNotEqualTo(key(Map.of("id", "null")));
+    }
+
+    @Test
+    void aReadAfterAWriteIsAnsweredByTheTool() {
+        AtomicInteger created = new AtomicInteger();
+        Tool lookup = FunctionTool.builder("directory_lookup", "look up")
+                .sideEffects(SideEffects.NONE)
+                .handler(invocation -> ToolResult.ok(created.get() == 0 ? "not found" : "found"))
+                .build();
+        Tool create = FunctionTool.builder("create_user", "create")
+                .sideEffects(SideEffects.EXTERNAL)
+                .handler(invocation -> {
+                    created.incrementAndGet();
+                    return ToolResult.ok("created");
+                })
+                .build();
+        List<Tool> tools = memo.wrapAll(List.of(lookup, create));
+
+        assertThat(call(tools.get(0), Map.of("email", "ana@acme.example")).content()).isEqualTo("not found");
+        call(tools.get(1), Map.of("email", "ana@acme.example"));
+
+        assertThat(call(tools.get(0), Map.of("email", "ana@acme.example")).content()).isEqualTo("found");
+    }
+
+    @Test
+    void aReadUnderWayWhenTheMemoWasClearedDoesNotPutItsAnswerBack() {
+        AtomicInteger reads = new AtomicInteger();
+        Tool slow = memo.wrap(FunctionTool.builder("list_access", "list")
+                .sideEffects(SideEffects.NONE)
+                .handler(invocation -> {
+                    int n = reads.incrementAndGet();
+                    if (n == 1) {
+                        memo.clear();   // a write lands while this read is in flight
+                    }
+                    return ToolResult.ok("read #" + n);
+                })
+                .build());
+
+        call(slow, Map.of());
+
+        assertThat(call(slow, Map.of()).content()).isEqualTo("read #2");
+    }
+
+    @Test
+    void aClockThatWentBackwardsDoesNotMakeAnAnswerYounger() {
+        Tool lookup = memo.wrap(read("directory_lookup"));
+        call(lookup, Map.of("email", "ana@acme.example"));
+
+        clock.set(NOW.minusSeconds(3_600));
+
+        assertThat(call(lookup, Map.of("email", "ana@acme.example")).content()).isEqualTo("directory_lookup #2");
+    }
+
+    @Test
+    void aReadBoundToOneRunIsNotShared() {
+        Tool perRun = new Tool() {
+            @Override
+            public String name() {
+                return "my_inbox";
+            }
+
+            @Override
+            public String description() {
+                return "this run's inbox";
+            }
+
+            @Override
+            public Map<String, Object> inputSchema() {
+                return Map.of("type", "object");
+            }
+
+            @Override
+            public SideEffects sideEffects() {
+                return SideEffects.NONE;
+            }
+
+            @Override
+            public ToolResult execute(ToolInvocation invocation) {
+                return ToolResult.ok("inbox #" + reads.incrementAndGet());
+            }
+
+            @Override
+            public Tool boundTo(dev.agentkit.core.agent.AgentRun run) {
+                Tool outer = this;
+                return new ForwardingTool() {
+                    @Override
+                    protected Tool delegate() {
+                        return outer;
+                    }
+                };
+            }
+        };
+
+        Tool bound = memo.wrap(perRun).boundTo(dev.agentkit.core.agent.AgentRun.of("one"));
+
+        assertThat(call(bound, Map.of()).content()).isEqualTo("inbox #1");
+        assertThat(call(bound, Map.of()).content()).isEqualTo("inbox #2");
+        assertThat(memo.hits()).isZero();
+    }
+
+    private static String key(Map<String, Object> arguments) {
+        return ToolMemo.keyFor(new ToolInvocation("t", "list_access", new HashMap<>(arguments)));
+    }
 }

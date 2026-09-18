@@ -13,7 +13,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Watches a run and, if it succeeded, tells the {@link RoutineBook} what it did.
+ * Watches a run and tells the {@link RoutineBook} what it did — or, if the run did not go cleanly, that the usual way
+ * is in doubt.
  *
  * <p>Attach it as an observer, the same way an eval harness attaches its own:
  *
@@ -22,23 +23,28 @@ import java.util.Optional;
  * AgentResult result = Agent.builder(llm, tools, config).observer(recorder).build().run(goal);
  * }</pre>
  *
- * <p><strong>What is recorded.</strong> The <em>effective</em> call — what actually reached the tool — and only when
- * it {@link Disposition#RAN} and returned no error. A gate that narrowed the arguments narrowed what happened, and
- * what happened is what a replay has to repeat. (An eval records the proposed call instead, because an eval scores
- * the model; this records the work.)
+ * <p><strong>What is recorded.</strong> The <em>effective</em> call — what actually reached the tool — for a run that
+ * completed and in which every call {@link Disposition#RAN} and returned no error. A gate that narrowed the arguments
+ * narrowed what happened, and what happened is what a replay has to repeat. (An eval records the proposed call
+ * instead, because an eval scores the model; this records the work.)
  *
- * <p><strong>What is not.</strong> A run that failed, stopped early or was refused tells us nothing about how the
- * work is done, and is not offered to the book at all — so it cannot establish a routine, and cannot break an
- * existing streak either.
+ * <p><strong>What resets.</strong> Anything else: a run that failed or stopped early, and a run that completed after
+ * a call was refused, parked, threw or returned an error. Recording such a run minus the call that went wrong would
+ * teach the book a sequence nobody chose — a welcome message that was refused three times running would drop out of
+ * the routine for good. So the book forgets the kind instead ({@link RoutineBook#forget}) and it is worked out
+ * afresh. That errs towards paying a model more often, which is the direction to err in.
  *
- * <p>One recorder serves one run.
+ * <p><strong>One run.</strong> The recorder attaches itself to the first run that starts and ignores callbacks from
+ * any other, so an observer that reaches a subagent's run does not splice its calls into the parent's.
  */
 public final class RoutineRecorder implements AgentObserver {
 
     private final TaskShape shape;
     private final RoutineBook book;
     private final List<RoutineStep> steps = new ArrayList<>();
-    private volatile Task task;
+    private AgentRun watching;
+    private Task task;
+    private boolean tainted;
 
     public RoutineRecorder(TaskShape shape, RoutineBook book) {
         this.shape = Objects.requireNonNull(shape, "shape");
@@ -46,7 +52,7 @@ public final class RoutineRecorder implements AgentObserver {
     }
 
     /** The task this run was recognised as, once it has started. */
-    public Optional<Task> task() {
+    public synchronized Optional<Task> task() {
         return Optional.ofNullable(task);
     }
 
@@ -56,26 +62,49 @@ public final class RoutineRecorder implements AgentObserver {
     }
 
     @Override
-    public void onStart(AgentRun run, Goal goal) {
+    public synchronized void onStart(AgentRun run, Goal goal) {
+        if (watching != null) {
+            return;
+        }
+        watching = run;
         task = shape.of(goal).orElse(null);
     }
 
     @Override
     public synchronized void onToolResult(AgentRun run, int step, ToolInvocation proposed, ToolInvocation effective,
                                           ToolResult result, Disposition disposition) {
-        Task recognised = task;
-        if (recognised == null || disposition != Disposition.RAN || result.isError()) {
+        if (!run.equals(watching) || task == null || tainted) {
             return;
         }
-        steps.add(RoutineStep.recorded(effective.name(), effective.arguments(), recognised));
+        if (disposition != Disposition.RAN || result.isError()) {
+            tainted = true;
+            return;
+        }
+        try {
+            steps.add(RoutineStep.recorded(effective.name(), effective.arguments(), task));
+        } catch (RuntimeException e) {
+            // A call that cannot be recorded is not left out of the recording: the run is not evidence.
+            tainted = true;
+        }
     }
 
     @Override
     public void onFinish(AgentRun run, AgentResult result) {
-        Task recognised = task;
-        if (recognised == null || !result.isSuccess()) {
-            return;
+        Task recognised;
+        List<RoutineStep> recorded;
+        boolean clean;
+        synchronized (this) {
+            if (!run.equals(watching) || task == null) {
+                return;
+            }
+            recognised = task;
+            recorded = List.copyOf(steps);
+            clean = !tainted && result.isSuccess();
         }
-        book.observe(recognised, steps());
+        if (clean) {
+            book.observe(recognised, recorded);
+        } else {
+            book.forget(recognised.kind());
+        }
     }
 }

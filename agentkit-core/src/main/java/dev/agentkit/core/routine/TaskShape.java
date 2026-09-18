@@ -42,7 +42,9 @@ public interface TaskShape {
             }
             Map<String, String> values = new LinkedHashMap<>();
             goal.parameters().forEach((name, value) -> {
-                if (value != null) {
+                // A parameter that cannot be a placeholder is left out, so its value is recorded literally, differs
+                // between runs, and keeps the job from settling: unable to generalise, rather than wrong.
+                if (value != null && Task.NAME.matcher(name).matches()) {
                     values.put(name, String.valueOf(value));
                 }
             });

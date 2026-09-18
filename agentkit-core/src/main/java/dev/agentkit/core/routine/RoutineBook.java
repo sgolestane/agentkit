@@ -14,14 +14,12 @@ import java.util.Optional;
  *
  * <h2>When a recording becomes a routine</h2>
  *
- * <p>When the last {@link #timesToEstablish} successful runs of a kind did <em>exactly</em> the same thing: the same
+ * <p>When the last {@link #timesToEstablish} clean runs of a kind did <em>exactly</em> the same thing: the same
  * tools, in the same order, with the same arguments once the task's values are taken out. A streak rather than a
  * tally, because a tally cannot tell "this settled three runs ago" from "this was the usual way last year": one run
- * that does something else breaks the streak, and the kind goes back to being worked out by the model until it
- * settles again. That is the behaviour to want from a component that will later run without a model watching.
- *
- * <p>Only successful runs are offered here ({@link RoutineRecorder}), and only calls that actually ran. A run that
- * failed, was refused or stopped early says nothing about how the work is done.
+ * that does something else breaks the streak, and so does any run that did not go cleanly
+ * ({@link RoutineRecorder}), and the kind goes back to being worked out by the model until it settles again. That is
+ * the behaviour to want from a component that will later run without a model watching.
  *
  * <h2>What it is not</h2>
  *
@@ -43,12 +41,18 @@ public final class RoutineBook {
     /** The longest sequence recorded: past this, a "routine" is a workflow and wants writing rather than recording. */
     public static final int DEFAULT_MAX_STEPS = 40;
 
+    /** One kind of work: its most recent clean runs, oldest first, and how many runs of it have been started. */
+    private static final class Kind {
+        final Deque<List<RoutineStep>> recent = new ArrayDeque<>();
+        long started;
+    }
+
     private final int timesToEstablish;
     private final int maxKinds;
     private final int maxSteps;
 
-    /** Per kind, the most recent runs' step sequences, oldest first. Access-ordered, so eviction drops the stalest. */
-    private final Map<String, Deque<List<RoutineStep>>> recent;
+    /** Access-ordered, so eviction drops the kind seen least recently. */
+    private final Map<String, Kind> kinds;
 
     public RoutineBook() {
         this(DEFAULT_TIMES_TO_ESTABLISH, DEFAULT_MAX_KINDS, DEFAULT_MAX_STEPS);
@@ -69,72 +73,79 @@ public final class RoutineBook {
         this.timesToEstablish = timesToEstablish;
         this.maxKinds = maxKinds;
         this.maxSteps = maxSteps;
-        this.recent = new LinkedHashMap<>(16, 0.75f, true) {
+        this.kinds = new LinkedHashMap<>(16, 0.75f, true) {
             @Override
-            protected boolean removeEldestEntry(Map.Entry<String, Deque<List<RoutineStep>>> eldest) {
+            protected boolean removeEldestEntry(Map.Entry<String, Kind> eldest) {
                 return size() > RoutineBook.this.maxKinds;
             }
         };
     }
 
     /**
-     * Records what one successful run of {@code task} did.
+     * Records what one clean run of {@code task} did.
      *
-     * <p>A run with no steps, or more than {@link #DEFAULT_MAX_STEPS}, is not recorded and breaks any streak: it is
-     * not evidence that the usual way still holds.
+     * <p>A run with no steps, or more than the most this book records, is not a routine and breaks any streak.
      */
     public synchronized void observe(Task task, List<RoutineStep> steps) {
         Objects.requireNonNull(task, "task");
         Objects.requireNonNull(steps, "steps");
-        Deque<List<RoutineStep>> history = recent.computeIfAbsent(task.kind(), kind -> new ArrayDeque<>());
+        Kind kind = kinds.computeIfAbsent(task.kind(), k -> new Kind());
         if (steps.isEmpty() || steps.size() > maxSteps) {
-            history.clear();
+            kind.recent.clear();
             return;
         }
-        history.addLast(List.copyOf(steps));
-        while (history.size() > timesToEstablish) {
-            history.removeFirst();
+        kind.recent.addLast(List.copyOf(steps));
+        while (kind.recent.size() > timesToEstablish) {
+            kind.recent.removeFirst();
         }
     }
 
     /** The routine for this task, if its kind has settled and the task fills every parameter the steps expect. */
     public synchronized Optional<Routine> established(Task task) {
         Objects.requireNonNull(task, "task");
-        Deque<List<RoutineStep>> history = recent.get(task.kind());
-        if (history == null || history.size() < timesToEstablish) {
-            return Optional.empty();
-        }
-        List<List<RoutineStep>> runs = new ArrayList<>(history);
-        List<RoutineStep> first = runs.get(0);
-        if (!runs.stream().allMatch(first::equals)) {
-            return Optional.empty();
-        }
-        Routine routine = new Routine(task.kind(), first, runs.size());
-        return routine.fits(task) ? Optional.of(routine) : Optional.empty();
+        Kind kind = kinds.get(task.kind());
+        return kind == null ? Optional.empty() : settled(task.kind(), kind).filter(routine -> routine.fits(task));
     }
 
     /** Every kind that has settled, with its routine, for a report or a log. */
     public synchronized List<Routine> settled() {
         List<Routine> routines = new ArrayList<>();
-        recent.forEach((kind, history) -> {
-            if (history.size() >= timesToEstablish) {
-                List<List<RoutineStep>> runs = new ArrayList<>(history);
-                List<RoutineStep> first = runs.get(0);
-                if (runs.stream().allMatch(first::equals)) {
-                    routines.add(new Routine(kind, first, runs.size()));
-                }
-            }
-        });
+        kinds.forEach((name, kind) -> settled(name, kind).ifPresent(routines::add));
         return List.copyOf(routines);
     }
 
-    /** Forgets what a kind has been doing, so it is worked out afresh. */
+    /**
+     * Counts one more run of this kind being started and returns the count, from 1. Kept here rather than by the
+     * caller so it is bounded with everything else the book keeps.
+     */
+    public synchronized long started(String taskKind) {
+        Objects.requireNonNull(taskKind, "taskKind");
+        return ++kinds.computeIfAbsent(taskKind, k -> new Kind()).started;
+    }
+
+    /** Forgets what a kind has been doing, so it is worked out afresh; its count of runs started is kept. */
     public synchronized void forget(String taskKind) {
-        recent.remove(taskKind);
+        Kind kind = kinds.get(taskKind);
+        if (kind != null) {
+            kind.recent.clear();
+        }
     }
 
     /** How many runs in a row must agree here. */
     public int timesToEstablish() {
         return timesToEstablish;
+    }
+
+    private Optional<Routine> settled(String name, Kind kind) {
+        if (kind.recent.size() < timesToEstablish) {
+            return Optional.empty();
+        }
+        List<RoutineStep> first = kind.recent.getFirst();
+        for (List<RoutineStep> run : kind.recent) {
+            if (!run.equals(first)) {
+                return Optional.empty();
+            }
+        }
+        return Optional.of(new Routine(name, first, kind.recent.size()));
     }
 }
