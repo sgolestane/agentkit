@@ -37,8 +37,9 @@ import java.util.stream.Stream;
  * tool, and no grant without a person. A change the host would refuse is refused here, with every problem, and nothing
  * is opened. What is opened says what the change does to each agent it touches, for its reviewer.
  *
- * <p>Only an agent's files may be proposed from here — {@code agents/<id>/…} — not {@code org.yaml} or a connector,
- * whose changes are an operator's, made in the repository.
+ * <p>Only an agent's files may be proposed from here — {@code agents/<id>/…} — and {@code routing.yaml}, whose cases
+ * are checks rather than permissions; not {@code org.yaml} or a connector, whose changes are an operator's, made in the
+ * repository.
  */
 public final class Proposals {
 
@@ -48,6 +49,8 @@ public final class Proposals {
 
     private static final Pattern AGENT_FILE = Pattern.compile("agents/[a-z0-9][a-z0-9-]{0,62}(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+");
     private static final SecureRandom RANDOM = new SecureRandom();
+    /** Who should answer what, at the repository's root: its cases may be proposed as agents' files are. */
+    static final String ROUTING = "routing.yaml";
 
     private final Function<OrgHost, Optional<ChangeProposer>> proposers;
     private final Function<String, AgentHost.Options> options;
@@ -164,8 +167,8 @@ public final class Proposals {
 
     /** Why a file may not be proposed, if it may not. */
     static Optional<String> check(String path, String content) {
-        if (path == null || !AGENT_FILE.matcher(path).matches() || path.contains("/.")) {
-            return Optional.of(path + ": only an agent's own files, agents/<id>/…, may be proposed here");
+        if (path == null || !(ROUTING.equals(path) || AGENT_FILE.matcher(path).matches()) || path.contains("/.")) {
+            return Optional.of(path + ": only an agent's own files, agents/<id>/…, and routing.yaml may be proposed here");
         }
         if (content == null) {
             return Optional.of(path + ": has no content");
@@ -182,9 +185,13 @@ public final class Proposals {
     /** What the change does to each agent it touches, for its reviewer. */
     static String summary(AgentHost before, AgentHost after, Set<String> changed) {
         Map<String, List<String>> byAgent = new LinkedHashMap<>();
-        changed.forEach(path -> byAgent.computeIfAbsent(path.split("/")[1], id -> new ArrayList<>())
-                .add(path.substring(("agents/" + path.split("/")[1] + "/").length())));
         StringBuilder md = new StringBuilder();
+        if (changed.contains(ROUTING)) {
+            md.append("**routing.yaml** — routing cases: ").append(before.repo().routing().size()).append(" → ")
+                    .append(after.repo().routing().size()).append('\n');
+        }
+        changed.stream().filter(path -> !path.equals(ROUTING)).forEach(path -> byAgent.computeIfAbsent(path.split("/")[1], id -> new ArrayList<>())
+                .add(path.substring(("agents/" + path.split("/")[1] + "/").length())));
         byAgent.forEach((id, paths) -> {
             Optional<HostedAgent> was = before.agent(id);
             Optional<HostedAgent> now = after.agent(id);

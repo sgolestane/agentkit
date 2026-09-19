@@ -111,7 +111,8 @@ class AChangeIsProposedForReviewNotAppliedTest {
     @Test
     void onlyAnAgentsOwnFilesMayBeProposedAndSomethingMustChange() {
         assertThat(proposals.propose(org, sam, "Sneaky", "", Map.of("org.yaml", "org: evil\n")).problems())
-                .containsExactly("org.yaml: only an agent's own files, agents/<id>/…, may be proposed here");
+                .containsExactly("org.yaml: only an agent's own files, agents/<id>/…, and routing.yaml may be proposed "
+                        + "here");
         assertThat(proposals.propose(org, sam, "Sneaky", "", Map.of(
                 "agents/../connectors/helpdesk.yaml", "x", "agents/helpdesk/.env", "x")).problems()).hasSize(2);
         assertThat(proposals.propose(org, sam, "", "", Map.of("agents/helpdesk/policy.md", "x")).problems())
@@ -160,6 +161,40 @@ class AChangeIsProposedForReviewNotAppliedTest {
             assertThat(refused.statusCode()).isEqualTo(422);
             assertThat(JSON.readTree(refused.body()).path("problems").size()).isGreaterThan(0);
             assertThat(send(base, "POST", "application/json", "{}").statusCode()).isEqualTo(405);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void aMessageSentAgainToAnotherAgentBecomesARoutingCaseOpenedForReview() throws Exception {
+        dev.agentkit.host.routing.RoutingLog routing = dev.agentkit.host.routing.RoutingLog.inMemory();
+        routing.addMisroute("acme", new dev.agentkit.host.routing.RoutingLog.Misroute("turn-0af3c9", Instant.now(),
+                "acme/" + HelpdeskConnector.DANA, "c1", "Who is \"Dana's\" manager?", "helpdesk", "security-desk",
+                List.of(new dev.agentkit.host.routing.RoutingLog.Before("My laptop will not boot", "helpdesk",
+                        "Opened TICKET-1001:\nwe'll call you."))));
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/host/admin", new AdminApi(Map.of("acme", org), Map.of(),
+                exchange -> Optional.ofNullable(exchange.getRequestHeaders().getFirst("X-Who")), RehearsalLog.inMemory(),
+                name -> Optional.empty(), Instant::now, proposals, null, null, routing).admin());
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort() + "/host/admin";
+            assertThat(send(base + "/routing/cases", "POST", "application/json", "{\"misroute\":\"nope\"}")
+                    .statusCode()).isEqualTo(404);
+
+            HttpResponse<String> opened = send(base + "/routing/cases", "POST", "application/json",
+                    "{\"misroute\":\"turn-0af3c9\"}");
+
+            assertThat(opened.statusCode()).as(opened.body()).isEqualTo(201);
+            JsonNode answer = JSON.readTree(opened.body());
+            assertThat(answer.path("case").asText()).isEqualTo("who-is-dana-s-manager-0af3c9");
+            // The host loaded the file with the case in it before opening it; the case is what was said and chosen.
+            String routingYaml = git("show", answer.path("branch").asText() + ":routing.yaml");
+            assertThat(routingYaml).contains("- name: who-is-dana-s-manager-0af3c9", "as: \"" + HelpdeskConnector.DANA,
+                    "say: \"Who is \\\"Dana's\\\" manager?\"", "agent: helpdesk", "expect: {agent: security-desk}");
+            assertThat(git("log", "-1", "--format=%B", answer.path("branch").asText()))
+                    .startsWith("Add the routing case who-is-dana-s-manager-0af3c9");
         } finally {
             server.stop(0);
         }

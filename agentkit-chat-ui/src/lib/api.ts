@@ -107,6 +107,19 @@ export const api = {
       }
       throw new ApiError(response.status, body?.error ?? `The host answered ${response.status}.`)
     },
+    /** A misroute added to routing.yaml as a case and opened for review; refused with its reasons, as a proposal is. */
+    proposeCase: async (misroute: string): Promise<ProposalOutcome & { case?: string }> => {
+      const response = await fetch('/host/admin/routing/cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ misroute }),
+      })
+      const body = (await response.json().catch(() => null)) as (ProposalOutcome & { case?: string; error?: string }) | null
+      if (response.status === 201 || response.status === 422) {
+        return body ?? { opened: false, problems: ['The host gave no answer.'] }
+      }
+      throw new ApiError(response.status, body?.error ?? `The host answered ${response.status}.`)
+    },
   },
 
   conversations: () => call<Conversation[]>('/conversations'),

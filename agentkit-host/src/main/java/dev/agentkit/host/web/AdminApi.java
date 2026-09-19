@@ -49,6 +49,7 @@ import java.util.function.Supplier;
  *                                   spend, and the messages people sent again to another agent
  * GET  /host/admin/agents/{id}/files the agent's files at the current version, to edit for a proposal
  * POST /host/admin/proposals         a change to agents' files, checked and opened as a pull request ({@link Proposals})
+ * POST /host/admin/routing/cases     a misroute ({misroute: id}) added to routing.yaml as a case, opened the same way
  * POST /host/rehearsals/{org}        a pull request's rehearsal report, from rehearse, with the org's REHEARSAL_TOKEN
  * </pre>
  *
@@ -115,7 +116,7 @@ public final class AdminApi {
         return exchange -> {
             try (exchange) {
                 String path = exchange.getRequestURI().getPath().substring("/host/admin".length());
-                boolean proposing = path.equals("/proposals");
+                boolean proposing = path.equals("/proposals") || path.equals("/routing/cases");
                 if (!(proposing ? "POST" : "GET").equals(exchange.getRequestMethod())) {
                     send(exchange, 405, Map.of("error", proposing ? "Post a proposal here."
                             : "The admin view only reads; a change is a proposal."));
@@ -133,7 +134,9 @@ public final class AdminApi {
                     send(exchange, 403, Map.of("error", "Only the admins org.yaml names see this organization's admin view."));
                     return;
                 }
-                if (proposing) {
+                if (path.equals("/routing/cases")) {
+                    proposeCase(exchange, org, principal.get());
+                } else if (proposing) {
                     propose(exchange, org, principal.get());
                 } else if (path.isEmpty() || path.equals("/")) {
                     send(exchange, 200, overview(org));
@@ -253,6 +256,55 @@ public final class AdminApi {
             answer.put("url", outcome.url());
             answer.put("where", outcome.where());
             answer.put("summary", outcome.summary());
+        } else {
+            answer.put("problems", outcome.problems());
+        }
+        send(exchange, outcome.opened() ? 201 : 422, answer);
+    }
+
+    /** A misroute, named by its id, added to {@code routing.yaml} as a case and proposed like any change. */
+    private void proposeCase(HttpExchange exchange, OrgHost org, Principal by) throws IOException {
+        String type = Objects.toString(exchange.getRequestHeaders().getFirst("Content-Type"), "");
+        if (!type.startsWith("application/json")) {
+            send(exchange, 415, Map.of("error", "A routing case is JSON."));
+            return;
+        }
+        if (routing.isEmpty()) {
+            send(exchange, 404, Map.of("error", "This host keeps no account of routing."));
+            return;
+        }
+        byte[] body = read(exchange.getRequestBody());
+        Object id;
+        try {
+            id = body == null ? null : JSON.readValue(body, Map.class).get("misroute");
+        } catch (IOException e) {
+            id = null;
+        }
+        String wanted = Objects.toString(id, "");
+        Optional<dev.agentkit.host.routing.RoutingLog.Misroute> misroute = routing.get().misroutes(org.org(), 100)
+                .stream().filter(one -> one.id().equals(wanted)).findFirst();
+        if (misroute.isEmpty()) {
+            send(exchange, 404, Map.of("error", "There is no misroute " + wanted + "."));
+            return;
+        }
+        java.nio.file.Path file = org.checkout().resolve("routing.yaml");
+        String existing = java.nio.file.Files.exists(file) ? java.nio.file.Files.readString(file) : "";
+        String as = dev.agentkit.host.Tenant.parse(misroute.get().tenant()).map(dev.agentkit.host.Tenant::email)
+                .orElse(misroute.get().tenant());
+        String name = dev.agentkit.host.routing.RoutingCaseText.name(misroute.get());
+        Proposals.Outcome outcome = proposals.propose(org, by, "Add the routing case " + name,
+                "A message " + as + " sent again to " + misroute.get().chosen() + " after the router sent it to "
+                        + (misroute.get().routedTo() == null ? "no agent" : misroute.get().routedTo())
+                        + ". The case expects " + misroute.get().chosen() + ", so the rehearsal checks the router "
+                        + "sends it there.",
+                Map.of("routing.yaml", dev.agentkit.host.routing.RoutingCaseText.appended(existing, misroute.get(), as)));
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("opened", outcome.opened());
+        answer.put("case", name);
+        if (outcome.opened()) {
+            answer.put("url", outcome.url());
+            answer.put("branch", outcome.branch());
+            answer.put("where", outcome.where());
         } else {
             answer.put("problems", outcome.problems());
         }

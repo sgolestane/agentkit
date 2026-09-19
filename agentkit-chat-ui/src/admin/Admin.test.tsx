@@ -177,6 +177,17 @@ describe('The admin view', () => {
     expect(screen.getByTestId('router-tokens')).toHaveTextContent('2,500 tokens today and 12,000 in 30 days')
     expect(screen.getByTestId('misroute')).toHaveTextContent('Went to Onboarding; sent again to Access Desk')
     expect(screen.getByRole('cell', { name: 'AgentKit (answered)' })).toBeInTheDocument()
+
+    // A misroute becomes a routing case, opened for review.
+    const posted = vi.fn(async () => new Response(JSON.stringify({ opened: true, case: 'give-ravi-staging-t9',
+      branch: 'agentkit/add-the-routing-case-1', url: 'https://github.com/acme/agents/pull/9' }), { status: 201 }))
+    vi.stubGlobal('fetch', posted)
+    await userEvent.click(screen.getByRole('button', { name: 'Add as a routing case: expect Access Desk' }))
+    expect(await screen.findByTestId('case-opened')).toHaveTextContent('Opened for review: pull request.')
+    expect(screen.getByRole('link', { name: 'pull request' })).toHaveAttribute('href',
+      'https://github.com/acme/agents/pull/9')
+    expect(posted).toHaveBeenCalledWith('/host/admin/routing/cases', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ misroute: 't9' }) }))
   })
 
   it('says why someone who is not an admin sees nothing', async () => {

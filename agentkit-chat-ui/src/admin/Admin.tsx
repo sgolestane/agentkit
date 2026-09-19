@@ -812,6 +812,7 @@ function Routing() {
                 <p className="text-muted">
                   Went to {name(misroute.routedTo)}; sent again to {name(misroute.chosen)} · {when(misroute.at)}
                 </p>
+                <AddCase id={misroute.id} chosen={name(misroute.chosen)} />
               </li>
             ))}
           </ul>
@@ -850,6 +851,58 @@ function Routing() {
           </table>
         )}
       </section>
+    </div>
+  )
+}
+
+/**
+ * Makes a misroute a routing.yaml case, opened as a pull request like any proposal, so the rehearsal checks the
+ * router sends such a message to the agent the person chose.
+ */
+function AddCase({ id, chosen }: { id: string; chosen: string }) {
+  const [state, setState] = useState<
+    { kind: 'idle' } | { kind: 'working' } | { kind: 'opened'; url?: string; branch?: string; where?: string }
+    | { kind: 'refused'; problems: string[] }
+  >({ kind: 'idle' })
+  if (state.kind === 'opened') {
+    return (
+      <p className="mt-1 text-good" data-testid="case-opened">
+        Opened for review
+        {state.url ? (
+          <>
+            : <a className="text-accent underline" href={state.url} target="_blank" rel="noreferrer">pull request</a>
+          </>
+        ) : (
+          ` on ${state.branch ?? 'a branch'}${state.where ? ` (${state.where})` : ''}`
+        )}
+        .
+      </p>
+    )
+  }
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        disabled={state.kind === 'working'}
+        onClick={() => {
+          setState({ kind: 'working' })
+          api.admin
+            .proposeCase(id)
+            .then((outcome) => setState(outcome.opened
+              ? { kind: 'opened', url: outcome.url ?? undefined, branch: outcome.branch, where: outcome.where }
+              : { kind: 'refused', problems: outcome.problems ?? [] }))
+            .catch((error: unknown) => setState({ kind: 'refused',
+              problems: [error instanceof ApiError ? error.message : 'It could not be proposed.'] }))
+        }}
+        className="rounded-full border border-line px-3 py-1 text-ink hover:bg-hover disabled:opacity-50"
+      >
+        {state.kind === 'working' ? 'Opening…' : `Add as a routing case: expect ${chosen}`}
+      </button>
+      {state.kind === 'refused' ? (
+        <ul className="mt-1 list-disc pl-5 text-bad" data-testid="case-refused">
+          {state.problems.map((problem) => <li key={problem}>{problem}</li>)}
+        </ul>
+      ) : null}
     </div>
   )
 }

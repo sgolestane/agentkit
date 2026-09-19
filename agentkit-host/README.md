@@ -90,6 +90,10 @@ otherwise. In a conversation with an agent they chose, the agent's form is alway
   - the messages people sent again with "Ask another agent".
 
   It's kept in Postgres (`route`, `misroute`) when the host has a database.
+- **A misroute becomes a case.** Beside each message sent again, "Add as a routing case" appends
+  a case to `routing.yaml`: who said it, the turns before it, and `expect: {agent: <the one they
+  chose>}`. It's proposed as a pull request like any change from the admin view, checked first
+  by loading it, so the rehearsal then holds the router to it.
 
 `routing.yaml`, at the repository's root, says who should answer what. Every pull request's
 rehearsal asks the router each case, and nothing else runs:
