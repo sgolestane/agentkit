@@ -223,8 +223,16 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
      * may ask for something the form does not say.
      */
     public java.util.Optional<Map<String, Object>> pasted(String message) {
+        return pastedEach(message).filter(each -> each.size() == 1).map(each -> each.get(0));
+    }
+
+    /**
+     * The inputs a message gives when it is this form filled in and pasted once or more — each record valid, with at
+     * most one short line around them; empty for anything else, as for {@link #pasted}.
+     */
+    public java.util.Optional<List<Map<String, Object>>> pastedEach(String message) {
         List<Map<String, String>> found = records(message);
-        if (found.size() != 1) {
+        if (found.isEmpty()) {
             return java.util.Optional.empty();
         }
         Set<String> names = new java.util.HashSet<>(fields.stream().map(Field::name).toList());
@@ -238,16 +246,30 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         if (others.size() > 1 || others.stream().anyMatch(line -> line.length() > PASTED_INTRO_CHARS)) {
             return java.util.Optional.empty();
         }
-        Map<String, Object> input = new LinkedHashMap<>();
-        for (Field field : fields) {
-            String value = found.get(0).get(field.name());
-            if (value == null) {
-                continue;
+        List<Map<String, Object>> inputs = new ArrayList<>();
+        for (Map<String, String> record : found) {
+            Map<String, Object> input = new LinkedHashMap<>();
+            for (Field field : fields) {
+                String value = record.get(field.name());
+                if (value == null) {
+                    continue;
+                }
+                input.put(field.name(), field.type().equals("boolean") && value.equalsIgnoreCase("yes") ? "true"
+                        : field.type().equals("boolean") && value.equalsIgnoreCase("no") ? "false" : value);
             }
-            input.put(field.name(), field.type().equals("boolean") && value.equalsIgnoreCase("yes") ? "true"
-                    : field.type().equals("boolean") && value.equalsIgnoreCase("no") ? "false" : value);
+            if (!problems(input).isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            inputs.add(java.util.Collections.unmodifiableMap(input));
         }
-        return problems(input).isEmpty() ? java.util.Optional.of(input) : java.util.Optional.empty();
+        return java.util.Optional.of(List.copyOf(inputs));
+    }
+
+    /** How the person would tell one task of several apart: its first two values given, in the form's order. */
+    public String label(Map<String, Object> input) {
+        return String.join(" · ", fields.stream().map(field -> input.get(field.name()))
+                .filter(value -> value != null && !String.valueOf(value).isBlank())
+                .limit(2).map(value -> OneLine.of(String.valueOf(value))).toList());
     }
 
     /** The request for {@code input}, which must be valid, from nobody in particular. */

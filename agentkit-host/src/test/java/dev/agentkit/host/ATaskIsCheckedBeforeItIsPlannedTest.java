@@ -108,7 +108,7 @@ class ATaskIsCheckedBeforeItIsPlannedTest {
     }
 
     @Test
-    void whatACheckAnswersIsGivenToThePlannerAndARefusedTaskIsLeftOut() throws Exception {
+    void severalTasksInOneMessageAreEachCheckedPlannedAndAnsweredOnTheirOwn() throws Exception {
         ScriptedLlm llm = new ScriptedLlm(
                 ScriptedLlm.text("1. Open a ticket for Priya's replacement laptop."),
                 ScriptedLlm.toolUse("s1", "open_ticket", Map.of("summary", "Replacement laptop for Priya")),
@@ -125,14 +125,36 @@ class ATaskIsCheckedBeforeItIsPlannedTest {
                 reason: broken
                 """.formatted(HelpdeskConnector.PRIYA, HelpdeskConnector.NOBODY));
 
+        // One refused does not stop the other; each has its own section, under its own label.
         assertThat(turn.answer()).isEqualTo("""
+                ### priya.natarajan@acme.example · stolen
+
                 1. Open a ticket for Priya's replacement laptop.
-                   - Done: Opened TICKET-1001.""");
+                   - Done: Opened TICKET-1001.
+
+                ### nobody@acme.example · broken
+
+                Nothing was done. Nobody in the directory has the email nobody@acme.example""");
         String planned = llm.received().get(0).messages().stream().map(Message::text).reduce("", String::concat);
+        assertThat(planned).contains("Checked before planning", "Priya Natarajan").doesNotContain("nobody@");
+        assertThat(turn.views()).singleElement().satisfies(v -> assertThat(v.data().toString())
+                .contains("Plan for priya.natarajan@acme.example · stolen"));
+    }
+
+    @Test
+    void aTaskInPlainWordsTheChecksRefuseIsLeftOutOfThePlanForTheRest() throws Exception {
+        ScriptedLlm llm = new ScriptedLlm(
+                ScriptedLlm.text("{\"tasks\":[{\"email\":\"" + HelpdeskConnector.PRIYA + "\"},{\"email\":\""
+                        + HelpdeskConnector.NOBODY + "\"}]}"),
+                ScriptedLlm.text("1. Open a ticket for Priya's replacement laptop."),
+                ScriptedLlm.text("Opened TICKET-1001.\nOUTCOME: done"));
+        start(llm);
+
+        say("Please replace the laptops of Priya and " + HelpdeskConnector.NOBODY + ".");
+
+        String planned = llm.received().get(1).messages().stream().map(Message::text).reduce("", String::concat);
         assertThat(planned).contains("Checked before planning", "Priya Natarajan", "Refused before planning",
                 HelpdeskConnector.NOBODY + ": Nobody in the directory has the email");
-        assertThat(turn.steps()).filteredOn(s -> s.kind() == Step.Kind.TOOL_CALL && s.name().equals("directory_lookup"))
-                .hasSize(2);
     }
 
     @Test

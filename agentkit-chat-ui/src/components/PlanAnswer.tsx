@@ -78,6 +78,32 @@ export function planAnswer(answer: string): { steps: PlanStep[]; after: string }
   return steps ? { steps, after: at < 0 ? '' : answer.slice(at + 2).trim() } : null
 }
 
+/** One task of several a message held: its label, and its answer. */
+export interface TaskSection {
+  title: string
+  /** The task's plan read back, or null when it was answered in words, as a refusal is. */
+  plan: { steps: PlanStep[]; after: string } | null
+  text: string
+}
+
+/**
+ * The answer to a message that held several tasks, read back into a section for each: the host
+ * writes each as `### <label>`, then that task's answer. Null for any other answer.
+ */
+export function taskSections(answer: string): TaskSection[] | null {
+  if (!answer.startsWith('### ')) {
+    return null
+  }
+  const sections: TaskSection[] = []
+  for (const part of answer.split(/^### /m).slice(1)) {
+    const newline = part.indexOf('\n')
+    const title = (newline < 0 ? part : part.slice(0, newline)).trim()
+    const text = newline < 0 ? '' : part.slice(newline + 1).trim()
+    sections.push({ title, plan: planAnswer(text), text })
+  }
+  return sections.length > 1 ? sections : null
+}
+
 /** Whether a turn carried out a plan: its trace has the plan it made. */
 export function isPlanTurn(turn: Turn): boolean {
   return turn.steps.some((step) => step.kind === 'NOTE' && step.name === 'plan')

@@ -4,7 +4,7 @@ import { Activity } from './Activity'
 import { ApprovalCard } from './ApprovalCard'
 import { TurnAttachments } from './Attachments'
 import { Markdown, copy } from './Markdown'
-import { PlanAnswer, isPlanTurn, planAnswer } from './PlanAnswer'
+import { PlanAnswer, isPlanTurn, planAnswer, taskSections, type TaskSection } from './PlanAnswer'
 import { Trace } from './Trace'
 import { Views } from '../views/registry'
 import { useFollowing } from './useFollowing'
@@ -255,6 +255,30 @@ function AnsweredBy({
   )
 }
 
+/** A carried-out plan's steps, folded, and what the host says after them. */
+function FoldedPlan({ plan }: { plan: NonNullable<ReturnType<typeof planAnswer>> }) {
+  return (
+    <>
+      <PlanAnswer steps={plan.steps} />
+      {plan.after ? (
+        <div className="mt-4" data-testid="plan-after">
+          <Markdown text={plan.after} />
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+/** One task of several a message held, under its label. */
+function TaskAnswer({ section }: { section: TaskSection }) {
+  return (
+    <section className="mt-5 first:mt-0" data-testid="task-section">
+      <h3 className="mb-2 text-lg font-semibold text-ink">{section.title}</h3>
+      {section.plan ? <FoldedPlan plan={section.plan} /> : <Markdown text={section.text} />}
+    </section>
+  )
+}
+
 function CopyAnswer({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -315,19 +339,13 @@ function TurnAnswer({ turn, onLeaveOut }: { turn: Turn; onLeaveOut?: (left: bool
           {(() => {
             // A carried-out plan's answer is a list of steps, each folded under how it ended, and
             // then anything the host says after them, such as what was already in place.
+            // A message that held several tasks has a section for each.
+            const sections = !streaming && isPlanTurn(turn) ? taskSections(turn.answer) : null
+            if (sections) {
+              return sections.map((section, index) => <TaskAnswer key={index} section={section} />)
+            }
             const plan = !streaming && isPlanTurn(turn) ? planAnswer(turn.answer) : null
-            return plan ? (
-              <>
-                <PlanAnswer steps={plan.steps} />
-                {plan.after ? (
-                  <div className="mt-4" data-testid="plan-after">
-                    <Markdown text={plan.after} />
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <Markdown text={turn.answer} />
-            )
+            return plan ? <FoldedPlan plan={plan} /> : <Markdown text={turn.answer} />
           })()}
           {streaming ? <span className="ml-0.5 animate-pulse text-muted">▍</span> : null}
           {!streaming ? <CopyAnswer text={turn.answer} /> : null}

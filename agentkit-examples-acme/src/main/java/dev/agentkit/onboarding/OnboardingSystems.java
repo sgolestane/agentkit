@@ -145,6 +145,7 @@ public final class OnboardingSystems {
     private final List<AwsGrant> awsGrants = new ArrayList<>();
     private final Set<String> salesforceSeats = new LinkedHashSet<>();
     private final Map<String, SlackAccount> slack = new LinkedHashMap<>();
+    private final Set<String> preboarding = new LinkedHashSet<>(); // Slack accounts made before onboarding
     private final Map<String, Map<String, String>> slackProfiles = new LinkedHashMap<>();
     private final Map<String, String> hireReplies = new LinkedHashMap<>(); // what each person would submit
     private final List<SlackQuestion> slackQuestions = new ArrayList<>();
@@ -247,6 +248,7 @@ public final class OnboardingSystems {
     /** A Slack account created before the start date, with whatever the person put on their profile. */
     public synchronized void addPreboardingSlackAccount(String email, Map<String, String> profile) {
         slack.put(lower(email), new SlackAccount(lower(email), "guest", Set.of("#welcome")));
+        preboarding.add(lower(email));
         slackProfiles.put(lower(email), new LinkedHashMap<>(profile));
     }
 
@@ -331,7 +333,8 @@ public final class OnboardingSystems {
                         already.put("okta", "account " + user.status() + " in groups " + user.groups());
                     }
                     SlackAccount account = slack.get(email);
-                    if (account != null) {
+                    // A pre-boarding account is not onboarding done: it is still to be made a real one.
+                    if (account != null && !preboarding.contains(email)) {
                         already.put("slack", account.accountType() + " account in " + account.channels());
                     }
                     GithubIdentity identity = githubIdentities.get(email);
@@ -646,6 +649,7 @@ public final class OnboardingSystems {
                                 + " account in " + before.channels() + "; nothing was changed.");
                     }
                     boolean existed = before != null;
+                    preboarding.remove(email);
                     slack.put(email, new SlackAccount(email, lower(inv.stringArgument("account_type")), channels));
                     slackProfiles.putIfAbsent(email, new LinkedHashMap<>());
                     return ToolResult.ok("Slack: " + (existed ? "updated pre-boarding" : "created") + " "

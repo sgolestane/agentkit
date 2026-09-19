@@ -120,6 +120,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     private final Supplier<Agent> executors;
     private final ChatRuntime.Session session;
     private final Optional<FormTask> form;
+    /** Which of several tasks in one message this is, for the plan and the steps as they start; empty for one. */
+    private final String label;
 
     /**
      * A turn started from the agent's form, whose plan may be reused and is kept.
@@ -136,6 +138,13 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
 
     PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now, Supplier<Agent> executors,
                     ChatRuntime.Session session, Optional<FormTask> form) {
+        this(agent, llm, principal, now, executors, session, form, "");
+    }
+
+    /** @param label which of several tasks in one message this is; empty when it is the only one */
+    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now, Supplier<Agent> executors,
+                    ChatRuntime.Session session, Optional<FormTask> form, String label) {
+        this.label = label == null ? "" : label;
         this.form = Objects.requireNonNull(form, "form");
         this.agent = Objects.requireNonNull(agent, "agent");
         this.llm = Objects.requireNonNull(llm, "llm");
@@ -206,7 +215,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
                 startedAfter.add(lastRecorded());
             }
             if (step >= 1 && plan != null && step <= plan.size()) {
-                say("**Step " + step + " of " + plan.size() + ":** " + OneLine.of(plan.steps().get(step - 1)) + "\n\n");
+                say("**" + (label.isEmpty() ? "Step " : label + ", step ") + step + " of " + plan.size() + ":** "
+                        + OneLine.of(plan.steps().get(step - 1)) + "\n\n");
             }
             return executors.get();
         });
@@ -544,9 +554,9 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
      */
     private void show(Plan plan, long millis, int reusedAfter) {
         StringBuilder markdown = new StringBuilder(reusedAfter > 0
-                ? "**Plan** (reused: the last " + reusedAfter + " plans for tasks like this one agreed on it, so no "
+                ? "**Plan" + (label.isEmpty() ? "" : " for " + label) + "** (reused: the last " + reusedAfter + " plans for tasks like this one agreed on it, so no "
                         + "model was asked to make it)\n\n"
-                : "**Plan**\n\n");
+                : "**Plan" + (label.isEmpty() ? "" : " for " + label) + "**\n\n");
         for (int i = 0; i < plan.size(); i++) {
             markdown.append(i + 1).append(". ").append(OneLine.of(plan.steps().get(i))).append('\n');
         }

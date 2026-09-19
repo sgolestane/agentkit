@@ -61,6 +61,15 @@ class AGrantIsOnlyForTheHiresManagerTest {
         call("salesforce_assign_seat", Map.of("email", MARCUS, "requested_by", LENA));
         assertThat(call("onboarding_check", Map.of("employee_id", MARCUS, "requested_by", LENA)).content())
                 .contains("\"okta\":\"account ACTIVE in groups [sales, contractors]\"", "\"salesforce\":\"a seat\"");
+
+        // A pre-boarding Slack account is not onboarding done, until it is made a real one.
+        systems.addPreboardingSlackAccount(MARCUS, Map.of());
+        assertThat(call("onboarding_check", Map.of("employee_id", MARCUS, "requested_by", LENA)).content())
+                .doesNotContain("\"slack\"");
+        call("slack_create_account", Map.of("email", MARCUS, "account_type", "guest", "channels", List.of("#sales"),
+                "requested_by", LENA));
+        assertThat(call("onboarding_check", Map.of("employee_id", MARCUS, "requested_by", LENA)).content())
+                .contains("\"slack\":\"guest account in [#sales]\"");
     }
 
     @Test

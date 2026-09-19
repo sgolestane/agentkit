@@ -219,6 +219,11 @@ prompt:
 - **How each step ended.** Each step's agent ends its answer with an `OUTCOME:` line: done,
   already done, or not done. A step that refused or wasn't allowed reads "Not done", not "Done".
   A change that reported an error still reads "Failed", and a step that didn't finish "Stopped".
+- **Several tasks in one message.** A message that is the form filled in and pasted several
+  times becomes one task per copy, carried out one after another in the same turn. Each is
+  checked, planned (or its settled plan reused) and answered on its own, under a `### <label>`
+  heading made of its first two values, such as "W-1001 · Ravi Menon". One refused or failed
+  doesn't stop the others. A message may hold at most 10 tasks.
 - **Limits.** A plan longer than 20 steps is refused before anything runs.
 
 #### Checking before planning

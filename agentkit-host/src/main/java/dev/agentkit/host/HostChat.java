@@ -215,6 +215,23 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     }
 
     private ChatRuntime.Runner runnerOf(ChatRuntime.Session session, Turn turn) {
+        // Several tasks in one message — the form filled in and pasted once for each — are carried out one by one.
+        dev.agentkit.host.repo.AgentDefinition definition = turn.agent().definition();
+        Optional<List<Map<String, Object>>> each = definition.pattern() == dev.agentkit.host.repo.AgentDefinition
+                .Pattern.PLAN_EXECUTE && definition.input() != null
+                && !forms.containsKey(session.tenantId() + '\n' + session.userText())
+                ? definition.input().pastedEach(session.userText()).filter(inputs -> inputs.size() > 1)
+                : Optional.empty();
+        if (each.isPresent()) {
+            dev.agentkit.host.repo.TaskInput form = definition.input();
+            return new EachTaskOnItsOwn(each.get(), form::label, input -> form.render(input, turn.principal()::value),
+                    (input, label) -> turn.agent().runner(session, turn.llm(), turn.principal(), clock.get(),
+                            runtime.get(), turn.scheduler(), Optional.of(new PlanExecuteTurn.FormTask(plans,
+                                    new PlanBook.Agent(Tenant.parse(session.tenantId()).orElseThrow().org(),
+                                            definition.id(), turn.version()),
+                                    PlanTask.of(definition, turn.version(), input, turn.principal()::value),
+                                    form.render(input, turn.principal()::value))), label));
+        }
         // The form, sent from the console or over MCP; or the form filled in and pasted into a message.
         Optional<PlanExecuteTurn.FormTask> form = Optional.ofNullable(
                         forms.remove(session.tenantId() + '\n' + session.userText()))

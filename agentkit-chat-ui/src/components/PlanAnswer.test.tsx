@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PlanAnswer, planAnswer, planSteps } from './PlanAnswer'
+import { PlanAnswer, planAnswer, planSteps, taskSections } from './PlanAnswer'
 
 const answer = [
   '1. Okta: create an account for marcus.bell@acme.example.',
@@ -39,6 +39,19 @@ describe('A carried-out plan', () => {
     render(<PlanAnswer steps={steps!} />)
     expect(screen.getByText('Already done')).toHaveClass('text-muted')
     expect(screen.getByText('Not done')).toHaveClass('text-warn')
+  })
+
+  it('reads an answer to several tasks back into a section for each', () => {
+    const sections = taskSections(['### W-1001 · Ravi Menon', '', '1. Okta: create an account.',
+      '   - Done: Created it.', '', '### W-1005 · Aisha Rahman', '',
+      'Nothing was done. Only her manager can onboard her.'].join('\n'))
+    expect(sections).toEqual([
+      { title: 'W-1001 · Ravi Menon', text: '1. Okta: create an account.\n   - Done: Created it.',
+        plan: { steps: [{ step: 'Okta: create an account.', outcome: 'done', said: 'Created it.' }], after: '' } },
+      { title: 'W-1005 · Aisha Rahman', text: 'Nothing was done. Only her manager can onboard her.', plan: null },
+    ])
+    expect(taskSections('### Only one\n\nIt.')).toBeNull()
+    expect(taskSections('1. A step\n   - Done: It.')).toBeNull()
   })
 
   it('keeps what the host says after the steps apart from them', () => {

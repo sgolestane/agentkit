@@ -560,12 +560,19 @@ public final class HostedAgent {
      */
     ChatRuntime.Runner runner(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
                               ChatRuntime runtime, List<Tool> alsoGiven, Optional<PlanExecuteTurn.FormTask> form) {
+        return runner(session, llm, principal, now, runtime, alsoGiven, form, "");
+    }
+
+    /** As above, for one of several tasks a message holds, which {@code label} names to the person. */
+    ChatRuntime.Runner runner(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
+                              ChatRuntime runtime, List<Tool> alsoGiven, Optional<PlanExecuteTurn.FormTask> form,
+                              String label) {
         if (definition.pattern() == AgentDefinition.Pattern.PLAN_EXECUTE) {
             check(principal);
             return new PlanExecuteTurn(this, llm, principal, now,
                     () -> builder(session, llm, principal, now, runtime, alsoGiven, PlanExecuteTurn.OUTCOME_RULE)
                             .streaming(false).build(), session,
-                    definition.planReuse() == null ? Optional.empty() : form);
+                    definition.planReuse() == null ? Optional.empty() : form, label);
         }
         return turn(session, llm, principal, now, runtime, alsoGiven)::run;
     }
