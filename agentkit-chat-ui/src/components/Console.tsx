@@ -8,6 +8,7 @@ import { Threads } from './Threads'
 import { money } from './Trace'
 import type { Overview } from '../lib/types'
 import { Composer } from './Composer'
+import { TaskForm } from './TaskForm'
 import { Transcript } from './Transcript'
 
 /**
@@ -80,6 +81,10 @@ export function Console() {
     [conversation, uploads],
   )
 
+  // The open conversation's agent, when the console offers more than one: its form, if it has one.
+  const openAgentId = threads.threads.find((one) => one.id === threads.current)?.agent?.id
+  const openAgent = overview?.agents?.find((agent) => agent.id === openAgentId)
+
   const problems = overview?.problems ?? []
   // Disabled with a reason rather than disabled: a person whose console will not accept a
   // message is owed the sentence that says why, and it is already written — the runtime's own.
@@ -94,7 +99,11 @@ export function Console() {
         working={conversation.working}
         onFilter={threads.setFilter}
         onOpen={threads.open}
-        onCreate={() => void threads.create()}
+        agents={overview?.agents ?? []}
+        admin={overview?.admin === true}
+        user={typeof overview?.user === 'string' ? overview.user : overview?.tenant}
+        org={typeof overview?.org === 'string' ? overview.org : undefined}
+        onCreate={(agent) => void threads.create(agent)}
         onRename={(id, title) => void threads.rename(id, title)}
         onForget={(id) => void threads.forget(id)}
       />
@@ -111,12 +120,12 @@ export function Console() {
           </p>
         ) : null}
         {conversation.reconnecting ? (
-          <p className="border-b border-line bg-panel px-4 py-1 text-xs text-muted" role="status">
+          <p className="border-b border-line-soft px-4 py-1.5 text-xs text-muted" role="status">
             Reconnecting to the run…
           </p>
         ) : null}
         {conversation.spent.tokens > 0 ? (
-          <p className="border-b border-line bg-panel px-4 py-1 text-right text-xs text-muted" data-testid="spent">
+          <p className="px-4 py-1 text-right text-xs text-faint" data-testid="spent">
             {conversation.spent.tokens.toLocaleString()} tokens
             {typeof conversation.spent.costUsd === 'number'
               ? ` · ${money(conversation.spent.costUsd)}`
@@ -140,6 +149,17 @@ export function Console() {
           }}
           onEdit={setDraft}
         />
+
+        {openAgent?.input && threads.current ? (
+          <TaskForm
+            key={threads.current}
+            schema={openAgent.input}
+            agentName={openAgent.name}
+            startOpen={conversation.transcript.turns.length === 0}
+            disabled={Boolean(unusable) || conversation.working}
+            onSubmit={(input) => void conversation.say('', [], input)}
+          />
+        ) : null}
 
         <Composer
           onSend={send}

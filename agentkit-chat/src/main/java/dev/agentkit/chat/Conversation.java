@@ -22,9 +22,33 @@ import java.util.Objects;
  * @param title     what to call it in a list; may be empty until something names it
  * @param createdAt when it started
  * @param updatedAt when a turn was last appended or the title last changed
+ * @param agent     which agent, at which version, this conversation is with; null when the deployment has one agent
+ *                  and does not say
  */
 public record Conversation(String id, String tenantId, String title,
-                           Instant createdAt, Instant updatedAt) {
+                           Instant createdAt, Instant updatedAt, Pin agent) {
+
+    /**
+     * The agent a conversation is with, fixed when it starts: its id, and the version of its definition. A later
+     * version of the same agent is a different agent as far as this conversation is concerned — what it was told, and
+     * what it may do, are the version's — so a conversation never changes agents underneath the person in it.
+     */
+    public record Pin(String id, String version) {
+        public Pin {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(version, "version");
+        }
+
+        @Override
+        public String toString() {
+            return id + "@" + version;
+        }
+    }
+
+    /** A conversation with no agent pinned: the shape before pins existed, and a single-agent console's. */
+    public Conversation(String id, String tenantId, String title, Instant createdAt, Instant updatedAt) {
+        this(id, tenantId, title, createdAt, updatedAt, null);
+    }
 
     /** How long a title may be, in a list a person scans rather than reads. */
     public static final int MAX_TITLE_CHARS = 200;
@@ -42,11 +66,11 @@ public record Conversation(String id, String tenantId, String title,
 
     /** This conversation, renamed and marked as changed. */
     public Conversation titled(String newTitle, Instant now) {
-        return new Conversation(id, tenantId, newTitle, createdAt, now);
+        return new Conversation(id, tenantId, newTitle, createdAt, now, agent);
     }
 
     /** This conversation, marked as changed without changing anything else. */
     public Conversation touched(Instant now) {
-        return new Conversation(id, tenantId, title, createdAt, now);
+        return new Conversation(id, tenantId, title, createdAt, now, agent);
     }
 }

@@ -1,9 +1,17 @@
 import type {
+  AdminAgent,
+  AdminDeferredAction,
+  AdminOverview,
+  AdminUsage,
+  AgentFile,
+  AgentInfo,
   Attachment,
   Conversation,
   ConversationDetail,
   Overview,
   PendingDecision,
+  ProposalOutcome,
+  RehearsalReport,
   Turn,
 } from './types'
 
@@ -38,13 +46,23 @@ export class ApiError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
+  return at<T>(`/api${path}`, init)
+}
+
+/** {@link call}, at a path of the application's own beside the console's `/api`, such as the host's `/host`. */
+async function at<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   })
   const text = await response.text()
   const body: unknown = text ? JSON.parse(text) : null
   if (!response.ok) {
+    // Nobody is signed in and the console says where to: go there rather than show a page that
+    // can do nothing.
+    if (response.status === 401 && body && typeof body === 'object' && 'signIn' in body) {
+      globalThis.location?.assign(String((body as { signIn: unknown }).signIn))
+    }
     const stated =
       body && typeof body === 'object' && 'error' in body
         ? String((body as { error: unknown }).error)
@@ -57,17 +75,54 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   overview: () => call<Overview>('/overview'),
 
+  /** The organization's admin view: read-only, for the admins its org.yaml names. */
+  admin: {
+    overview: () => at<AdminOverview>('/host/admin'),
+    agent: (id: string, version?: string) =>
+      at<AdminAgent>(
+        `/host/admin/agents/${encodeURIComponent(id)}${version ? `?version=${encodeURIComponent(version)}` : ''}`,
+      ),
+    deferred: () =>
+      at<{ agents: { id: string; name: string; actions: AdminDeferredAction[] }[] }>('/host/admin/deferred'),
+    rehearsals: () => at<{ reports: RehearsalReport[] }>('/host/admin/rehearsals'),
+    usage: () => at<AdminUsage>('/host/admin/usage'),
+    files: (id: string) =>
+      at<{ version: string; files: AgentFile[] }>(`/host/admin/agents/${encodeURIComponent(id)}/files`),
+    /** A refused proposal is an answer, not a failure: its reasons come back to be shown. */
+    propose: async (proposal: {
+      title: string
+      description: string
+      files: Record<string, string>
+    }): Promise<ProposalOutcome> => {
+      const response = await fetch('/host/admin/proposals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proposal),
+      })
+      const body = (await response.json().catch(() => null)) as (ProposalOutcome & { error?: string }) | null
+      if (response.status === 201 || response.status === 422) {
+        return body ?? { opened: false, problems: ['The host gave no answer.'] }
+      }
+      throw new ApiError(response.status, body?.error ?? `The host answered ${response.status}.`)
+    },
+  },
+
   conversations: () => call<Conversation[]>('/conversations'),
+
+  agents: () => call<AgentInfo[]>('/agents'),
 
   conversation: (id: string) => call<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`),
 
-  create: (title = '') =>
-    call<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ title }) }),
+  create: (title = '', agent?: string) =>
+    call<Conversation>('/conversations', {
+      method: 'POST',
+      body: JSON.stringify(agent ? { title, agent } : { title }),
+    }),
 
-  say: (id: string, text: string, attachments: string[] = []) =>
+  say: (id: string, text: string, attachments: string[] = [], input?: Record<string, unknown>) =>
     call<Turn>(`/conversations/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ text, attachments }),
+      body: JSON.stringify(input ? { text, attachments, input } : { text, attachments }),
     }),
 
   cancel: (id: string) =>

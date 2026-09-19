@@ -1,0 +1,6 @@
+# The IT helpdesk's MCP server. Credentials are secrets the host holds, never values in this file.
+url: ${secret:HELPDESK_URL}
+headers:
+  Authorization: Bearer ${secret:HELPDESK_TOKEN}
+timeoutSeconds: 60
+trustAnnotations: true

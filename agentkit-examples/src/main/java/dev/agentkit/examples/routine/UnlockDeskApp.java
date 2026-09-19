@@ -9,7 +9,6 @@ import dev.agentkit.core.tool.Disposition;
 import dev.agentkit.core.tool.ToolInvocation;
 import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.core.util.OneLine;
-import dev.agentkit.examples.onboarding.OnboardingApp;
 import dev.agentkit.openrouter.OpenRouterLlmClient;
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -24,9 +23,11 @@ import java.util.List;
  *     -Dexec.mainClass=dev.agentkit.examples.routine.UnlockDeskApp
  * }</pre>
  *
- * <p>{@code UNLOCK_DESK_MODEL} picks the model (an OpenRouter id); the default is the onboarding example's.
+ * <p>{@code UNLOCK_DESK_MODEL} picks the model (an OpenRouter id); the default is {@value #DEFAULT_MODEL}.
  */
 public final class UnlockDeskApp {
+
+    static final String DEFAULT_MODEL = "anthropic/claude-sonnet-5";
 
     private UnlockDeskApp() {
     }
@@ -37,7 +38,7 @@ public final class UnlockDeskApp {
             System.err.println("Set " + OpenRouterLlmClient.API_KEY_ENV + " to run this example.");
             System.exit(2);
         }
-        String model = System.getenv().getOrDefault("UNLOCK_DESK_MODEL", OnboardingApp.DEFAULT_MODEL);
+        String model = System.getenv().getOrDefault("UNLOCK_DESK_MODEL", DEFAULT_MODEL);
         LlmClient llm = OpenRouterLlmClient.builder(key).title("agentkit unlock desk example").build();
         UnlockDeskSystems systems = UnlockDeskSystems.seeded();
         UnlockDesk desk = new UnlockDesk(llm, model, systems, new Printer(System.out));

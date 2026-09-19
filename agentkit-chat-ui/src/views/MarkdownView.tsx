@@ -22,7 +22,7 @@ export function MarkdownView({ view }: { view: View }) {
     return null
   }
   return (
-    <div className="my-2" data-testid="markdown-view">
+    <div className="my-2 rounded-[var(--radius-card)] border border-line px-4 py-3" data-testid="markdown-view">
       <Markdown text={text} />
     </div>
   )

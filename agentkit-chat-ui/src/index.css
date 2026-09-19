@@ -1,35 +1,112 @@
 @import "tailwindcss";
 
 /*
- * The console's own tokens, so light and dark are one decision rather than a `dark:` on every
- * element. Both existing consoles in this repository did it this way with plain CSS variables
- * and it is the part of them worth keeping: a colour changes in one place, and a component
- * that forgot a dark variant cannot exist.
+ * The console's design system: one set of tokens, light and dark, so a colour changes in one
+ * place and a component that forgot a dark variant cannot exist. What each token is for, and the
+ * type and shape scales, are in DESIGN.md.
+ *
+ * Neutral greys carry the interface; colour is kept for meaning (accent, good, warn, bad). The
+ * dark theme is black, with raised surfaces a step lighter.
+ *
+ * The values live in :root and change with the colour scheme; @theme inline only names them
+ * for Tailwind's utilities (bg-canvas, text-muted, …). A @theme block inside @media does not
+ * work: Tailwind hoists it, and the last one wins whatever the scheme.
  */
-@theme {
-  --color-ink: oklch(0.22 0.01 260);
-  --color-muted: oklch(0.52 0.015 260);
-  --color-line: oklch(0.91 0.005 260);
-  --color-panel: oklch(1 0 0);
-  --color-canvas: oklch(0.98 0.003 260);
-  --color-accent: oklch(0.55 0.16 262);
-  --color-good: oklch(0.58 0.13 155);
-  --color-warn: oklch(0.65 0.14 70);
-  --color-bad: oklch(0.55 0.19 25);
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --canvas: #ffffff; /* the page, and what a conversation sits on */
+  --sidebar: #f9f9f9; /* the conversation list */
+  --panel: #ffffff; /* raised: cards, menus, the composer */
+  --raised: #f3f3f3; /* a step above a panel: code, inputs on a card */
+  --bubble: #f3f3f3; /* what the person said */
+  --hover: #0000000d; /* a row or ghost button under the pointer */
+  --selected: #0000000d; /* the conversation that is open */
+
+  /* Text and lines */
+  --ink: #0d0d0d;
+  --muted: #5d5d5d;
+  --faint: #8f8f8f;
+  --line: #0000001a;
+  --line-soft: #0000000d;
+
+  /* The one strong button */
+  --primary: #0d0d0d;
+  --on-primary: #ffffff;
+
+  /* Meaning */
+  --accent: #3a83f7;
+  --good: #3a843f;
+  --warn: #d25e28;
+  --bad: #ba2623;
+
+  /* Shape and depth */
+  --radius-item: 10px; /* rows in the conversation list, menu items, inputs */
+  --radius-bubble: 22px; /* what the person said */
+  --radius-card: 16px; /* cards: confirmations, forms, code */
+  --radius-pill: 28px; /* the composer */
+  --shadow-menu: 0 10px 15px -3px #0000001a, 0 4px 6px -4px #0000001a, 0 0 0 1px #0000000d;
+  --shadow-composer: 0 0 0 1px #0000000d, 0 2px 8px -2px #0000001a;
 }
 
 @media (prefers-color-scheme: dark) {
-  @theme {
-    --color-ink: oklch(0.93 0.008 260);
-    --color-muted: oklch(0.68 0.015 260);
-    --color-line: oklch(0.32 0.012 260);
-    --color-panel: oklch(0.24 0.012 260);
-    --color-canvas: oklch(0.19 0.01 260);
-    --color-accent: oklch(0.72 0.13 262);
-    --color-good: oklch(0.72 0.13 155);
-    --color-warn: oklch(0.78 0.13 70);
-    --color-bad: oklch(0.68 0.16 25);
+  :root {
+    color-scheme: dark;
+
+    --canvas: #000000;
+    --sidebar: #000000;
+    --panel: #212121;
+    --raised: #303030;
+    --bubble: #323232d9;
+    --hover: #ffffff1a;
+    --selected: #ffffff1a;
+
+    --ink: #ffffff;
+    --muted: #cdcdcd;
+    --faint: #afafaf;
+    --line: #ffffff26;
+    --line-soft: #ffffff0d;
+
+    --primary: #ffffff;
+    --on-primary: #0d0d0d;
+
+    --accent: #63a8f8;
+    --good: #6bc67f;
+    --warn: #f1a275;
+    --bad: #ff8583;
+
+    --shadow-menu: 0 10px 15px -3px #00000080, 0 0 0 1px #ffffff1a;
+    --shadow-composer: inset 0 0 1px 0 #ffffff33;
   }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-bubble: var(--bubble);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-accent: var(--accent);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+}
+
+@theme {
+  /* Type: the platform's own face, as native apps use it */
+  --font-sans: -apple-system-body, ui-sans-serif, -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 html,
@@ -40,9 +117,22 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-canvas);
-  color: var(--color-ink);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Conversation text: what the person said and what the agent answered. */
+.reading {
+  font-size: 16px;
+  line-height: 26px;
+}
+
+/* Scrollbars that stay out of the way. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }

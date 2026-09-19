@@ -95,6 +95,26 @@ public final class ChatRuntime implements AutoCloseable {
     @FunctionalInterface
     public interface Agents {
         Agent agentFor(Session session);
+
+        /**
+         * How the turn is carried out. By default it is the agent's own loop; an application whose turn is more than
+         * one loop — a plan made once and carried out step by step, each step its own agent built through the
+         * session — returns its own, and everything it builds through {@link Session#agent} records into the turn.
+         * Throwing {@link ChatUnavailable} here is answered the same way as from {@link #agentFor}.
+         */
+        default Runner runnerFor(Session session) {
+            Agent agent = agentFor(session);
+            return agent::run;
+        }
+    }
+
+    /**
+     * One turn's work: the person's message as the goal, and what else the model is shown with it — the conversation
+     * so far and anything attached. Its result is the turn's answer.
+     */
+    @FunctionalInterface
+    public interface Runner {
+        AgentResult run(Goal goal, List<dev.agentkit.core.message.ContentBlock> alsoSent);
     }
 
     /**
@@ -366,11 +386,11 @@ public final class ChatRuntime implements AutoCloseable {
             Session session = new Session(tenantId, conversationId, turn.id(), turn.userText(),
                     attachmentIds == null ? List.of() : attachmentIds, store, events,
                     approverFor(tenantId, conversationId, turn.id()));
-            Agent agent = agents.agentFor(session);
+            Runner runner = agents.runnerFor(session);
             List<dev.agentkit.core.message.ContentBlock> alsoSent = new java.util.ArrayList<>();
             earlierTurns(tenantId, conversationId, turn).ifPresent(alsoSent::add);
             alsoSent.addAll(seeable(tenantId, attachmentIds == null ? List.of() : attachmentIds));
-            AgentResult result = agent.run(Goal.of(turn.userText()), alsoSent);
+            AgentResult result = runner.run(Goal.of(turn.userText()), alsoSent);
             usage = result.usage();
             answer = result.output();
             if (result.isSuccess()) {

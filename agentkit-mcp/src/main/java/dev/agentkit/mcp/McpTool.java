@@ -129,7 +129,8 @@ public final class McpTool implements Tool {
     @Override
     public ToolResult execute(ToolInvocation invocation) {
         try {
-            McpCallResult result = connection.callTool(info.name(), invocation.arguments());
+            // With whatever the code calling this attached, such as who the call is made by (CallMeta).
+            McpCallResult result = connection.callTool(info.name(), invocation.arguments(), CallMeta.toSend());
             // A server flagging isError never threw: the transport worked and the far side
             // said no. The first version of #113 fenced only what arrived as an exception,
             // so this was the ordinary path a hostile server takes and it walked past the

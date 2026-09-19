@@ -37,6 +37,17 @@ public interface ChatStore {
     /** A new, empty conversation. */
     Conversation create(String tenantId, String title);
 
+    /**
+     * A conversation with {@code agent}, pinned for its whole life. A store that cannot keep a pin refuses one rather
+     * than drop it: a conversation that forgot its agent would be answered by whichever agent is asked.
+     */
+    default Conversation create(String tenantId, String title, Conversation.Pin agent) {
+        if (agent == null) {
+            return create(tenantId, title);
+        }
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot pin a conversation to an agent");
+    }
+
     /** One conversation, if it exists and belongs to {@code tenantId}. */
     Optional<Conversation> conversation(String tenantId, String id);
 

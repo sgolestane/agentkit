@@ -52,8 +52,10 @@ export function useThreads() {
           return
         }
         // A console that opens on nothing has nowhere to type. One conversation, made on
-        // arrival, is the difference between a usable page and a page with a button on it.
-        const list = existing.length > 0 ? existing : [await api.create('')]
+        // arrival, is the difference between a usable page and a page with a button on it —
+        // with the first agent on offer, where there is a choice; the "+" starts the others.
+        const list =
+          existing.length > 0 ? existing : [await api.create('', (await api.agents())[0]?.id)]
         if (!live) {
           return
         }
@@ -81,9 +83,9 @@ export function useThreads() {
     return () => globalThis.removeEventListener?.('popstate', onPop)
   }, [inTheUrl])
 
-  const create = useCallback(async () => {
+  const create = useCallback(async (agent?: string) => {
     try {
-      const made = await api.create('')
+      const made = await api.create('', agent)
       setThreads((existing) => [made, ...existing])
       open(made.id)
     } catch (error: unknown) {

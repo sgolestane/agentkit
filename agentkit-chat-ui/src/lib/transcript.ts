@@ -123,6 +123,12 @@ function change(turn: Turn, event: ChatEvent): Turn {
     return turn
   }
   switch (event.type) {
+    case 'TURN_RUNNING':
+      // A turn shown from the send's own answer arrives QUEUED; this is the stream saying its work
+      // has begun. Without it the turn read "Waiting to start" until it ended, which a long turn —
+      // a plan carried out step by step — made plain.
+      return turn.state === 'QUEUED' ? { ...turn, state: 'RUNNING' } : turn
+
     case 'TEXT_DELTA':
       return { ...turn, answer: turn.answer + String(event.data.text ?? '') }
 

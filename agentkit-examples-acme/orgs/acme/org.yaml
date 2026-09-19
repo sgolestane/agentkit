@@ -1,0 +1,25 @@
+# Acme's agents on the agent host. A change here is a pull request; the host runs the merged commit.
+org: acme
+model: anthropic/claude-sonnet-5
+
+# The most Acme's agents spend on models in a day, on whichever account. It runs on the host's
+# account; "provider: anthropic" with a MODEL_API_KEY secret would put it on Acme's own.
+budget:
+  tokensPerDay: 5000000
+
+# Who someone is: the company directory.
+directory:
+  connector: company
+  tool: directory_lookup
+  argument: email
+
+# Who sees the admin view: what each version of these agents can do, the pull requests'
+# rehearsals, and the deferred work. Groups from the directory.
+admins: [agent-operators]
+
+# Where a change proposed in the admin view is opened as a pull request, with the org's
+# GITHUB_TOKEN secret. The host never applies a change itself: it serves what is merged.
+repository:
+  github: sgolestane/agentkit
+  path: agentkit-examples-acme/orgs/acme
+  base: main

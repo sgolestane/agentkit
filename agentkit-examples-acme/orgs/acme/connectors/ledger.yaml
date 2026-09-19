@@ -1,0 +1,8 @@
+# Access Desk's ledger: requests, grants and decisions, and the rules they are made under.
+url: ${secret:LEDGER_URL}
+headers:
+  Authorization: Bearer ${secret:LEDGER_TOKEN}
+trustAnnotations: true
+# The ledger enforces its own rules for what it grants (sensitivity, maximum hours, who approves),
+# so a low-risk grant it allows needs no confirmation from the person as well.
+authoritative: true

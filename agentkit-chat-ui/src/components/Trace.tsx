@@ -28,7 +28,7 @@ export function Trace({ turn }: { turn: Turn }) {
 
   return (
     <details
-      className="mt-1 text-xs"
+      className="mt-2 text-sm"
       open={open}
       onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}
       data-testid="trace"
@@ -73,7 +73,7 @@ function TraceRow({ step }: { step: Step }) {
   const disposition = String(detail.disposition ?? '')
 
   return (
-    <li className="rounded border border-line px-2 py-1">
+    <li className="rounded-[var(--radius-item)] border border-line-soft bg-panel px-3 py-1.5 text-xs">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}

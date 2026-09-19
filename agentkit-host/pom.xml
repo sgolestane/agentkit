@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.agentkit</groupId>
+        <artifactId>agentkit-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>agentkit-host</artifactId>
+    <name>AgentKit :: Host</name>
+    <description>Agents as configuration: an organization's Git repository of agent definitions
+        (prompts, policy, tools chosen by what they declare, confirmations, arguments bound to the
+        person asking), validated, pinned to a commit, and assembled into a running agent per
+        turn over MCP connectors.</description>
+
+    <properties>
+        <!-- test, to run the fake identity provider: -Dexec.classpathScope=test -->
+        <exec.classpathScope>runtime</exec.classpathScope>
+        <exec.mainClass>dev.agentkit.host.web.AgentHostApp</exec.mainClass>
+        <!-- One argument for the program, e.g. -Dexec.appArgs=$PWD/orgs/acme for Validate; blank is ignored. -->
+        <exec.appArgs></exec.appArgs>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-mcp</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-chat</artifactId>
+        </dependency>
+        <!-- An agent's eval cases are scored with agentkit-eval's checks when a pull request rehearses them. -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-eval</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-openrouter</artifactId>
+        </dependency>
+        <!-- An organization may run on its own Anthropic account (provider: anthropic in org.yaml). -->
+        <dependency>
+            <groupId>dev.agentkit</groupId>
+            <artifactId>agentkit-llm-anthropic</artifactId>
+        </dependency>
+        <!-- Conversations, deferred actions and loaded versions in Postgres, when a database is configured. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
+        <!-- Signing in: an organization's identity provider's tokens, checked against its published keys. -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <executable>java</executable>
+                    <classpathScope>${exec.classpathScope}</classpathScope>
+                    <arguments>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>${exec.mainClass}</argument>
+                        <argument>${exec.appArgs}</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

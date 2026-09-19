@@ -79,6 +79,11 @@ public class InMemoryChatStore implements ChatStore {
 
     @Override
     public Conversation create(String tenantId, String title) {
+        return create(tenantId, title, null);
+    }
+
+    @Override
+    public Conversation create(String tenantId, String title, Conversation.Pin agent) {
         Objects.requireNonNull(tenantId, "tenantId");
         Instant now = now();
         // Ids.observe, called for everything loaded from disk, is what keeps this from
@@ -91,7 +96,7 @@ public class InMemoryChatStore implements ChatStore {
         // green, and this repository's rule is that such a line is worse than the argument it
         // saves. One mechanism, pinned by
         // ARestartDoesNotLoseTheConversationTest#aRestartDoesNotMintAnIdThatAlreadyExists.
-        Conversation conversation = new Conversation(Ids.next("conv"), tenantId, title, now, now);
+        Conversation conversation = new Conversation(Ids.next("conv"), tenantId, title, now, now, agent);
         conversations.put(conversation.id(), conversation);
         turns.put(conversation.id(), new ArrayList<>());
         changed(conversation);

@@ -24,6 +24,19 @@ function event(type: ChatEvent['type'], data: Record<string, unknown>, turnId = 
  * when a turn ends.
  */
 describe('applied', () => {
+  it('moves a turn shown from the send on to running when the stream says its work began', () => {
+    const queued = {
+      ...emptyTranscript,
+      turns: [asTurn({ id: 'turn-1', ordinal: 1, userText: 'go', state: 'QUEUED', startedAt: '2026-09-02T00:00:00Z' })],
+    }
+
+    const running = applied(queued, event('TURN_RUNNING', { state: 'RUNNING' }))
+
+    expect(running.turns[0]?.state).toBe('RUNNING')
+    const finished = applied(running, event('TURN_FINISHED', { state: 'COMPLETED' }))
+    expect(applied(finished, event('TURN_RUNNING', { state: 'RUNNING' })).turns[0]?.state).toBe('COMPLETED')
+  })
+
   it('builds a turn from the stream, a fragment at a time', () => {
     let transcript = emptyTranscript
     for (const next of [

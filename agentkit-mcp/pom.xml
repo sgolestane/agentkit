@@ -11,10 +11,10 @@
     </parent>
 
     <artifactId>agentkit-mcp</artifactId>
-    <name>AgentKit :: MCP Tool Client</name>
+    <name>AgentKit :: MCP</name>
     <description>
-        Exposes tools from a Model Context Protocol (MCP) server as AgentKit tools,
-        over a dependency-light JSON-RPC stdio transport.
+        Exposes tools from a Model Context Protocol (MCP) server as AgentKit tools, over
+        stdio or streamable HTTP, and serves declared AgentKit tools as an MCP server.
     </description>
 
     <dependencies>
@@ -25,6 +25,11 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <!-- A connector checks the host's signed statement of who is calling (CallerAssertion). -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
         </dependency>
     </dependencies>
 </project>

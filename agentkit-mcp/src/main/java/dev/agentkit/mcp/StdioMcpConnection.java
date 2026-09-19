@@ -1,9 +1,7 @@
 package dev.agentkit.mcp;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -11,7 +9,6 @@ import java.io.OutputStreamWriter;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -34,10 +31,7 @@ import java.util.Objects;
  */
 public final class StdioMcpConnection implements McpConnection {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
-    };
-    private static final String PROTOCOL_VERSION = "2025-06-18";
+    private static final ObjectMapper MAPPER = McpMessages.MAPPER;
 
     private final JsonRpcPeer peer;
     private final Runnable closer;
@@ -88,41 +82,21 @@ public final class StdioMcpConnection implements McpConnection {
     }
 
     private void initialize() {
-        ObjectNode params = MAPPER.createObjectNode();
-        params.put("protocolVersion", PROTOCOL_VERSION);
-        params.set("capabilities", MAPPER.createObjectNode());
-        ObjectNode clientInfo = MAPPER.createObjectNode();
-        clientInfo.put("name", "agentkit");
-        clientInfo.put("version", "0.1.0");
-        params.set("clientInfo", clientInfo);
-
-        peer.request("initialize", params);
+        peer.request("initialize", McpMessages.initializeParams());
         peer.notify("notifications/initialized", null);
     }
 
     @Override
     public List<McpToolInfo> listTools() {
-        JsonNode result = peer.request("tools/list", MAPPER.createObjectNode());
-        List<McpToolInfo> tools = new ArrayList<>();
-        for (JsonNode tool : result.path("tools")) {
-            tools.add(new McpToolInfo(
-                    tool.path("name").asText(),
-                    tool.path("description").asText(""),
-                    toMap(tool.get("inputSchema")),
-                    toMap(tool.get("_meta")),
-                    McpToolAnnotations.from(toMap(tool.get("annotations")))));
-        }
-        return tools;
+        return McpMessages.listTools(params -> peer.request("tools/list", params));
     }
 
     @Override
     public java.util.Optional<McpResource> readResource(String uri) {
         Objects.requireNonNull(uri, "uri");
-        ObjectNode params = MAPPER.createObjectNode();
-        params.put("uri", uri);
         JsonNode result;
         try {
-            result = peer.request("resources/read", params);
+            result = peer.request("resources/read", McpMessages.readParams(uri));
         } catch (McpException noSuchResource) {
             // A server that does not implement resources, or does not have this one, answers
             // with a JSON-RPC error. That is an answer rather than a fault: the tool it
@@ -130,49 +104,18 @@ public final class StdioMcpConnection implements McpConnection {
             // would take the tool down with the decoration.
             return java.util.Optional.empty();
         }
-        for (JsonNode content : result.path("contents")) {
-            if (content.hasNonNull("text")) {
-                return java.util.Optional.of(new McpResource(uri,
-                        content.path("mimeType").asText(""),
-                        content.path("text").asText("")));
-            }
-        }
-        // Blobs are base64 binary. The extension's only content type is HTML as text, so a
-        // blob here is a resource this host has no use for rather than one to decode.
-        return java.util.Optional.empty();
+        return McpMessages.resource(uri, result);
     }
 
     @Override
     public McpCallResult callTool(String name, Map<String, Object> arguments) {
+        return callTool(name, arguments, Map.of());
+    }
+
+    @Override
+    public McpCallResult callTool(String name, Map<String, Object> arguments, Map<String, Object> meta) {
         Objects.requireNonNull(name, "name");
-        ObjectNode params = MAPPER.createObjectNode();
-        params.put("name", name);
-        params.set("arguments", MAPPER.valueToTree(arguments == null ? Map.of() : arguments));
-
-        JsonNode result = peer.request("tools/call", params);
-        return new McpCallResult(textOf(result.path("content")), result.path("isError").asBoolean(false));
-    }
-
-    /** Concatenates the text of every {@code type: "text"} block in a content array. */
-    private static String textOf(JsonNode content) {
-        StringBuilder text = new StringBuilder();
-        for (JsonNode block : content) {
-            if ("text".equals(block.path("type").asText())) {
-                text.append(block.path("text").asText());
-            }
-        }
-        return text.toString();
-    }
-
-    private static Map<String, Object> toMap(JsonNode node) {
-        if (node == null || node.isNull() || !node.isObject()) {
-            return Map.of();
-        }
-        try {
-            return MAPPER.convertValue(node, MAP_TYPE);
-        } catch (IllegalArgumentException e) {
-            return Map.of();
-        }
+        return McpMessages.callResult(peer.request("tools/call", McpMessages.callParams(name, arguments, meta)));
     }
 
     @Override
