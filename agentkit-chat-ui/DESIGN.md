@@ -74,6 +74,8 @@ with 10px of horizontal padding.
   plain `.reading` text, full width, with its trace and actions underneath.
 - **Cards** (a confirmation, the task form) are `bg-panel` with `--radius-card`; a confirmation's
   border says what kind it is: `warn` for an action, `accent` for a question.
+- **Views** a tool or the host shows above an answer (a plan, a table, cards, a diff, a chart) are
+  outlined in `border-line`, so they read as something shown rather than something said.
 
 The values were taken from a widely used chat interface's published stylesheet, as a reference
 for proportions and greys; the console uses no one else's fonts, logos or names.
