@@ -53,7 +53,8 @@ public final class RepoLoader {
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
     private static final Set<String> ORG_KEYS = Set.of("org", "model", "provider", "budget", "directory", "admins",
-            "repository", "signIn", "router");
+            "repository", "signIn", "router", "notify");
+    private static final Set<String> NOTIFY_KEYS = Set.of("tool", "to", "text", "after");
     private static final Set<String> ROUTER_KEYS = Set.of("enabled", "model", "prompt");
     private static final Set<String> ROUTING_KEYS = Set.of("cases");
     private static final Set<String> ROUTING_CASE_KEYS = Set.of("name", "as", "before", "say", "expect");
@@ -191,11 +192,32 @@ public final class RepoLoader {
         Set<String> agentIds = new java.util.HashSet<>();
         list(root.resolve("agents"), true).forEach(dir -> agentIds.add(dir.getFileName().toString()));
         List<RoutingCase> routing = routing(agentIds);
+        Optional<OrgRepo.NotifySpec> notify = orgFile.flatMap(node -> Optional.ofNullable(node.get("notify")))
+                .flatMap(node -> notify(node, connectors.keySet()));
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
         return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository, signIn, provider,
-                budget, router, routing);
+                budget, router, routing, notify);
+    }
+
+    /**
+     * {@code notify: {tool, to, text, after}} in org.yaml: a connector's tool, and which of its arguments takes the
+     * person's email and which the message. That the tool notifies is checked when the connectors are reached.
+     */
+    private Optional<OrgRepo.NotifySpec> notify(JsonNode node, Set<String> connectors) {
+        if (!node.isObject()) {
+            problem("org.yaml", "notify", "is a mapping of tool, to, text and after");
+            return Optional.empty();
+        }
+        unknownKeys("org.yaml", "notify.", node, NOTIFY_KEYS);
+        String tool = text("org.yaml", "notify.tool", node.get("tool"), true);
+        String to = text("org.yaml", "notify.to", node.get("to"), true);
+        String text = text("org.yaml", "notify.text", node.get("text"), true);
+        int after = positive("org.yaml", "notify.after", node.get("after"), OrgRepo.NotifySpec.DEFAULT_AFTER_SECONDS);
+        Optional<ToolRef> ref = tool == null ? Optional.empty() : toolRef("org.yaml", "notify.tool", tool, connectors, false);
+        return ref.isPresent() && to != null && text != null
+                ? Optional.of(new OrgRepo.NotifySpec(ref.get(), to, text, after)) : Optional.empty();
     }
 
     /** {@code router: {enabled, model, prompt}} in org.yaml; the prompt is a file in the repository. */

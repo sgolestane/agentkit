@@ -238,6 +238,16 @@ public final class AgentHostApp {
         });
         reloader.scheduleWithFixedDelay(() -> orgs.values().forEach(AgentHostApp::reload), reloadSeconds,
                 reloadSeconds, TimeUnit.SECONDS);
+        // People told when a decision has waited for them, as their org.yaml says.
+        dev.agentkit.host.Nudges nudges = new dev.agentkit.host.Nudges(orgs, self::get,
+                conversation -> publicUrl + "/c/" + conversation, Instant::now);
+        reloader.scheduleWithFixedDelay(() -> {
+            try {
+                nudges.tellWhoIsWaited();
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(AgentHostApp.class).warn("Telling people what waits for them failed", e);
+            }
+        }, 15, 15, TimeUnit.SECONDS);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             reloader.shutdownNow();

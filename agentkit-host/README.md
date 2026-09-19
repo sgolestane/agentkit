@@ -41,6 +41,11 @@ admins: [agent-operators]              # optional: directory groups that see the
 router:                                # optional: on unless it says enabled: false
   model: openai/gpt-5-mini             # optional: the model it decides with (default: model above)
   prompt: routing.md                   # optional: the org's own routing instructions
+notify:                                # optional: tell a person a decision has waited for them
+  tool: onboarding/slack_send_message  # a connector tool declared notify
+  to: to_email                         # its argument for the person's email
+  text: text                           # its argument for the message
+  after: 60                            # optional: seconds a decision waits first (default 60)
 signIn:                                # optional: the org's identity provider (OpenID Connect)
   issuer: https://login.acme.example   # its issuer; https only
   clientId: agentkit-host              # the host's client there; a secret, if any, is OIDC_CLIENT_SECRET
@@ -58,6 +63,12 @@ one JSON object:
 - a `groups` list becomes their groups.
 
 With no directory, a person is their email and nothing more.
+
+With `notify`, a confirmation or a question that has waited `after` seconds gets its person one
+message through that tool. The message has a link to the conversation, and they get one per
+conversation for as long as decisions wait in it. The host makes the call as itself
+(`agent:agentkit`) and notes it in the turn's trace. The console also marks each conversation
+where a decision waits with "Needs you", and puts the count in the tab's title.
 
 ### Routing: no agent to choose
 

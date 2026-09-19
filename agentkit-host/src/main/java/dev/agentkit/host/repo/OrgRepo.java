@@ -24,11 +24,39 @@ import java.util.Optional;
  * @param budget       the most its agents may spend on models, whoever pays; {@link Budget#NONE} for no cap of its own
  * @param router       how a message nobody sent to a particular agent finds one
  * @param routing      the routing cases a pull request rehearses, from {@code routing.yaml}; empty when there is none
+ * @param notifications how a person is told a decision waits for them, if the organization says
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
                       Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
                       Optional<RepositorySpec> repository, Optional<SignInSpec> signIn, Optional<String> provider,
-                      Budget budget, RouterSpec router, List<RoutingCase> routing) {
+                      Budget budget, RouterSpec router, List<RoutingCase> routing, Optional<NotifySpec> notifications) {
+
+    /** A repository that says nothing about telling people what waits for them. */
+    public OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
+                   Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
+                   Optional<RepositorySpec> repository, Optional<SignInSpec> signIn, Optional<String> provider,
+                   Budget budget, RouterSpec router, List<RoutingCase> routing) {
+        this(org, version, defaultModel, directory, connectors, agents, admins, repository, signIn, provider, budget,
+                router, routing, Optional.empty());
+    }
+
+    /**
+     * How a person is told that a decision — a confirmation, or a question an agent asked — has waited for them
+     * longer than {@code afterSeconds}: once, with a link to the conversation, through a connector's notify tool.
+     *
+     * @param tool the tool, which notifies
+     * @param to   its argument that takes the person's email
+     * @param text its argument that takes what they are told
+     */
+    public record NotifySpec(AgentDefinition.ToolRef tool, String to, String text, int afterSeconds) {
+        public static final int DEFAULT_AFTER_SECONDS = 60;
+
+        public NotifySpec {
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(to, "to");
+            Objects.requireNonNull(text, "text");
+        }
+    }
 
     /** A repository that says nothing about routing: the router on, with its own rules, and no routing cases. */
     public OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
@@ -77,6 +105,7 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         budget = budget == null ? Budget.NONE : budget;
         router = router == null ? RouterSpec.DEFAULT : router;
         routing = routing == null ? List.of() : List.copyOf(routing);
+        notifications = notifications == null ? Optional.empty() : notifications;
     }
 
     /**

@@ -29,6 +29,7 @@ export function Console() {
 
   const threads = useThreads()
   const conversation = useConversation(threads.current)
+  const waiting = useWaiting(conversation.pending.length)
   const uploads = useUploads(threads.current)
 
   useEffect(() => {
@@ -119,6 +120,7 @@ export function Console() {
         onCreate={(agent) => void threads.create(agent)}
         onRename={(id, title) => void threads.rename(id, title)}
         onForget={(id) => void threads.forget(id)}
+        waiting={waiting}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
@@ -207,4 +209,35 @@ export function Console() {
       </main>
     </div>
   )
+}
+
+/**
+ * The conversations where a decision waits for this person, asked of the host every little while and whenever the
+ * open conversation's own decisions change; the count is in the tab's title, so it shows while they are elsewhere.
+ */
+function useWaiting(openPending: number): Set<string> {
+  const [waiting, setWaiting] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let live = true
+    const look = () => {
+      api
+        .pending()
+        .then((pending) => {
+          if (live) {
+            setWaiting(new Set(pending.map((one) => one.conversationId)))
+          }
+        })
+        .catch(() => {})
+    }
+    look()
+    const every = setInterval(look, 15_000)
+    return () => {
+      live = false
+      clearInterval(every)
+    }
+  }, [openPending])
+  useEffect(() => {
+    document.title = waiting.size > 0 ? `(${waiting.size}) AgentKit` : 'AgentKit'
+  }, [waiting])
+  return waiting
 }

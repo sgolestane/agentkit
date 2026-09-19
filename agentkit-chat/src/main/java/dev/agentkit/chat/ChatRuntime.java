@@ -695,6 +695,13 @@ public final class ChatRuntime implements AutoCloseable {
                 .toList();
     }
 
+    /** Every question anyone owes an answer to in this process, oldest first: for telling each person theirs. */
+    public List<PendingDecision> pendingAll() {
+        return pending.values().stream()
+                .sorted(java.util.Comparator.comparing(PendingDecision::askedAt).thenComparing(PendingDecision::id))
+                .toList();
+    }
+
     /** One question, if it is still outstanding and belongs to {@code tenantId}. */
     public Optional<PendingDecision> pendingDecision(String tenantId, String approvalId) {
         return Optional.ofNullable(approvalId == null ? null : pending.get(approvalId))

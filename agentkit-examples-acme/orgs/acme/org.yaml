@@ -29,3 +29,11 @@ repository:
   github: sgolestane/agentkit
   path: agentkit-examples-acme/orgs/acme
   base: main
+
+# A confirmation or a question that waits a minute for someone is sent to them as a Slack DM,
+# once, with a link to the conversation.
+notify:
+  tool: onboarding/slack_send_message
+  to: to_email
+  text: text
+  after: 60

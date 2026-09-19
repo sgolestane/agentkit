@@ -28,11 +28,14 @@ export function Threads({
   onCreate,
   onRename,
   onForget,
+  waiting = new Set<string>(),
 }: {
   threads: Conversation[]
   current: string | null
   filter: string
   working: boolean
+  /** The conversations with a decision waiting for this person: a confirmation, or a question they were asked. */
+  waiting?: Set<string>
   /** The agents on offer. With more than one, "New conversation" asks which; with one or none it just starts. */
   agents?: AgentInfo[]
   /** Whether the person may see the organization's admin view, which is then linked from the sidebar. */
@@ -143,6 +146,7 @@ export function Threads({
                 thread={thread}
                 open={thread.id === current}
                 working={working && thread.id === current}
+                waiting={waiting.has(thread.id)}
                 agent={agents.length > 1 ? agents.find((one) => one.id === thread.agent?.id)?.name ?? thread.agent?.id : undefined}
                 onOpen={() => onOpen(thread.id)}
                 onRename={(title) => onRename(thread.id, title)}
@@ -346,6 +350,7 @@ function ThreadRow({
   thread,
   open,
   working,
+  waiting = false,
   agent,
   onOpen,
   onRename,
@@ -354,6 +359,8 @@ function ThreadRow({
   thread: Conversation
   open: boolean
   working: boolean
+  /** Whether a decision in it waits for this person. */
+  waiting?: boolean
   /** Which agent it is with, when the console offers more than one. */
   agent?: string
   onOpen: () => void
@@ -414,7 +421,11 @@ function ThreadRow({
           />
         ) : null}
         <span className="truncate">{thread.title || 'New conversation'}</span>
-        {agent ? <span className="ml-2 shrink-0 text-xs text-faint">{agent}</span> : null}
+        {waiting ? (
+          <span className="ml-2 shrink-0 rounded-full bg-hover px-2 py-0.5 text-xs text-warn" data-testid="needs-you">
+            Needs you
+          </span>
+        ) : agent ? <span className="ml-2 shrink-0 text-xs text-faint">{agent}</span> : null}
       </button>
 
       <button

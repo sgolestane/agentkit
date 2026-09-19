@@ -83,6 +83,25 @@ public final class AgentHost implements AutoCloseable {
                     problems.addAll(e.problems());
                 }
             }
+            // How people are told what waits for them: a tool that notifies, taking the arguments named. Checked when
+            // its connector was reached; one that was not makes no notification, and says so in the log when used.
+            repo.notifications().ifPresent(notify -> connectors.catalog(notify.tool().connector()).ifPresent(catalog -> {
+                Optional<dev.agentkit.core.tool.DeclaredTools.Entry> entry = catalog.entry(notify.tool().tool());
+                if (entry.isEmpty()) {
+                    problems.add(new DefinitionException.Problem("org.yaml", "notify.tool",
+                            notify.tool().connector() + " has no tool " + notify.tool().tool() + " that declares what it does"));
+                } else if (entry.get().declaration().effect() != dev.agentkit.core.tool.ToolEffect.NOTIFY) {
+                    problems.add(new DefinitionException.Problem("org.yaml", "notify.tool", notify.tool() + " is declared "
+                            + entry.get().declaration().effect().wire() + "; people are told through a tool that notifies"));
+                } else {
+                    for (String argument : List.of(notify.to(), notify.text())) {
+                        if (!BoundTool.hasArgument(entry.get().tool().inputSchema(), argument)) {
+                            problems.add(new DefinitionException.Problem("org.yaml", "notify",
+                                    notify.tool() + " has no argument " + argument));
+                        }
+                    }
+                }
+            }));
             if (!problems.isEmpty()) {
                 throw new DefinitionException(problems);
             }

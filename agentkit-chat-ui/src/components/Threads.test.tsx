@@ -27,6 +27,15 @@ describe('Threads', () => {
       .not.toHaveAttribute('aria-current')
   })
 
+  it('marks the conversations where a decision waits for the person', () => {
+    render(<Threads threads={[thread('c1', 'MFA reset'), thread('c2', 'Laptop')]} current="c2" filter=""
+      working={false} waiting={new Set(['c1'])} onFilter={noop} onOpen={noop} onCreate={noop} onRename={noop}
+      onForget={noop} />)
+
+    expect(screen.getAllByTestId('needs-you')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'MFA reset Needs you' })).toBeInTheDocument()
+  })
+
   it('calls a conversation nobody has named something rather than nothing', () => {
     render(
       <Threads threads={[thread('conv-1', '')]} current={null} filter="" working={false}
