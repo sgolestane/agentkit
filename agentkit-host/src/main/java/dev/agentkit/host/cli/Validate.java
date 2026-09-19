@@ -70,6 +70,7 @@ public final class Validate {
                     + repo.connectors().size() + " connector(s); the files are valid.");
             repo.agents().values().forEach(a -> out.println("  " + a.id() + " — " + a.name() + selectors(a)
                     + (a.evals().isEmpty() ? "; no eval cases" : "; " + a.evals().size() + " eval case(s)")));
+            out.println(routing(repo));
             out.println("Connectors were not reached; set AGENTKIT_VALIDATE_CONNECT=true to check the agents against them.");
             return 0;
         }
@@ -89,6 +90,7 @@ public final class Validate {
             out.println(repo.org() + " @ " + version + ": " + host.agents().size() + " agent(s) checked against their "
                     + "connectors; valid.");
             host.agents().values().forEach(agent -> describe(agent, out));
+            out.println("\n" + routing(repo));
             return 0;
         } catch (DefinitionException e) {
             return report(e.problems(), out, github, prefix);
@@ -96,7 +98,18 @@ public final class Validate {
     }
 
     /** What an agent can do, by effect: the part of a change a reviewer must not miss. */
-    private static void describe(HostedAgent agent, PrintStream out) {
+/** What the repository says about routing messages nobody sent to a particular agent. */
+    static String routing(dev.agentkit.host.repo.OrgRepo repo) {
+        if (!repo.router().enabled()) {
+            return "Routing: off; a person chooses an agent to start a conversation.";
+        }
+        return "Routing: on" + (repo.router().model() == null ? "" : ", with " + repo.router().model())
+                + (repo.router().prompt().isBlank() ? "" : ", with the organization's own instructions") + "; "
+                + (repo.routing().isEmpty() ? "no routing cases (routing.yaml)"
+                        : repo.routing().size() + " routing case(s)") + ".";
+    }
+
+        private static void describe(HostedAgent agent, PrintStream out) {
         AgentDefinition definition = agent.definition();
         out.println("\n  " + definition.id() + " — " + definition.name() + " ("
                 + definition.pattern().name().toLowerCase(Locale.ROOT).replace('_', '-') + "; audience: "

@@ -7,6 +7,12 @@ model: anthropic/claude-sonnet-5
 budget:
   tokensPerDay: 5000000
 
+# A message nobody sent to a particular agent goes to the one that handles it, or the router
+# answers it (what the agents do, a form as a fill-in template). routing.yaml says what it should
+# choose, and every pull request rehearses it.
+router:
+  enabled: true
+
 # Who someone is: the company directory.
 directory:
   connector: company

@@ -154,6 +154,22 @@ public final class ChatServer implements AutoCloseable {
             throw new ChatUnavailable("This conversation's agent takes no form; say what you need instead.");
         }
 
+        /**
+         * A form for {@code agentId} in a conversation pinned to no agent, where each message goes to its own: the
+         * request it makes, as {@link #message(String, Conversation, Map)} does for a pinned conversation.
+         */
+        default String message(String tenantId, Conversation conversation, String agentId, Map<String, Object> input) {
+            return message(tenantId, conversation, input);
+        }
+
+        /**
+         * The agent, at its version now, one message goes to when the person chose it in a conversation pinned to no
+         * agent. As {@link #pin}, it refuses an agent they may not use.
+         */
+        default Conversation.Pin forMessage(String tenantId, Conversation conversation, String agentId) {
+            return pin(tenantId, agentId);
+        }
+
         /** One agent, and conversations pinned to nothing. */
         AgentCatalog NONE = new AgentCatalog() {
             @Override
@@ -424,14 +440,27 @@ public final class ChatServer implements AutoCloseable {
             list.forEach(id -> attachmentIds.add(String.valueOf(id)));
         }
         String text = String.valueOf(request.getOrDefault("text", ""));
-        if (request.get("input") instanceof Map<?, ?> input) {
+        // In a conversation pinned to no agent, the person may send one message to an agent of their choosing.
+        String agentId = request.get("agent") instanceof String named && !named.isBlank() ? named.strip() : null;
+        Conversation.Pin agent = null;
+        if (agentId != null || request.get("input") instanceof Map<?, ?>) {
             Conversation conversation = store.conversation(tenantId, conversationId)
                     .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
-            @SuppressWarnings("unchecked")
-            Map<String, Object> fields = (Map<String, Object>) input;
-            text = catalog.message(tenantId, conversation, fields);
+            if (agentId != null) {
+                if (conversation.agent() != null) {
+                    throw new ChatUnavailable("This conversation is with " + conversation.agent().id()
+                            + "; start a new one to talk to another agent.");
+                }
+                agent = catalog.forMessage(tenantId, conversation, agentId);
+            }
+            if (request.get("input") instanceof Map<?, ?> input) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> fields = (Map<String, Object>) input;
+                text = agentId == null ? catalog.message(tenantId, conversation, fields)
+                        : catalog.message(tenantId, conversation, agentId, fields);
+            }
         }
-        Turn turn = runtime.say(tenantId, conversationId, text, attachmentIds);
+        Turn turn = runtime.say(tenantId, conversationId, text, attachmentIds, agent);
         return turnJsonWithCost(turn);
     }
 
@@ -603,6 +632,9 @@ public final class ChatServer implements AutoCloseable {
         json.put("outputTokens", turn.usage().outputTokens());
         json.put("startedAt", turn.startedAt().toString());
         json.put("endedAt", turn.endedAt() == null ? null : turn.endedAt().toString());
+        if (turn.agent() != null) {
+            json.put("agent", Map.of("id", turn.agent().id(), "version", turn.agent().version()));
+        }
         return json;
     }
 

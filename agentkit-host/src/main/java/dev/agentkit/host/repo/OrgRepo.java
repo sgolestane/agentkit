@@ -22,11 +22,38 @@ import java.util.Optional;
  * @param signIn       the organization's identity provider, which its people sign in with, if the organization says
  * @param provider     the model provider its agents run on with its own key, or empty for the host's account
  * @param budget       the most its agents may spend on models, whoever pays; {@link Budget#NONE} for no cap of its own
+ * @param router       how a message nobody sent to a particular agent finds one
+ * @param routing      the routing cases a pull request rehearses, from {@code routing.yaml}; empty when there is none
  */
 public record OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
                       Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
                       Optional<RepositorySpec> repository, Optional<SignInSpec> signIn, Optional<String> provider,
-                      Budget budget) {
+                      Budget budget, RouterSpec router, List<RoutingCase> routing) {
+
+    /** A repository that says nothing about routing: the router on, with its own rules, and no routing cases. */
+    public OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
+                   Map<String, ConnectorSpec> connectors, Map<String, AgentDefinition> agents, List<String> admins,
+                   Optional<RepositorySpec> repository, Optional<SignInSpec> signIn, Optional<String> provider,
+                   Budget budget) {
+        this(org, version, defaultModel, directory, connectors, agents, admins, repository, signIn, provider, budget,
+                RouterSpec.DEFAULT, List.of());
+    }
+
+    /**
+     * How a message sent to no agent in particular finds one: when a person may use more than one agent and has not
+     * chosen, the router picks one for each message, asks, or answers itself.
+     *
+     * @param enabled whether it does; when not, a person chooses an agent to start a conversation, as before
+     * @param model   the model it decides with; null for the organization's default
+     * @param prompt  the organization's own routing instructions, added to the router's; empty for none
+     */
+    public record RouterSpec(boolean enabled, String model, String prompt) {
+        public static final RouterSpec DEFAULT = new RouterSpec(true, null, "");
+
+        public RouterSpec {
+            prompt = prompt == null ? "" : prompt;
+        }
+    }
 
     /** A repository that names no model provider or budget of its own. */
     public OrgRepo(String org, String version, String defaultModel, Optional<DirectorySpec> directory,
@@ -48,6 +75,8 @@ public record OrgRepo(String org, String version, String defaultModel, Optional<
         signIn = signIn == null ? Optional.empty() : signIn;
         provider = provider == null ? Optional.empty() : provider;
         budget = budget == null ? Budget.NONE : budget;
+        router = router == null ? RouterSpec.DEFAULT : router;
+        routing = routing == null ? List.of() : List.copyOf(routing);
     }
 
     /**

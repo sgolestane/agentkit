@@ -128,11 +128,33 @@ public final class Rehearse {
                     out.flush();
                 }
             }
-            long failed = results.stream().filter(r -> !r.passed()).count();
-            out.println("\n" + host.repo().org() + " @ " + version + ": " + (results.size() - failed) + " of "
-                    + results.size() + " case(s) held" + (untested.isEmpty() ? "" : "; no cases for " + untested) + ".");
-            summary(env, markdown(host.repo().org(), version, results, untested));
-            report(env, host.repo().org(), version, results, untested, out);
+            List<Rehearsal.RoutingResult> routed = new ArrayList<>();
+            if (!host.repo().routing().isEmpty()) {
+                out.println("\nRouting: " + host.repo().routing().size() + " case(s)");
+                for (var routingCase : host.repo().routing()) {
+                    Rehearsal.RoutingResult result = rehearsal.route(routingCase);
+                    out.println((result.passed() ? "  held   " : "  FAILED ") + routingCase.name() + " — expected "
+                            + routingCase.expect().describe() + ", " + (result.error() != null ? "error: " + result.error()
+                            : result.describe()) + (result.why().isBlank() ? "" : " (" + result.why() + ")"));
+                    if (github && !result.passed()) {
+                        out.println("::error file=" + Validate.property(prefix + "routing.yaml") + ",title="
+                                + Validate.property(routingCase.name()) + "::" + Validate.message("expected "
+                                + routingCase.expect().describe() + ", but " + (result.error() != null ? result.error()
+                                : result.describe())));
+                    }
+                    routed.add(result);
+                    out.flush();
+                }
+            }
+            long failed = results.stream().filter(r -> !r.passed()).count()
+                    + routed.stream().filter(r -> !r.passed()).count();
+            out.println("\n" + host.repo().org() + " @ " + version + ": " + (results.size() - results.stream()
+                    .filter(r -> !r.passed()).count()) + " of " + results.size() + " case(s) held"
+                    + (routed.isEmpty() ? "" : ", " + routed.stream().filter(Rehearsal.RoutingResult::passed).count()
+                            + " of " + routed.size() + " routing case(s)")
+                    + (untested.isEmpty() ? "" : "; no cases for " + untested) + ".");
+            summary(env, markdown(host.repo().org(), version, results, untested) + routingMarkdown(routed));
+            report(env, host.repo().org(), version, results, untested, routed, out);
             return failed == 0 ? 0 : 1;
         } catch (DefinitionException e) {
             return Validate.report(e.problems(), out, github, prefix) == 0 ? 0 : 2;
@@ -291,8 +313,25 @@ public final class Rehearse {
         }
     }
 
+    /** The routing cases, as Markdown after the agents' cases. */
+    static String routingMarkdown(List<Rehearsal.RoutingResult> routed) {
+        if (routed.isEmpty()) {
+            return "";
+        }
+        StringBuilder md = new StringBuilder("\n### Routing\n\n**")
+                .append(routed.stream().filter(Rehearsal.RoutingResult::passed).count()).append(" of ")
+                .append(routed.size()).append("** routing case(s) held.\n\n| Case | As | Expected | Got | Result |\n|---|---|---|---|---|\n");
+        for (Rehearsal.RoutingResult r : routed) {
+            md.append("| ").append(r.routingCase().name()).append(" | ").append(r.routingCase().as()).append(" | ")
+                    .append(r.routingCase().expect().describe()).append(" | ")
+                    .append(r.error() != null ? "error: " + r.error() : r.describe()).append(" | ")
+                    .append(r.passed() ? "✅ held" : "❌ failed").append(" |\n");
+        }
+        return md.toString();
+    }
+
     private static void report(Map<String, String> env, String org, String version, List<Rehearsal.Result> results,
-                               List<String> untested, PrintStream out) {
+                               List<String> untested, List<Rehearsal.RoutingResult> routed, PrintStream out) {
         String file = env.get("AGENTKIT_REHEARSE_REPORT");
         String host = env.get("AGENTKIT_REHEARSE_POST_URL");
         if ((file == null || file.isBlank()) && (host == null || host.isBlank())) {
@@ -310,6 +349,17 @@ public final class Rehearse {
         report.put("cases", results.size());
         report.put("untested", untested);
         report.put("results", results.stream().map(Rehearse::json).toList());
+        report.put("routing", routed.stream().map(r -> {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("case", r.routingCase().name());
+            one.put("as", r.routingCase().as());
+            one.put("say", r.routingCase().say());
+            one.put("expected", r.routingCase().expect().describe());
+            one.put("got", r.error() != null ? "error: " + r.error() : r.describe());
+            one.put("why", r.why());
+            one.put("passed", r.passed());
+            return one;
+        }).toList());
         String json;
         try {
             json = JSON.writeValueAsString(report);

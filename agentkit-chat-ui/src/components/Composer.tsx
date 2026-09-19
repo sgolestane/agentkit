@@ -16,6 +16,7 @@ export function Composer({
   uploads = [],
   onAttach,
   onRemoveUpload,
+  placeholder,
 }: {
   onSend: (text: string) => void
   disabled?: boolean
@@ -24,6 +25,8 @@ export function Composer({
   uploads?: Upload[]
   onAttach?: (files: File[]) => void
   onRemoveUpload?: (key: string) => void
+  /** What the empty box says; "Say something…" by default. */
+  placeholder?: string
 }) {
   const [text, setText] = useState(initialText)
   const [over, setOver] = useState(false)
@@ -115,7 +118,7 @@ export function Composer({
         value={text}
         disabled={disabled}
         aria-label="Message"
-        placeholder={disabled ? (disabledReason ?? 'Not available') : 'Say something…'}
+        placeholder={disabled ? (disabledReason ?? 'Not available') : (placeholder ?? 'Say something…')}
         title={disabled ? disabledReason : undefined}
         className="reading order-2 max-h-52 min-h-9 flex-1 resize-none bg-transparent px-1.5 py-[5px] text-ink outline-none placeholder:text-faint disabled:opacity-60"
         onChange={(event) => setText(event.target.value)}

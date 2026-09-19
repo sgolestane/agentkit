@@ -243,6 +243,11 @@ public class InMemoryChatStore implements ChatStore {
     }
 
     @Override
+    public Optional<Turn> route(String tenantId, String conversationId, String turnId, Conversation.Pin agent) {
+        return replace(tenantId, conversationId, turnId, turn -> turn.routedTo(agent));
+    }
+
+    @Override
     public Optional<Turn> markRunning(String tenantId, String conversationId, String turnId) {
         return replace(tenantId, conversationId, turnId, Turn::running);
     }

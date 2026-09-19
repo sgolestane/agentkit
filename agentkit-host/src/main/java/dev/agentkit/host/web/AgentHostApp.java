@@ -335,6 +335,9 @@ public final class AgentHostApp {
             Optional.ofNullable(orgs.get(t.org())).ifPresent(org -> {
                 described.put("version", org.current().repo().version());
                 described.put("admin", org.current().principal(t.email()).map(org.current()::isAdmin).orElse(false));
+                // Whether a new conversation needs an agent chosen, or each message finds its own.
+                described.put("routing", org.current().principal(t.email())
+                        .map(p -> HostChat.routes(org.current(), org.current().agentsFor(p))).orElse(false));
             });
         });
         List<String> problems = new ArrayList<>();

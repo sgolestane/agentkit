@@ -93,7 +93,7 @@ class AnAgentIsAskedOverMcpTest {
         try (HttpMcpConnection priya = as(PRIYA).connect(); HttpMcpConnection sam = as(SAM).connect()) {
             assertThat(priya.listTools()).extracting(McpToolInfo::name).containsExactly("ask_helpdesk", "directory_lookup");
             assertThat(sam.listTools()).extracting(McpToolInfo::name)
-                    .containsExactlyInAnyOrder("ask_helpdesk", "directory_lookup", "ask_security_desk");
+                    .containsExactlyInAnyOrder("ask", "ask_helpdesk", "directory_lookup", "ask_security_desk");
 
             McpCallResult read = priya.callTool("directory_lookup", Map.of("email", HelpdeskConnector.DANA));
             assertThat(read.isError()).isFalse();
@@ -117,6 +117,25 @@ class AnAgentIsAskedOverMcpTest {
             assertThat(runtime.store().conversations(PRIYA)).singleElement().satisfies(c -> {
                 assertThat(c.title()).isEqualTo("IT Helpdesk over MCP");
                 assertThat(c.agent().id()).isEqualTo("helpdesk");
+            });
+        }
+    }
+
+    @Test
+    void askingWithoutNamingAnAgentGoesToTheOneThatHandlesIt() throws Exception {
+        start(new ScriptedLlm(
+                ScriptedLlm.text("{\"why\":\"a lookup\",\"action\":\"agent\",\"agent\":\"security-desk\",\"text\":\"\"}"),
+                ScriptedLlm.text("Dana manages Payments.")));
+        String sam = new Tenant("acme", HelpdeskConnector.SAM).id();
+        try (HttpMcpConnection connection = as(sam).connect()) {
+            McpCallResult answer = connection.callTool("ask", Map.of("message", "Who is Dana?"));
+
+            assertThat(answer.text()).isEqualTo("Dana manages Payments.");
+            assertThat(runtime.store().conversations(sam)).singleElement().satisfies(c -> {
+                assertThat(c.title()).isEqualTo("Over MCP");
+                assertThat(c.agent()).isNull();
+                assertThat(runtime.store().turns(sam, c.id())).singleElement()
+                        .satisfies(turn -> assertThat(turn.agent().id()).isEqualTo("security-desk"));
             });
         }
     }

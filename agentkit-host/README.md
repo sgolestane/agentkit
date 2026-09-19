@@ -38,6 +38,9 @@ directory:                             # optional: who someone is
   tool: directory_lookup
   argument: email
 admins: [agent-operators]              # optional: directory groups that see the admin view
+router:                                # optional: on unless it says enabled: false
+  model: openai/gpt-5-mini             # optional: the model it decides with (default: model above)
+  prompt: routing.md                   # optional: the org's own routing instructions
 signIn:                                # optional: the org's identity provider (OpenID Connect)
   issuer: https://login.acme.example   # its issuer; https only
   clientId: agentkit-host              # the host's client there; a secret, if any, is OIDC_CLIENT_SECRET
@@ -55,6 +58,45 @@ one JSON object:
 - a `groups` list becomes their groups.
 
 With no directory, a person is their email and nothing more.
+
+### Routing: no agent to choose
+
+A person who may use more than one agent doesn't have to pick one. In a conversation started
+without choosing, each message goes to the agent that handles it. When no agent needs to act, the
+router answers itself, for example with what the agents do, or a form written out as a fill-in
+template. When it can't tell, it asks.
+
+- **What the router may do.** It chooses among the agents the person may use, and nothing
+  else. Its answer is constrained to their ids, and it has no tools. The agent it chooses runs
+  the message as if the person had chosen it, with its own tools, confirmations and bound
+  arguments.
+- **What it sees.** The agents' names, descriptions and forms, the last few turns (with who
+  answered each), and the new message. A follow-up ("yes", an incident number) stays with the
+  agent that answered last.
+- **On the record.** Each turn records the agent it went to, at the current version, and its
+  trace has a "routed" step saying why. The console shows who answered each message, and "Ask
+  another agent" sends the same message to another one.
+- **Choosing still works.** An agent picked in the sidebar starts a conversation pinned to it,
+  as before. `router: {enabled: false}` turns routing off, so a person picks an agent to start.
+- **Cost.** One small model call per message, on the organization's account as `router`, so
+  budgets apply.
+
+`routing.yaml`, at the repository's root, says who should answer what. Every pull request's
+rehearsal asks the router each case, and nothing else runs:
+
+```yaml
+cases:
+  - name: access-request
+    as: dana.kim@acme.example
+    say: I need read access to the payments Datadog dashboards for 2 hours.
+    expect: {agent: access-desk}          # or {answers: true}, or {asks: true}
+  - name: follow-up-stays
+    as: dana.kim@acme.example
+    before:                               # earlier turns: what was said, who answered, what they said
+      - {say: "I need write access to payments-prod.", agent: access-desk, answer: "Which incident?"}
+    say: INC-4302
+    expect: {agent: access-desk}
+```
 
 ### `connectors/<name>.yaml`
 
@@ -492,7 +534,8 @@ The host is also an MCP server: each organization's at `/orgs/<org>/mcp` on the 
 for callers signed in with the organization's identity provider ([Signing in](#signing-in)). For
 each agent a caller may use,
 it offers `ask_<agent>`: a turn with that agent, as the caller, in their "<Agent> over MCP"
-conversation. That conversation is pinned like any other and appears in their console. An
+conversation. When the caller may use more than one agent and routing is on, it also offers
+`ask`: each message goes to the agent that handles it, in their "Over MCP" conversation. That conversation is pinned like any other and appears in their console. An
 agent's `mcp.direct` tools are offered too, bound to the caller. Only tools that read may be
 listed there, because nothing outside a conversation would stop a call for the person.
 
@@ -569,7 +612,8 @@ cases:
 ### Rehearse
 
 `rehearse` runs the eval cases of the agents a change touches, against the organization's real
-connectors and model, as the people the cases name:
+connectors and model, as the people the cases name. Then it asks the router every case in
+`routing.yaml` (see [Routing](#routing-no-agent-to-choose)):
 
 ```bash
 OPENROUTER_API_KEY=sk-or-... AGENTKIT_SECRET_ACME_...=... AGENTKIT_REHEARSE_SINCE=origin/main \

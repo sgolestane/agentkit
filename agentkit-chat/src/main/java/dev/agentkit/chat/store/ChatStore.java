@@ -75,6 +75,24 @@ public interface ChatStore {
     Turn begin(String tenantId, String conversationId, String userText,
             List<String> attachmentIds);
 
+    /**
+     * Starts a turn the person sent to {@code agent} — in a conversation not pinned to one agent, where each turn goes
+     * to its own. Null leaves it to be routed.
+     */
+    default Turn begin(String tenantId, String conversationId, String userText, List<String> attachmentIds,
+                       Conversation.Pin agent) {
+        Turn begun = begin(tenantId, conversationId, userText, attachmentIds);
+        return agent == null ? begun : route(tenantId, conversationId, begun.id(), agent).orElse(begun);
+    }
+
+    /**
+     * Records the agent, at its version, a turn goes to, in a conversation not pinned to one agent. A store that cannot
+     * keep it refuses, rather than forget which agent answered.
+     */
+    default Optional<Turn> route(String tenantId, String conversationId, String turnId, Conversation.Pin agent) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot record a turn's agent");
+    }
+
     /** One turn, if it exists in a conversation belonging to {@code tenantId}. */
     Optional<Turn> turn(String tenantId, String conversationId, String turnId);
 

@@ -53,9 +53,12 @@ export function useThreads() {
         }
         // A console that opens on nothing has nowhere to type. One conversation, made on
         // arrival, is the difference between a usable page and a page with a button on it —
-        // with the first agent on offer, where there is a choice; the "+" starts the others.
+        // with no agent chosen, so each message finds its own; where a choice is required, with
+        // the first agent on offer.
         const list =
-          existing.length > 0 ? existing : [await api.create('', (await api.agents())[0]?.id)]
+          existing.length > 0
+            ? existing
+            : [await api.create('').catch(async () => api.create('', (await api.agents())[0]?.id))]
         if (!live) {
           return
         }

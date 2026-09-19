@@ -224,6 +224,16 @@ function Versions({
 }) {
   return (
     <div className="space-y-6">
+      {overview.router ? (
+        <p className="text-sm text-muted" data-testid="routing">
+          {overview.router.enabled
+            ? `Routing is on: a message sent to no agent in particular goes to the one that handles it, decided with ${
+                overview.router.model}${overview.router.instructions ? ' and the organization\'s own instructions' : ''}. ${
+                overview.router.cases > 0 ? `${overview.router.cases} routing case(s) are rehearsed on every pull request.`
+                  : 'No routing cases (routing.yaml): a pull request cannot show where messages would go.'}`
+            : 'Routing is off: a person chooses an agent to start a conversation.'}
+        </p>
+      ) : null}
       {overview.versions.map((version) => (
         <section key={version.version} aria-label={`Version ${short(version.version)}`}>
           <h2 className="mb-2 text-base font-semibold">
@@ -521,6 +531,20 @@ function Rehearsals() {
                 <RehearsalCase key={`${result.agent}/${result.case}`} result={result} />
               ))}
             </ul>
+            {report.routing && report.routing.length > 0 ? (
+              <div className="px-4 pb-4">
+                <h3 className="mb-1.5 text-sm font-medium text-faint">Routing</h3>
+                <ul className="space-y-1.5 text-sm" data-testid="routing-cases">
+                  {report.routing.map((one) => (
+                    <li key={one.case}>
+                      <span className={one.passed ? 'text-good' : 'text-bad'}>{one.passed ? 'held' : 'failed'}</span>{' '}
+                      <span className="font-medium">{one.case}</span>{' '}
+                      <span className="text-faint">— expected {one.expected}, {one.got}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </details>
         </li>
       ))}

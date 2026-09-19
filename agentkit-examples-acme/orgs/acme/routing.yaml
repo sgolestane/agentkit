@@ -1,0 +1,26 @@
+# Who should answer a message sent to no agent in particular, as a manager who may use both of
+# Acme's agents. A pull request's rehearsal asks the router each of these; nothing else runs.
+cases:
+  - name: access-request
+    as: dana.kim@acme.example
+    say: I need read access to the payments Datadog dashboards for 2 hours to debug checkout latency.
+    expect: {agent: access-desk}
+
+  - name: onboard-a-hire
+    as: dana.kim@acme.example
+    say: Please onboard my new hire Noah Fischer, employee W-1004, starting October 5.
+    expect: {agent: onboarding}
+
+  - name: form-as-template
+    as: dana.kim@acme.example
+    say: Give me a text template for onboarding that my team can fill in and paste back here.
+    expect: {answers: true}
+
+  - name: follow-up-stays
+    as: dana.kim@acme.example
+    before:
+      - say: "I need write access to payments-prod for 1 hour."
+        agent: access-desk
+        answer: "Which incident is this for?"
+    say: INC-4302
+    expect: {agent: access-desk}

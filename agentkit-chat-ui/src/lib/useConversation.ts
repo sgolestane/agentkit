@@ -37,7 +37,7 @@ export interface Conversation {
   /** The server's own title, which it sets from the first thing said. */
   title: string
   /** Says something; with `input`, the agent's form filled in, which the server makes into the request. */
-  say: (text: string, attachments?: string[], input?: Record<string, unknown>) => Promise<void>
+  say: (text: string, attachments?: string[], input?: Record<string, unknown>, agent?: string) => Promise<void>
   stop: () => Promise<void>
   decide: (
     id: string,
@@ -205,7 +205,7 @@ export function useConversation(conversationId: string | null): Conversation {
   }, [conversationId])
 
   const say = useCallback(
-    async (text: string, attachments: string[] = [], input?: Record<string, unknown>) => {
+    async (text: string, attachments: string[] = [], input?: Record<string, unknown>, agent?: string) => {
       // A message carrying files and no words is a real message — "here, look at this". So is a
       // filled-in form.
       if (!conversationId || (!text.trim() && attachments.length === 0 && !input)) {
@@ -220,7 +220,7 @@ export function useConversation(conversationId: string | null): Conversation {
         //
         // Safe against the duplicate this invites: the reducer's TURN_STARTED arm returns the
         // transcript unchanged when a turn of that id is already there.
-        const started = await api.say(conversationId, text, attachments, input)
+        const started = await api.say(conversationId, text, attachments, input, agent)
         setTranscript((current) =>
           current.turns.some((turn) => turn.id === started.id)
             ? current

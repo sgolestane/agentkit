@@ -53,7 +53,12 @@ public final class RepoLoader {
     private static final Pattern PRINCIPAL_PATH = Pattern.compile("principal\\.[A-Za-z_][A-Za-z0-9_]*");
 
     private static final Set<String> ORG_KEYS = Set.of("org", "model", "provider", "budget", "directory", "admins",
-            "repository", "signIn");
+            "repository", "signIn", "router");
+    private static final Set<String> ROUTER_KEYS = Set.of("enabled", "model", "prompt");
+    private static final Set<String> ROUTING_KEYS = Set.of("cases");
+    private static final Set<String> ROUTING_CASE_KEYS = Set.of("name", "as", "before", "say", "expect");
+    private static final Set<String> ROUTING_BEFORE_KEYS = Set.of("say", "agent", "answer");
+    private static final Set<String> ROUTING_EXPECT_KEYS = Set.of("agent", "answers", "asks");
     private static final Set<String> SIGN_IN_KEYS = Set.of("issuer", "clientId", "emailClaim", "mcpAudience");
     private static final Set<String> REPOSITORY_KEYS = Set.of("github", "path", "base", "api");
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
@@ -114,6 +119,7 @@ public final class RepoLoader {
         Optional<OrgRepo.SignInSpec> signIn = Optional.empty();
         Optional<String> provider = Optional.empty();
         Budget budget = Budget.NONE;
+        OrgRepo.RouterSpec router = OrgRepo.RouterSpec.DEFAULT;
         Optional<JsonNode> orgFile = yaml("org.yaml", true);
         if (orgFile.isPresent()) {
             JsonNode node = orgFile.get();
@@ -129,6 +135,9 @@ public final class RepoLoader {
             }
             if (node.has("signIn")) {
                 signIn = signIn(node.get("signIn"));
+            }
+            if (node.has("router")) {
+                router = router(node.get("router"));
             }
             provider = Optional.ofNullable(text("org.yaml", "provider", node.get("provider"), false));
             if (provider.isPresent() && !ModelAccounts.PROVIDERS.contains(provider.get())) {
@@ -177,11 +186,113 @@ public final class RepoLoader {
         if (agents.isEmpty() && problems.isEmpty()) {
             problem("agents", "", "defines no agents");
         }
+        // Checked against every agent directory, so a routing case is not blamed for an agent that has problems of its own.
+        Set<String> agentIds = new java.util.HashSet<>();
+        list(root.resolve("agents"), true).forEach(dir -> agentIds.add(dir.getFileName().toString()));
+        List<RoutingCase> routing = routing(agentIds);
         if (!problems.isEmpty()) {
             throw new DefinitionException(problems);
         }
         return new OrgRepo(org, version, model, directory, connectors, agents, admins, repository, signIn, provider,
-                budget);
+                budget, router, routing);
+    }
+
+    /** {@code router: {enabled, model, prompt}} in org.yaml; the prompt is a file in the repository. */
+    private OrgRepo.RouterSpec router(JsonNode node) {
+        if (node.isBoolean()) {
+            return new OrgRepo.RouterSpec(node.asBoolean(), null, "");
+        }
+        if (!node.isObject()) {
+            problem("org.yaml", "router", "is true, false, or a mapping of enabled, model and prompt");
+            return OrgRepo.RouterSpec.DEFAULT;
+        }
+        unknownKeys("org.yaml", "router.", node, ROUTER_KEYS);
+        boolean enabled = true;
+        if (node.has("enabled")) {
+            if (!node.get("enabled").isBoolean()) {
+                problem("org.yaml", "router.enabled", "must be true or false");
+            } else {
+                enabled = node.get("enabled").asBoolean();
+            }
+        }
+        String model = text("org.yaml", "router.model", node.get("model"), false);
+        String prompt = node.has("prompt") ? promptFile("org.yaml", "router.prompt", root, node.get("prompt"), true) : "";
+        return new OrgRepo.RouterSpec(enabled, model, prompt);
+    }
+
+    /** The routing cases in {@code routing.yaml}, if there is one; each names only agents the repository has. */
+    private List<RoutingCase> routing(Set<String> agents) {
+        String file = "routing.yaml";
+        Optional<JsonNode> read = yaml(file, false);
+        if (read.isEmpty()) {
+            return List.of();
+        }
+        JsonNode node = read.get();
+        if (!node.isObject() || !node.path("cases").isArray() || node.path("cases").isEmpty()) {
+            problem(file, "cases", "is required: a list of {name, as, before, say, expect}");
+            return List.of();
+        }
+        unknownKeys(file, "", node, ROUTING_KEYS);
+        List<RoutingCase> cases = new ArrayList<>();
+        Set<String> names = new java.util.HashSet<>();
+        JsonNode list = node.get("cases");
+        for (int i = 0; i < list.size(); i++) {
+            String where = "cases[" + i + "]";
+            JsonNode c = list.get(i);
+            if (!c.isObject()) {
+                problem(file, where, "must be a mapping of name, as, before, say and expect");
+                continue;
+            }
+            int before = problems.size();
+            unknownKeys(file, where + ".", c, ROUTING_CASE_KEYS);
+            String name = text(file, where + ".name", c.get("name"), true);
+            if (name != null && !names.add(name)) {
+                problem(file, where + ".name", "another case is named " + name);
+            }
+            String as = text(file, where + ".as", c.get("as"), true);
+            String say = text(file, where + ".say", c.get("say"), true);
+            List<RoutingCase.Earlier> earlier = new ArrayList<>();
+            JsonNode beforeNode = c.path("before");
+            if (c.has("before") && !beforeNode.isArray()) {
+                problem(file, where + ".before", "must be a list of {say, agent, answer}");
+            }
+            for (int j = 0; beforeNode.isArray() && j < beforeNode.size(); j++) {
+                String at = where + ".before[" + j + "]";
+                JsonNode turn = beforeNode.get(j);
+                if (!turn.isObject()) {
+                    problem(file, at, "must be a mapping of say, agent and answer");
+                    continue;
+                }
+                unknownKeys(file, at + ".", turn, ROUTING_BEFORE_KEYS);
+                String agent = text(file, at + ".agent", turn.get("agent"), false);
+                if (agent != null && !agents.contains(agent)) {
+                    problem(file, at + ".agent", "there is no agent " + agent);
+                }
+                earlier.add(new RoutingCase.Earlier(text(file, at + ".say", turn.get("say"), true), agent,
+                        text(file, at + ".answer", turn.get("answer"), true)));
+            }
+            JsonNode expect = c.get("expect");
+            RoutingCase.Expect expected = null;
+            if (expect == null || !expect.isObject()) {
+                problem(file, where + ".expect", "is required: one of {agent: <id>}, {answers: true} or {asks: true}");
+            } else {
+                unknownKeys(file, where + ".expect.", expect, ROUTING_EXPECT_KEYS);
+                String agent = text(file, where + ".expect.agent", expect.get("agent"), false);
+                boolean answers = expect.path("answers").asBoolean(false);
+                boolean asks = expect.path("asks").asBoolean(false);
+                if ((agent != null ? 1 : 0) + (answers ? 1 : 0) + (asks ? 1 : 0) != 1) {
+                    problem(file, where + ".expect", "is exactly one of {agent: <id>}, {answers: true} or {asks: true}");
+                } else if (agent != null && !agents.contains(agent)) {
+                    problem(file, where + ".expect.agent", "there is no agent " + agent);
+                } else {
+                    expected = new RoutingCase.Expect(agent, answers, asks);
+                }
+            }
+            if (problems.size() == before && name != null && as != null && say != null && expected != null) {
+                cases.add(new RoutingCase(name, as, earlier, say, expected));
+            }
+        }
+        return cases;
     }
 
     // ---------------------------------------------------------------- org and connectors

@@ -115,6 +115,11 @@ export interface Turn {
   costUsd?: number
   startedAt: string
   endedAt: string | null
+  /**
+   * In a conversation pinned to no agent, the agent this turn went to — chosen by the person or by the router; absent
+   * when the router answered it itself, or when the conversation is with one agent.
+   */
+  agent?: { id: string; version: string }
 }
 
 export interface Conversation {
@@ -208,6 +213,8 @@ export interface Overview {
   agents?: AgentInfo[]
   /** Whether the person may see the organization's admin view. */
   admin?: boolean
+  /** Whether a conversation needs no agent chosen: each message goes to the one that handles it. */
+  routing?: boolean
   [key: string]: unknown
 }
 
@@ -231,6 +238,8 @@ export interface AdminOverview {
   connectors: { name: string; reached: boolean; failure?: string; tools: number }[]
   /** Whether an admin can propose a change from here, where it goes, and if not, why. */
   proposals?: { enabled: boolean; where?: string; why?: string }
+  /** How a message sent to no agent in particular finds one. */
+  router?: { enabled: boolean; model: string; instructions: boolean; cases: number }
 }
 
 export interface AgentFile {
@@ -363,4 +372,6 @@ export interface RehearsalReport {
   cases: number
   untested: string[]
   results: RehearsalResult[]
+  /** The routing cases, when the repository has them: who should answer, and who the router chose. */
+  routing?: { case: string; as: string; say: string; expected: string; got: string; why: string; passed: boolean }[]
 }

@@ -81,8 +81,12 @@ export function Console() {
     [conversation, uploads],
   )
 
-  // The open conversation's agent, when the console offers more than one: its form, if it has one.
-  const openAgentId = threads.threads.find((one) => one.id === threads.current)?.agent?.id
+  // The open conversation's agent, when the console offers more than one: its form, if it has one. A conversation
+  // pinned to no agent offers the form of the agent that answered last.
+  const pinnedAgentId = threads.threads.find((one) => one.id === threads.current)?.agent?.id
+  const routed = Boolean(overview?.routing) && !pinnedAgentId && Boolean(threads.current)
+  const lastAgentId = [...conversation.transcript.turns].reverse().find((turn) => turn.agent)?.agent?.id
+  const openAgentId = pinnedAgentId ?? (routed ? lastAgentId : undefined)
   const openAgent = overview?.agents?.find((agent) => agent.id === openAgentId)
 
   const problems = overview?.problems ?? []
@@ -101,6 +105,7 @@ export function Console() {
         onOpen={threads.open}
         agents={overview?.agents ?? []}
         admin={overview?.admin === true}
+        routing={overview?.routing === true}
         user={typeof overview?.user === 'string' ? overview.user : overview?.tenant}
         org={typeof overview?.org === 'string' ? overview.org : undefined}
         onCreate={(agent) => void threads.create(agent)}
@@ -148,6 +153,9 @@ export function Console() {
             }
           }}
           onEdit={setDraft}
+          routed={routed}
+          agents={overview?.agents ?? []}
+          onSendTo={(text, agent) => void conversation.say(text, [], undefined, agent)}
         />
 
         {openAgent?.input && threads.current ? (
@@ -157,7 +165,7 @@ export function Console() {
             agentName={openAgent.name}
             startOpen={conversation.transcript.turns.length === 0}
             disabled={Boolean(unusable) || conversation.working}
-            onSubmit={(input) => void conversation.say('', [], input)}
+            onSubmit={(input) => void conversation.say('', [], input, routed ? openAgent.id : undefined)}
           />
         ) : null}
 
@@ -169,6 +177,7 @@ export function Console() {
           uploads={uploads.uploads}
           onAttach={(files) => void uploads.add(files)}
           onRemoveUpload={uploads.remove}
+          placeholder={routed ? 'Ask anything — AgentKit picks the agent' : undefined}
         />
       </main>
     </div>

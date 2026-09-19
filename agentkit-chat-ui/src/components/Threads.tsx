@@ -20,6 +20,7 @@ export function Threads({
   working,
   agents = [],
   admin = false,
+  routing = false,
   user,
   org,
   onFilter,
@@ -36,6 +37,8 @@ export function Threads({
   agents?: AgentInfo[]
   /** Whether the person may see the organization's admin view, which is then linked from the sidebar. */
   admin?: boolean
+  /** Whether a new conversation needs no agent chosen, each message finding its own; then "New conversation" just starts one. */
+  routing?: boolean
   /** Who is signed in, as the console knows them: an email, or a tenant id. */
   user?: string
   /** The organization they are signed in to, if the console serves several. */
@@ -55,7 +58,7 @@ export function Threads({
         <RailButton label="Open the sidebar" onClick={() => fold(false)}>
           <SidebarIcon />
         </RailButton>
-        <NewConversation agents={agents} onCreate={onCreate} rail />
+        <NewConversation agents={routing ? [] : agents} onCreate={onCreate} rail />
         <RailButton
           label="Search conversations"
           onClick={() => {
@@ -88,7 +91,7 @@ export function Threads({
       </div>
 
       <div className="flex shrink-0 flex-col px-2">
-        <NewConversation agents={agents} onCreate={onCreate} />
+        <NewConversation agents={routing ? [] : agents} onCreate={onCreate} />
         <label className={ROW}>
           <SearchIcon />
           <input

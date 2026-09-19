@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Attachment, PendingDecision, Turn } from '../lib/types'
+import type { AgentInfo, Attachment, PendingDecision, Turn } from '../lib/types'
 import { Activity } from './Activity'
 import { ApprovalCard } from './ApprovalCard'
 import { TurnAttachments } from './Attachments'
@@ -36,6 +36,9 @@ export function Transcript({
   onDecide,
   onRegenerate,
   onEdit,
+  routed = false,
+  agents = [],
+  onSendTo,
 }: {
   turns: Turn[]
   working: boolean
@@ -50,6 +53,12 @@ export function Transcript({
   ) => void
   onRegenerate: () => void
   onEdit: (text: string) => void
+  /** Whether each message finds its own agent: then each answer says which agent gave it, and it can be asked of another. */
+  routed?: boolean
+  /** The agents on offer, for naming the one that answered and choosing another. */
+  agents?: AgentInfo[]
+  /** Sends a message to the agent named, in a conversation where each message otherwise finds its own. */
+  onSendTo?: (text: string, agent: string) => void
 }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = showAll ? 0 : Math.max(0, turns.length - WINDOW)
@@ -94,6 +103,9 @@ export function Transcript({
                     },
                   )}
                 />
+              ) : null}
+              {routed && !turn.state.match(/QUEUED|RUNNING/) ? (
+                <AnsweredBy turn={turn} agents={agents} onSendTo={onSendTo} />
               ) : null}
               {!turn.state.match(/QUEUED|RUNNING/) ? <TurnAnswer turn={turn} /> : null}
               {turn.state === 'QUEUED' || turn.state === 'RUNNING' ? (
@@ -178,6 +190,66 @@ export function Transcript({
  * The source, not the rendered text: somebody copying an answer with a table in it wants the
  * table, and `textContent` off the DOM would hand them the cells run together on one line.
  */
+/**
+ * Who answered a message, in a conversation where each message finds its own agent: the agent's name, or AgentKit
+ * when the router answered itself. "Ask another agent" sends the same message to the one chosen.
+ */
+function AnsweredBy({
+  turn,
+  agents,
+  onSendTo,
+}: {
+  turn: Turn
+  agents: AgentInfo[]
+  onSendTo?: (text: string, agent: string) => void
+}) {
+  const [choosing, setChoosing] = useState(false)
+  const name = turn.agent ? agents.find((one) => one.id === turn.agent?.id)?.name ?? turn.agent.id : 'AgentKit'
+  const others = agents.filter((one) => one.id !== turn.agent?.id)
+  return (
+    <div className="relative flex items-center gap-1 text-xs text-faint" data-testid="answered-by">
+      <span className="rounded-full bg-hover px-2.5 py-0.5 text-muted">{name}</span>
+      {onSendTo && turn.userText && others.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setChoosing((open) => !open)}
+          aria-expanded={choosing}
+          aria-haspopup="menu"
+          className="rounded-[var(--radius-item)] px-2 py-0.5 hover:bg-hover hover:text-ink"
+        >
+          Ask another agent
+        </button>
+      ) : null}
+      {choosing ? (
+        <ul
+          role="menu"
+          aria-label="Ask another agent"
+          className="absolute left-0 top-full z-10 mt-1 w-64 rounded-[var(--radius-card)] bg-panel p-1.5 shadow-[var(--shadow-menu)]"
+        >
+          {others.map((agent) => (
+            <li key={agent.id} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setChoosing(false)
+                  onSendTo?.(turn.userText, agent.id)
+                }}
+                className="w-full rounded-[var(--radius-item)] px-2.5 py-2 text-left hover:bg-hover"
+              >
+                <span className="block text-sm text-ink">{agent.name}</span>
+                {agent.unavailable ?? agent.description ? (
+                  <span className="block text-xs text-muted">{agent.unavailable ?? agent.description}</span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
 function CopyAnswer({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (

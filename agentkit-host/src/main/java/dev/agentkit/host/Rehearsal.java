@@ -23,6 +23,9 @@ import dev.agentkit.eval.Checks;
 import dev.agentkit.eval.EvalRun;
 import dev.agentkit.eval.ToolCall;
 import dev.agentkit.host.repo.EvalCase;
+import dev.agentkit.host.repo.OrgRepo;
+import dev.agentkit.host.repo.RoutingCase;
+import dev.agentkit.host.routing.Router;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -70,6 +73,55 @@ public final class Rehearsal {
         this.llm = Objects.requireNonNull(llm, "llm");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.patience = Objects.requireNonNull(patience, "patience");
+    }
+
+    /**
+     * A routing case rehearsed: who the router said should answer, and whether that is who the case expected. Only the
+     * router runs; nothing is carried out.
+     *
+     * @param got   the agent chosen, or "the router answers" / "the router asks"; null when it could not decide
+     * @param error why it could not decide, if it could not
+     */
+    public record RoutingResult(RoutingCase routingCase, String got, String why, String text,
+                                String error) {
+        public boolean passed() {
+            return error == null && routingCase.expect().describe().equals(describe());
+        }
+
+        /** Who answered, in the words {@link RoutingCase.Expect#describe()} uses. */
+        public String describe() {
+            return got == null ? "nobody" : got.startsWith("the router") ? got : "goes to " + got;
+        }
+    }
+
+    /** Asks the router the case's message, as the case's person, after its earlier turns. */
+    public RoutingResult route(RoutingCase routingCase) {
+        Optional<Principal> principal = host.principal(routingCase.as());
+        if (principal.isEmpty()) {
+            return new RoutingResult(routingCase, null, "", "", routingCase.as() + " is not in the directory");
+        }
+        OrgRepo repo = host.repo();
+        String model = repo.router().model() != null ? repo.router().model() : repo.defaultModel();
+        try {
+            Router.Decision decision = Router.decide(llm, model,
+                    repo.router().prompt(),
+                    host.agentsFor(principal.get()).stream().map(agent -> new Router.Offered(
+                            agent.definition().id(), agent.definition().name(), agent.definition().description(),
+                            agent.definition().input() == null ? "" : agent.definition().input().describe())).toList(),
+                    routingCase.before().stream().map(one -> new Router.Earlier(one.say(),
+                            one.agent(), one.answer())).toList(),
+                    routingCase.say());
+            return switch (decision) {
+                case Router.ToAgent to -> new RoutingResult(routingCase, to.agent(), to.why(),
+                        "", null);
+                case Router.Answer answer -> new RoutingResult(routingCase,
+                        "the router answers", answer.why(), answer.text(), null);
+                case Router.Ask ask -> new RoutingResult(routingCase, "the router asks",
+                        ask.why(), ask.text(), null);
+            };
+        } catch (RuntimeException e) {
+            return new RoutingResult(routingCase, null, "", "", String.valueOf(e.getMessage()));
+        }
     }
 
     /** A call the agent made: what, with which arguments, and — when it was refused — what it would have done. */

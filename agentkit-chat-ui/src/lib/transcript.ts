@@ -52,6 +52,7 @@ export function asTurn(raw: Partial<Turn> & { id: string }): Turn {
     outputTokens: raw.outputTokens ?? 0,
     startedAt: raw.startedAt ?? '',
     endedAt: raw.endedAt ?? null,
+    ...(raw.agent ? { agent: raw.agent } : {}),
   }
 }
 
@@ -160,6 +161,7 @@ function change(turn: Turn, event: ChatEvent): Turn {
         inputTokens: Number(event.data.inputTokens ?? 0),
         outputTokens: Number(event.data.outputTokens ?? 0),
         endedAt: event.at,
+        ...(isAgent(event.data.agent) ? { agent: event.data.agent } : {}),
       }
 
     case 'ERROR':
@@ -168,6 +170,10 @@ function change(turn: Turn, event: ChatEvent): Turn {
     default:
       return turn
   }
+}
+
+function isAgent(value: unknown): value is { id: string; version: string } {
+  return typeof value === 'object' && value !== null && typeof (value as { id?: unknown }).id === 'string'
 }
 
 function viewData(event: ChatEvent): Record<string, unknown> {

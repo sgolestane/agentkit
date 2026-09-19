@@ -74,6 +74,9 @@ with 10px of horizontal padding.
   plain `.reading` text, full width, with its trace and actions underneath.
 - **Cards** (a confirmation, the task form) are `bg-panel` with `--radius-card`; a confirmation's
   border says what kind it is: `warn` for an action, `accent` for a question.
+- **Who answered.** In a conversation where each message finds its agent, every answer has a
+  small `bg-hover` pill naming the agent, or AgentKit when the router answered itself, with a
+  ghost "Ask another agent" beside it.
 - **Views** a tool or the host shows above an answer (a plan, a table, cards, a diff, a chart) are
   outlined in `border-line`, so they read as something shown rather than something said.
 

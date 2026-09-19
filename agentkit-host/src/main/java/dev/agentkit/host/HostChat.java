@@ -5,7 +5,11 @@ import dev.agentkit.chat.ChatUnavailable;
 import dev.agentkit.chat.Conversation;
 import dev.agentkit.chat.web.ChatServer;
 import dev.agentkit.core.agent.Agent;
+import dev.agentkit.core.agent.AgentResult;
+import dev.agentkit.core.agent.Goal;
 import dev.agentkit.core.llm.LlmClient;
+import dev.agentkit.core.llm.TokenUsage;
+import dev.agentkit.host.routing.Router;
 import dev.agentkit.host.models.ModelAccounts;
 import dev.agentkit.host.plans.PlanBook;
 import dev.agentkit.host.plans.PlanReuse;
@@ -102,6 +106,10 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                 new ChatUnavailable("You are not in this organization's directory."));
         List<HostedAgent> offered = found.host().agentsFor(found.principal());
         HostedAgent chosen;
+        if ((agentId == null || agentId.isBlank()) && routes(found.host(), offered)) {
+            // No agent chosen, and more than one to choose from: each message finds its own.
+            return null;
+        }
         if (agentId == null || agentId.isBlank()) {
             if (offered.size() != 1) {
                 throw new ChatUnavailable(offered.isEmpty() ? "No agent is available to you."
@@ -126,6 +134,36 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         String request = request(agent, input, principal);
         formSent(tenantId, request, input);
         return request;
+    }
+
+    /** A form for {@code agentId}, sent in a conversation pinned to no agent: checked and made into its request. */
+    @Override
+    public String message(String tenantId, Conversation conversation, String agentId, Map<String, Object> input) {
+        Found found = principal(tenantId).orElseThrow(() ->
+                new ChatUnavailable("You are not in this organization's directory."));
+        HostedAgent agent = offered(found, agentId);
+        String request = request(agent, input, found.principal());
+        formSent(tenantId, request, input);
+        return request;
+    }
+
+    /** The agent a person chose for one message in a conversation pinned to no agent, at its version now. */
+    @Override
+    public Conversation.Pin forMessage(String tenantId, Conversation conversation, String agentId) {
+        Found found = principal(tenantId).orElseThrow(() ->
+                new ChatUnavailable("You are not in this organization's directory."));
+        return new Conversation.Pin(offered(found, agentId).definition().id(), found.host().repo().version());
+    }
+
+    private static HostedAgent offered(Found found, String agentId) {
+        String id = agentId == null ? "" : agentId.strip();
+        return found.host().agentsFor(found.principal()).stream().filter(a -> a.definition().id().equals(id)).findFirst()
+                .orElseThrow(() -> new ChatUnavailable("There is no agent " + id + " for you."));
+    }
+
+    /** Whether a message nobody sent to a particular agent is routed: the router is on and there is a choice. */
+    public static boolean routes(AgentHost host, List<HostedAgent> offered) {
+        return host.repo().router().enabled() && offered.size() > 1;
     }
 
     /** That {@code tenantId} sent {@code input} as a form, which made {@code request}: its turn is that task. */
@@ -159,10 +197,24 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         return turn.agent().turn(session, turn.llm(), turn.principal(), clock.get(), runtime.get(), turn.scheduler());
     }
 
-    /** The pinned agent's way of carrying out the turn: its own loop, or a plan carried out step by step. */
+    /**
+     * The agent's way of carrying out the turn: its own loop, or a plan carried out step by step. In a conversation
+     * pinned to no agent, the turn is routed first — to the agent the person chose for it, or the one the router picks
+     * — or the router answers it itself.
+     */
     @Override
     public ChatRuntime.Runner runnerFor(ChatRuntime.Session session) {
-        Turn turn = turnFor(session);
+        Tenant tenant = Tenant.parse(session.tenantId())
+                .orElseThrow(() -> new ChatUnavailable("This conversation belongs to nobody the host knows."));
+        Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
+                .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
+        if (conversation.agent() == null && orgs.containsKey(tenant.org()) && routesFor(session, tenant)) {
+            return (goal, alsoSent) -> routed(session, tenant, goal, alsoSent);
+        }
+        return runnerOf(session, turnFor(session));
+    }
+
+    private ChatRuntime.Runner runnerOf(ChatRuntime.Session session, Turn turn) {
         Optional<PlanExecuteTurn.FormTask> form = Optional.ofNullable(
                         forms.remove(session.tenantId() + '\n' + session.userText()))
                 .filter(input -> turn.agent().definition().planReuse() != null)
@@ -185,6 +237,11 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                 .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
         HostedAgent agent = pinned(tenant, conversation);
         AgentHost version = orgs.get(tenant.org()).serving(conversation.agent().version()).orElseThrow();
+        return turnOf(tenant, version, agent);
+    }
+
+    /** A turn of {@code agent}, at {@code version}, for the person {@code tenant} names. */
+    private Turn turnOf(Tenant tenant, AgentHost version, HostedAgent agent) {
         Principal principal = version.principal(tenant.email())
                 .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
         List<dev.agentkit.core.tool.Tool> scheduler = Optional.ofNullable(deferred.get(tenant.org()))
@@ -200,7 +257,108 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             throw new ChatUnavailable(why);
         });
         return new Turn(agent, principal, scheduler,
-                models.client(account, agent.definition().id(), ModelAccounts.Purpose.TURN), conversation.agent().version());
+                models.client(account, agent.definition().id(), ModelAccounts.Purpose.TURN), version.repo().version());
+    }
+
+    // ---------------------------------------------------------------- routed turns
+
+    /**
+     * One turn of a conversation pinned to no agent: to the agent the person chose for it, or the one the router picks
+     * — on its own terms, as if the conversation were with it — or answered by the router itself. Which it was is on
+     * the turn ({@code Turn.agent}) and in its trace.
+     */
+    private AgentResult routed(ChatRuntime.Session session, Tenant tenant, Goal goal,
+                               List<dev.agentkit.core.message.ContentBlock> alsoSent) {
+        OrgHost org = orgs.get(tenant.org());
+        AgentHost current = org.current();
+        Principal principal = current.principal(tenant.email())
+                .orElseThrow(() -> new ChatUnavailable("You are not in this organization's directory."));
+        dev.agentkit.chat.Turn turn = session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
+                .orElseThrow(() -> new ChatUnavailable("There is no such turn."));
+        if (turn.agent() != null) {
+            // The person chose the agent for this message.
+            AgentHost version = org.serving(turn.agent().version()).orElseThrow(() -> new ChatUnavailable(
+                    "That version of " + turn.agent().id() + " is no longer served. Send it again."));
+            HostedAgent chosen = version.agent(turn.agent().id()).filter(a -> a.admits(principal))
+                    .orElseThrow(() -> new ChatUnavailable("There is no agent " + turn.agent().id() + " for you."));
+            note(session, chosen.definition().id(), version.repo().version(), "chosen by you");
+            return runnerOf(session, turnOf(tenant, version, chosen)).run(goal, alsoSent);
+        }
+        List<HostedAgent> offered = current.agentsFor(principal);
+        OrgRepo account = current.repo();
+        String model = account.router().model() != null ? account.router().model() : account.defaultModel();
+        models.unavailable(account, model).or(() -> models.refusal(account)).ifPresent(why -> {
+            throw new ChatUnavailable(why);
+        });
+        java.util.concurrent.atomic.AtomicReference<TokenUsage> spent = new java.util.concurrent.atomic.AtomicReference<>(
+                TokenUsage.ZERO);
+        LlmClient routerLlm = models.client(account, "router", ModelAccounts.Purpose.TURN);
+        LlmClient counted = request -> {
+            dev.agentkit.core.llm.LlmResponse response = routerLlm.generate(request);
+            spent.set(spent.get().plus(response.usage()));
+            return response;
+        };
+        long started = System.nanoTime();
+        Router.Decision decision = Router.decide(counted, model, account.router().prompt(),
+                offered.stream().map(agent -> new Router.Offered(agent.definition().id(), agent.definition().name(),
+                        agent.unavailable().map(why -> agent.definition().description() + " (unavailable now: " + why + ")")
+                                .orElse(agent.definition().description()),
+                        agent.definition().input() == null ? "" : agent.definition().input().describe())).toList(),
+                earlier(session, turn), session.userText());
+        long millis = (System.nanoTime() - started) / 1_000_000;
+        if (decision instanceof Router.ToAgent to) {
+            HostedAgent chosen = offered.stream().filter(a -> a.definition().id().equals(to.agent())).findFirst()
+                    .orElseThrow();
+            Conversation.Pin pin = new Conversation.Pin(chosen.definition().id(), current.repo().version());
+            session.store().route(session.tenantId(), session.conversationId(), session.turnId(), pin);
+            note(session, chosen.definition().id(), pin.version(), to.why(), millis);
+            AgentResult result = runnerOf(session, turnOf(tenant, current, chosen)).run(goal, alsoSent);
+            return withUsage(result, spent.get());
+        }
+        String text = decision instanceof Router.Answer answer ? answer.text() : ((Router.Ask) decision).text();
+        note(session, null, current.repo().version(), decision.why(), millis);
+        return AgentResult.completed(text, 1, spent.get());
+    }
+
+    /** Whether this turn is routed: the person chose its agent, or the router is on and they have a choice. */
+    private boolean routesFor(ChatRuntime.Session session, Tenant tenant) {
+        boolean chosen = session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
+                .map(turn -> turn.agent() != null).orElse(false);
+        AgentHost current = orgs.get(tenant.org()).current();
+        return chosen || current.principal(tenant.email())
+                .map(principal -> routes(current, current.agentsFor(principal))).orElse(false);
+    }
+
+    /** The earlier turns of a routed turn's conversation, for the router: said, answered by whom, and the answer. */
+    private static List<Router.Earlier> earlier(ChatRuntime.Session session, dev.agentkit.chat.Turn turn) {
+        Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
+                .orElseThrow();
+        return session.store().turns(session.tenantId(), session.conversationId()).stream()
+                .filter(one -> one.ordinal() < turn.ordinal() && one.state().isTerminal())
+                .map(one -> new Router.Earlier(one.userText(),
+                        one.agent() != null ? one.agent().id()
+                                : conversation.agent() != null ? conversation.agent().id() : null,
+                        one.answer()))
+                .toList();
+    }
+
+    /** Who a routed turn went to, on its trace. */
+    private static void note(ChatRuntime.Session session, String agent, String version, String why) {
+        note(session, agent, version, why, 0);
+    }
+
+    private static void note(ChatRuntime.Session session, String agent, String version, String why, long millis) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("to", agent == null ? "router" : agent);
+        detail.put("version", version);
+        detail.put("why", why == null ? "" : why);
+        session.store().addStep(session.tenantId(), session.conversationId(), session.turnId(),
+                dev.agentkit.chat.Step.Kind.NOTE, "routed", detail, millis, false);
+    }
+
+    private static AgentResult withUsage(AgentResult result, TokenUsage routing) {
+        return new AgentResult(result.stopReason(), result.output(), result.steps(), result.usage().plus(routing),
+                result.error(), result.awaiting());
     }
 
     /** The agent, at the version, a conversation is pinned to — or a sentence saying why there is none. */

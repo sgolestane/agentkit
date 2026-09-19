@@ -270,6 +270,13 @@ public final class AdminApi {
         view.put("org", org.org());
         view.put("current", current.repo().version());
         view.put("admins", current.repo().admins());
+        Map<String, Object> router = new LinkedHashMap<>();
+        router.put("enabled", current.repo().router().enabled());
+        router.put("model", current.repo().router().model() != null ? current.repo().router().model()
+                : current.repo().defaultModel());
+        router.put("instructions", !current.repo().router().prompt().isBlank());
+        router.put("cases", current.repo().routing().size());
+        view.put("router", router);
         List<Map<String, Object>> versions = new ArrayList<>();
         List<String> loaded = new ArrayList<>(org.versions());
         java.util.Collections.reverse(loaded);

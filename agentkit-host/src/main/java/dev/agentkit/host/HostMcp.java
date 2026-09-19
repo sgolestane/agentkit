@@ -71,6 +71,12 @@ public final class HostMcp {
         this.patience = Objects.requireNonNull(patience, "patience");
     }
 
+    /** The tool asking the organization's agents, each message routed to the one that handles it. */
+    public static final String ROUTED_ASK = "ask";
+
+    /** The conversation an MCP caller's routed messages go to. */
+    static final String ROUTED_TITLE = "Over MCP";
+
     /** The tool asking {@code agentId}. */
     public static String askTool(String agentId) {
         return "ask_" + agentId.replace('-', '_');
@@ -99,7 +105,23 @@ public final class HostMcp {
             return Optional.empty();
         }
         DeclaredTools tools = new DeclaredTools();
-        for (HostedAgent agent : current.agentsFor(principal.get())) {
+        List<HostedAgent> offered = current.agentsFor(principal.get());
+        if (HostChat.routes(current, offered)) {
+            // One door for everything: each message goes to the agent that handles it, as in the console.
+            tools.add(FunctionTool.builder(ROUTED_ASK, "Ask " + current.repo().org() + "'s agents anything, in plain "
+                                    + "language: each message goes to the agent that handles it ("
+                                    + String.join(", ", offered.stream().map(a -> a.definition().name()).toList())
+                                    + "), or you are told what they can do. When an agent needs the person's "
+                                    + "confirmation it asks them directly where this client allows.")
+                            .schema(Map.of("type", "object", "properties", Map.of("message", Map.of("type", "string",
+                                    "description", "What you need")), "required", List.of("message")))
+                            .sideEffects(SideEffects.EXTERNAL)
+                            .provenance(Provenance.FIRST_PARTY)
+                            .handler(inv -> ask(tenant.get(), null, inv.stringArgument("message")))
+                            .build(),
+                    new ToolDeclaration(current.repo().org(), ToolEffect.REQUEST, null));
+        }
+        for (HostedAgent agent : offered) {
             String id = agent.definition().id();
             tools.add(FunctionTool.builder(askTool(id), "Ask " + agent.definition().name() + ": "
                                     + agent.definition().description() + " Say what you need in plain language; it follows "
@@ -239,8 +261,17 @@ public final class HostMcp {
                 + " (conversation \"" + conversation.title() + "\").");
     }
 
-    /** The caller's conversation with the agent over MCP, at a version the host still runs; a new one otherwise. */
+    /**
+     * The caller's conversation with the agent over MCP, at a version the host still runs; a new one otherwise. With no
+     * agent, the caller's routed conversation.
+     */
     private Conversation conversationWith(ChatRuntime chats, Tenant tenant, String agentId) {
+        if (agentId == null) {
+            return chats.store().conversations(tenant.id()).stream()
+                    .filter(c -> ROUTED_TITLE.equals(c.title()) && c.agent() == null)
+                    .findFirst()
+                    .orElseGet(() -> chats.store().create(tenant.id(), ROUTED_TITLE, null));
+        }
         OrgHost org = orgs.get(tenant.org());
         HostedAgent agent = org.current().agent(agentId)
                 .orElseThrow(() -> new ChatUnavailable("There is no agent " + agentId + "."));
