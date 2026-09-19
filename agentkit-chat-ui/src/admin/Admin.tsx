@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError } from '../lib/api'
 import { ProposeChange } from './ProposeChange'
+import { Account, RAIL, ROW, RailButton, useFolded } from '../components/Threads'
+import { AgentIcon, ChartIcon, ChatIcon, ClockIcon, PlugIcon, RehearsalIcon, SidebarIcon } from '../components/Icons'
 import type {
   AdminAgent,
   AdminDeferredAction,
@@ -22,12 +24,12 @@ import type {
  */
 type Section = 'agents' | 'rehearsals' | 'deferred' | 'usage' | 'connectors'
 
-const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'agents', label: 'Agents' },
-  { id: 'rehearsals', label: 'Rehearsals' },
-  { id: 'deferred', label: 'Deferred work' },
-  { id: 'usage', label: 'Model use' },
-  { id: 'connectors', label: 'Connectors' },
+const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
+  { id: 'agents', label: 'Agents', icon: <AgentIcon /> },
+  { id: 'rehearsals', label: 'Rehearsals', icon: <RehearsalIcon /> },
+  { id: 'deferred', label: 'Deferred work', icon: <ClockIcon /> },
+  { id: 'usage', label: 'Model use', icon: <ChartIcon /> },
+  { id: 'connectors', label: 'Connectors', icon: <PlugIcon /> },
 ]
 
 /** The order effects are shown in: what only looks first, what takes away last. */
@@ -54,49 +56,34 @@ export function Admin() {
   }, [])
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex h-[52px] items-center gap-3 border-b border-line-soft bg-canvas px-4">
-        <h1 className="text-sm font-semibold">{overview ? `${overview.org} — admin` : 'Admin'}</h1>
-        {overview ? (
-          <span className="text-xs text-muted" data-testid="current-version">
-            serving {short(overview.current)}
-          </span>
+    <div className="flex h-full">
+      <AdminNav
+        overview={overview}
+        section={section}
+        onSection={(one) => {
+          setSection(one)
+          setOpen(null)
+        }}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-[52px] shrink-0 items-center gap-3 px-4">
+          <h1 className="text-lg font-semibold">{overview ? `${overview.org} — admin` : 'Admin'}</h1>
+          {overview ? (
+            <span className="text-sm text-faint" data-testid="current-version">
+              serving {short(overview.current)}
+            </span>
+          ) : null}
+        </header>
+
+        {problem ? (
+          <p className="mx-4 my-2 rounded-[var(--radius-item)] border border-bad bg-panel px-4 py-2 text-sm text-bad" role="alert">
+            {problem}
+          </p>
         ) : null}
-        <a href="/" className="ml-auto text-xs text-muted hover:text-ink">
-          Back to the console
-        </a>
-      </header>
 
-      {problem ? (
-        <p className="m-4 rounded border border-bad bg-panel px-4 py-2 text-sm text-bad" role="alert">
-          {problem}
-        </p>
-      ) : null}
-
-      {overview ? (
-        <div className="flex min-h-0 flex-1">
-          <nav className="w-52 shrink-0 bg-sidebar p-2" aria-label="Admin sections">
-            {SECTIONS.map((one) => (
-              <button
-                key={one.id}
-                type="button"
-                onClick={() => {
-                  setSection(one.id)
-                  setOpen(null)
-                }}
-                aria-current={section === one.id ? 'page' : undefined}
-                className={`block w-full rounded-[var(--radius-item)] px-2.5 py-2 text-left text-sm ${
-                  section === one.id ? 'bg-selected font-medium text-ink' : 'text-ink hover:bg-hover'
-                }`}
-              >
-                {one.label}
-              </button>
-            ))}
-            <p className="mt-4 px-2 text-xs text-muted">
-              Changes are pull requests to the organization&apos;s repository. Admins: {overview.admins.join(', ')}.
-            </p>
-          </nav>
-          <main className="min-w-0 flex-1 overflow-y-auto p-4">
+        {overview ? (
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
             {section === 'agents' && open ? (
               <AgentDetail
                 id={open.id}
@@ -117,9 +104,114 @@ export function Admin() {
               <Connectors overview={overview} />
             )}
           </main>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The admin view's sidebar, the same as the console's: back to the conversations, the sections,
+ * and who is signed in. It folds to a rail with the console's, since it is the same choice.
+ */
+function AdminNav({
+  overview,
+  section,
+  onSection,
+}: {
+  overview: AdminOverview | null
+  section: Section
+  onSection: (section: Section) => void
+}) {
+  const [folded, fold] = useFolded()
+  const [me, setMe] = useState<{ user?: string; org?: string }>({})
+  useEffect(() => {
+    api
+      .overview()
+      .then((read) => setMe({
+        user: typeof read.user === 'string' ? read.user : read.tenant,
+        org: typeof read.org === 'string' ? read.org : undefined,
+      }))
+      .catch(() => {
+        // Who is signed in is a courtesy here; the view works without it.
+      })
+  }, [])
+
+  if (folded) {
+    return (
+      <aside className="flex w-[52px] shrink-0 flex-col items-center gap-1 bg-sidebar py-2">
+        <RailButton label="Open the sidebar" onClick={() => fold(false)}>
+          <SidebarIcon />
+        </RailButton>
+        <a href="/" aria-label="Back to conversations" title="Back to conversations" className={RAIL}>
+          <ChatIcon />
+        </a>
+        {overview ? SECTIONS.map((one) => (
+          <button
+            key={one.id}
+            type="button"
+            aria-label={one.label}
+            title={one.label}
+            aria-current={section === one.id ? 'page' : undefined}
+            onClick={() => onSection(one.id)}
+            className={`${RAIL} ${section === one.id ? 'bg-selected text-ink' : ''}`}
+          >
+            {one.icon}
+          </button>
+        )) : null}
+        <div className="flex-1" />
+        {me.user ? <Account user={me.user} org={me.org} rail /> : null}
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="flex w-[260px] shrink-0 flex-col bg-sidebar">
+      <div className="flex h-[52px] shrink-0 items-center gap-2 pl-4 pr-2">
+        <span className="text-lg font-semibold">AgentKit</span>
+        <div className="ml-auto">
+          <RailButton label="Close the sidebar" onClick={() => fold(true)}>
+            <SidebarIcon />
+          </RailButton>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 flex-col px-2">
+        <a href="/" className={ROW}>
+          <ChatIcon />
+          Back to conversations
+        </a>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {overview ? (
+          <nav aria-label="Admin sections">
+            <h2 className="px-2.5 pb-1 pt-5 text-sm font-medium text-faint">{overview.org} admin</h2>
+            {SECTIONS.map((one) => (
+              <button
+                key={one.id}
+                type="button"
+                onClick={() => onSection(one.id)}
+                aria-current={section === one.id ? 'page' : undefined}
+                className={`${ROW} w-full text-left ${section === one.id ? 'bg-selected' : ''}`}
+              >
+                {one.icon}
+                {one.label}
+              </button>
+            ))}
+            <p className="px-2.5 pt-5 text-xs text-faint">
+              Changes are pull requests to the organization&apos;s repository. Admins: {overview.admins.join(', ')}.
+            </p>
+          </nav>
+        ) : null}
+      </div>
+
+      {me.user ? (
+        <div className="shrink-0 p-2">
+          <Account user={me.user} org={me.org} />
         </div>
       ) : null}
-    </div>
+    </aside>
   )
 }
 
@@ -134,7 +226,7 @@ function Versions({
     <div className="space-y-6">
       {overview.versions.map((version) => (
         <section key={version.version} aria-label={`Version ${short(version.version)}`}>
-          <h2 className="mb-1 text-sm font-semibold">
+          <h2 className="mb-2 text-base font-semibold">
             {short(version.version)}{' '}
             <span className="font-normal text-muted">
               {version.current
@@ -148,16 +240,16 @@ function Versions({
                 <button
                   type="button"
                   onClick={() => onOpen(agent.id, version.version)}
-                  className="w-full rounded-lg border border-line bg-panel p-3 text-left hover:border-accent"
+                  className="w-full rounded-[var(--radius-card)] border border-line bg-panel p-4 text-left hover:bg-hover"
                 >
-                  <span className="block text-sm font-medium">{agent.name}</span>
+                  <span className="block text-base font-medium">{agent.name}</span>
                   <span className="block text-xs text-muted">
                     {agent.id} · {agent.pattern} · for {agent.audience.join(', ')} ·{' '}
                     {agent.evals === 0 ? 'no eval cases' : `${agent.evals} eval case${agent.evals === 1 ? '' : 's'}`}
                   </span>
-                  <span className="mt-1 block text-xs">{agent.description}</span>
+                  <span className="mt-1 block text-sm text-muted">{agent.description}</span>
                   {agent.unavailable ? (
-                    <span className="mt-1 block text-xs text-bad">Unavailable: {agent.unavailable}</span>
+                    <span className="mt-1 block text-sm text-bad">Unavailable: {agent.unavailable}</span>
                   ) : null}
                 </button>
               </li>
@@ -203,14 +295,14 @@ function AgentDetail({
     .filter((group) => group.tools.length > 0)
 
   return (
-    <article className="space-y-5" aria-label={agent.name}>
-      <button type="button" onClick={onBack} className="text-xs text-muted hover:text-ink">
+    <article className="max-w-4xl space-y-8" aria-label={agent.name}>
+      <button type="button" onClick={onBack} className="-ml-2.5 rounded-[var(--radius-item)] px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-ink">
         ← All agents
       </button>
       <header>
-        <h2 className="text-base font-semibold">{agent.name}</h2>
-        <p className="text-sm">{agent.description}</p>
-        <p className="mt-1 text-xs text-muted">
+        <h2 className="text-2xl font-semibold">{agent.name}</h2>
+        <p className="mt-1 text-base text-muted">{agent.description}</p>
+        <p className="mt-2 text-sm text-faint">
           {agent.id} at {short(agent.version)} · {agent.pattern} · {agent.model} · for {agent.audience.join(', ')} · at
           most {agent.limits.maxSteps} steps
         </p>
@@ -220,12 +312,12 @@ function AgentDetail({
             type="button"
             onClick={() => setProposing((open) => !open)}
             aria-expanded={proposing}
-            className="mt-2 rounded border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+            className="mt-3 rounded-full border border-line px-4 py-1.5 text-sm hover:bg-hover"
           >
             {proposing ? 'Close the change' : 'Propose a change'}
           </button>
         ) : current && proposals?.why ? (
-          <p className="mt-2 text-xs text-muted">Changes cannot be proposed from here now: {proposals.why}</p>
+          <p className="mt-2 text-sm text-faint">Changes cannot be proposed from here now: {proposals.why}</p>
         ) : null}
       </header>
 
@@ -234,11 +326,11 @@ function AgentDetail({
       ) : null}
 
       <section aria-label="What it can do">
-        <h3 className="mb-1 text-sm font-semibold">What it can do</h3>
+        <h3 className="mb-2 text-base font-semibold">What it can do</h3>
         {byEffect.map((group) => (
           <div key={group.effect} className="mb-3">
-            <h4 className="text-xs font-medium uppercase tracking-wide text-muted">{group.effect}</h4>
-            <ul className="divide-y divide-line rounded-lg border border-line bg-panel">
+            <h4 className="mb-1.5 text-sm font-medium text-faint">{group.effect}</h4>
+            <ul className="divide-y divide-line-soft rounded-[var(--radius-card)] border border-line bg-panel">
               {group.tools.map((tool) => (
                 <ToolRow key={tool.name} tool={tool} />
               ))}
@@ -249,7 +341,7 @@ function AgentDetail({
 
       {agent.input ? (
         <section aria-label="Its form">
-          <h3 className="mb-1 text-sm font-semibold">Its form</h3>
+          <h3 className="mb-2 text-base font-semibold">Its form</h3>
           <ul className="text-sm">
             {Object.entries(agent.input.properties).map(([name, field]) => (
               <li key={name}>
@@ -264,7 +356,7 @@ function AgentDetail({
 
       {agent.deferred ? (
         <section aria-label="Deferred work">
-          <h3 className="mb-1 text-sm font-semibold">Deferred work</h3>
+          <h3 className="mb-2 text-base font-semibold">Deferred work</h3>
           <p className="text-sm">
             Runs as <code>{agent.deferred.actor}</code>, about{' '}
             {Object.entries(agent.deferred.subjects)
@@ -277,7 +369,7 @@ function AgentDetail({
 
       {agent.planReuse ? (
         <section aria-label="Plan reuse">
-          <h3 className="mb-1 text-sm font-semibold">Plan reuse</h3>
+          <h3 className="mb-2 text-base font-semibold">Plan reuse</h3>
           <p className="text-sm">
             Once the last {agent.planReuse.after} plans for tasks alike agree, the next is carried out on that plan
             without asking the model to plan; one in {agent.planReuse.recheckEvery} is planned afresh. Tasks are alike
@@ -285,11 +377,11 @@ function AgentDetail({
             and the fields filled in match.
           </p>
           {agent.planReuse.kinds.length === 0 ? (
-            <p className="mt-1 text-xs text-muted">Nothing planned at this version yet.</p>
+            <p className="mt-1 text-sm text-faint">Nothing planned at this version yet.</p>
           ) : (
             <ul className="mt-2 space-y-2">
               {agent.planReuse.kinds.map((kind) => (
-                <li key={kind.task.join('|')} className="rounded-lg border border-line bg-panel p-3 text-xs"
+                <li key={kind.task.join('|')} className="rounded-[var(--radius-card)] border border-line bg-panel p-4 text-sm"
                   data-testid="plan-kind">
                   <p className="text-muted">{kind.task.join(' · ')}</p>
                   <p className="mt-1">
@@ -317,18 +409,18 @@ function AgentDetail({
       ) : null}
 
       <section aria-label="Eval cases">
-        <h3 className="mb-1 text-sm font-semibold">Eval cases</h3>
+        <h3 className="mb-2 text-base font-semibold">Eval cases</h3>
         {agent.evals.length === 0 ? (
           <p className="text-sm text-warn">None: a pull request cannot show what a change to this agent does.</p>
         ) : (
           <ul className="space-y-2">
             {agent.evals.map((one) => (
-              <li key={one.name} className="rounded-lg border border-line bg-panel p-3 text-sm">
+              <li key={one.name} className="rounded-[var(--radius-card)] border border-line bg-panel p-4 text-sm">
                 <p className="font-medium">
                   {one.name} <span className="font-normal text-muted">as {one.as}</span>
                 </p>
-                <p className="text-xs">{one.say ?? `the form: ${JSON.stringify(one.input)}`}</p>
-                <ul className="mt-1 list-disc pl-5 text-xs text-muted">
+                <p className="mt-1">{one.say ?? `the form: ${JSON.stringify(one.input)}`}</p>
+                <ul className="mt-2 list-disc pl-5 text-muted">
                   {one.expect.map((expectation) => (
                     <li key={expectation}>{expectation}</li>
                   ))}
@@ -340,11 +432,11 @@ function AgentDetail({
       </section>
 
       <section aria-label="Prompts">
-        <h3 className="mb-1 text-sm font-semibold">Prompts</h3>
+        <h3 className="mb-2 text-base font-semibold">Prompts</h3>
         {Object.entries(agent.prompts).map(([name, text]) => (
-          <details key={name} className="mb-2 rounded-lg border border-line bg-panel">
-            <summary className="cursor-pointer px-3 py-1 text-sm">{name}</summary>
-            <pre className="whitespace-pre-wrap px-3 pb-3 text-xs">{text}</pre>
+          <details key={name} className="mb-2 rounded-[var(--radius-card)] border border-line bg-panel">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-medium">{name}</summary>
+            <pre className="whitespace-pre-wrap px-4 pb-4 font-mono text-[13px] leading-5 text-muted">{text}</pre>
           </details>
         ))}
       </section>
@@ -355,9 +447,9 @@ function AgentDetail({
 function ToolRow({ tool }: { tool: AdminTool }) {
   const bound = Object.entries(tool.bound)
   return (
-    <li className="px-3 py-2 text-sm">
-      <span className="font-mono text-xs">{tool.name}</span>{' '}
-      <span className="text-xs text-muted">
+    <li className="px-4 py-3 text-sm">
+      <span className="font-mono text-[13px]">{tool.name}</span>{' '}
+      <span className="text-sm text-faint">
         {tool.connector} · {tool.system}
       </span>
       {tool.confirmed ? <Badge tone="warn">confirmed by the person</Badge> : null}
@@ -367,14 +459,14 @@ function ToolRow({ tool }: { tool: AdminTool }) {
         </Badge>
       ))}
       {tool.refusedInRehearsal ? <Badge tone="muted">refused in a rehearsal</Badge> : null}
-      <span className="block text-xs text-muted">{tool.description}</span>
+      <span className="mt-0.5 block text-sm text-muted">{tool.description}</span>
     </li>
   )
 }
 
 function Badge({ tone, children }: { tone: 'warn' | 'muted' | 'good' | 'bad'; children: React.ReactNode }) {
   const color = { warn: 'text-warn', muted: 'text-muted', good: 'text-good', bad: 'text-bad' }[tone]
-  return <span className={`ml-2 rounded border border-line px-1 text-[11px] ${color}`}>{children}</span>
+  return <span className={`ml-2 rounded-full border border-line px-2 py-0.5 text-xs ${color}`}>{children}</span>
 }
 
 function Rehearsals() {
@@ -405,26 +497,26 @@ function Rehearsals() {
   return (
     <ul className="space-y-3">
       {reports.map((report) => (
-        <li key={`${report.receivedAt}-${report.version}`} className="rounded-lg border border-line bg-panel">
+        <li key={`${report.receivedAt}-${report.version}`} className="rounded-[var(--radius-card)] border border-line bg-panel">
           <details open={report.held < report.cases}>
-            <summary className="cursor-pointer px-3 py-2 text-sm">
+            <summary className="cursor-pointer px-4 py-3 text-sm">
               <span className={report.held === report.cases ? 'text-good' : 'text-bad'}>
                 {report.held} of {report.cases} held
               </span>{' '}
               · {report.title ?? report.ref ?? short(report.version)}{' '}
-              <span className="text-xs text-muted">
+              <span className="text-sm text-faint">
                 at {short(report.version)}, {new Date(report.receivedAt).toLocaleString()}
               </span>
               {report.pullRequest ? (
-                <a href={report.pullRequest} className="ml-2 text-xs text-accent" target="_blank" rel="noreferrer">
+                <a href={report.pullRequest} className="ml-2 text-sm text-accent" target="_blank" rel="noreferrer">
                   pull request
                 </a>
               ) : null}
             </summary>
             {report.untested.length > 0 ? (
-              <p className="px-3 text-xs text-warn">Changed with no eval cases: {report.untested.join(', ')}</p>
+              <p className="px-4 text-sm text-warn">Changed with no eval cases: {report.untested.join(', ')}</p>
             ) : null}
-            <ul className="space-y-2 px-3 pb-3">
+            <ul className="space-y-2 px-4 pb-4">
               {report.results.map((result) => (
                 <RehearsalCase key={`${result.agent}/${result.case}`} result={result} />
               ))}
@@ -439,15 +531,15 @@ function Rehearsals() {
 function RehearsalCase({ result }: { result: RehearsalResult }) {
   const would = result.calls.filter((call) => call.refused)
   return (
-    <li className="rounded border border-line p-2 text-sm" data-testid="rehearsal-case">
+    <li className="rounded-[var(--radius-item)] border border-line-soft bg-canvas p-3 text-sm" data-testid="rehearsal-case">
       <p>
         <span className={result.passed ? 'text-good' : 'text-bad'}>{result.passed ? 'held' : 'failed'}</span>{' '}
         <span className="font-medium">
           {result.agent} / {result.case}
         </span>{' '}
-        <span className="text-xs text-muted">as {result.as}</span>
+        <span className="text-sm text-faint">as {result.as}</span>
       </p>
-      <ul className="mt-1 text-xs">
+      <ul className="mt-1.5 text-sm">
         {result.checks.map((check) => (
           <li key={check.name} className={check.passed ? 'text-muted' : 'text-bad'}>
             {check.passed ? '✓' : '✗'} {check.name}
@@ -456,14 +548,14 @@ function RehearsalCase({ result }: { result: RehearsalResult }) {
         ))}
       </ul>
       {result.plan.length > 0 ? (
-        <ol className="mt-1 list-decimal pl-5 text-xs">
+        <ol className="mt-1.5 list-decimal pl-5 text-sm">
           {result.plan.map((step, index) => (
             <li key={index}>{step}</li>
           ))}
         </ol>
       ) : null}
       {would.length > 0 ? (
-        <ul className="mt-1 text-xs">
+        <ul className="mt-1.5 text-sm">
           {would.map((call, index) => (
             <li key={index}>
               would {call.would}: <code>{call.tool}</code> {JSON.stringify(call.arguments)}
@@ -499,14 +591,14 @@ function Deferred() {
     <div className="space-y-4">
       {agents.map((agent) => (
         <section key={agent.id} aria-label={agent.name}>
-          <h2 className="mb-1 text-sm font-semibold">{agent.name}</h2>
+          <h2 className="mb-2 text-base font-semibold">{agent.name}</h2>
           {agent.actions.length === 0 ? (
-            <p className="text-xs text-muted">Nothing scheduled.</p>
+            <p className="text-sm text-faint">Nothing scheduled.</p>
           ) : (
-            <table className="w-full text-left text-xs [&_td]:pr-3 [&_th]:pr-3">
-              <thead className="text-muted">
+            <table className="w-full text-left text-sm [&_td]:pr-4 [&_th]:pr-4">
+              <thead className="text-faint">
                 <tr>
-                  <th className="py-1">Subject</th>
+                  <th className="py-2 font-medium">Subject</th>
                   <th>Runs</th>
                   <th>Status</th>
                   <th>Scheduled by</th>
@@ -515,8 +607,8 @@ function Deferred() {
               </thead>
               <tbody>
                 {agent.actions.map((action) => (
-                  <tr key={action.id} className="border-t border-line align-top">
-                    <td className="py-1">{action.subject}</td>
+                  <tr key={action.id} className="border-t border-line-soft align-top">
+                    <td className="py-2.5">{action.subject}</td>
                     <td>
                       {new Date(action.runAt).toLocaleString()}
                       <span className="block text-muted">{action.when}</span>
@@ -566,7 +658,7 @@ function Usage() {
   return (
     <div className="space-y-4 text-sm">
       <section aria-label="Account">
-        <h2 className="mb-1 text-sm font-semibold">Account</h2>
+        <h2 className="mb-2 text-base font-semibold">Account</h2>
         <p>
           {usage.account === 'host'
             ? 'The host’s model account: the host pays.'
@@ -577,9 +669,9 @@ function Usage() {
       </section>
 
       <section aria-label="Budgets">
-        <h2 className="mb-1 text-sm font-semibold">Budgets</h2>
+        <h2 className="mb-2 text-base font-semibold">Budgets</h2>
         {usage.budgets.length === 0 ? (
-          <p className="text-xs text-muted">No budget: nothing caps what the agents spend.</p>
+          <p className="text-sm text-faint">No budget: nothing caps what the agents spend.</p>
         ) : (
           <ul className="space-y-1">
             {usage.budgets.map((budget) => (
@@ -594,21 +686,21 @@ function Usage() {
       </section>
 
       <section aria-label="Spent">
-        <h2 className="mb-1 text-sm font-semibold">Spent</h2>
+        <h2 className="mb-2 text-base font-semibold">Spent</h2>
         <p data-testid="spent">
           Today: {usage.today.calls} calls, {tokens(usage.today)}, {dollars(usage.today.usd)}. This month (UTC):{' '}
           {usage.month.calls} calls, {tokens(usage.month)}, {dollars(usage.month.usd)}.
         </p>
         {usage.unpriced.length > 0 ? (
-          <p className="mt-1 text-xs text-warn">
+          <p className="mt-1 text-sm text-warn">
             The host has no price for {usage.unpriced.join(', ')}, so its cost is not in these dollars.
           </p>
         ) : null}
         {usage.byAgent.length > 0 ? (
-          <table className="mt-2 w-full text-left text-xs [&_td]:pr-3 [&_th]:pr-3">
-            <thead className="text-muted">
+          <table className="mt-3 w-full text-left text-sm [&_td]:pr-4 [&_th]:pr-4">
+            <thead className="text-faint">
               <tr>
-                <th className="py-1">Agent</th>
+                <th className="py-2 font-medium">Agent</th>
                 <th>Model</th>
                 <th>Paid by</th>
                 <th>Calls</th>
@@ -619,7 +711,7 @@ function Usage() {
             <tbody>
               {usage.byAgent.map((row) => (
                 <tr key={`${row.agent}/${row.model}/${row.account}`} className="border-t border-line">
-                  <td className="py-1">{row.agent}</td>
+                  <td className="py-2.5">{row.agent}</td>
                   <td>{row.model}</td>
                   <td>{row.account === 'host' ? 'the host' : 'the organization'}</td>
                   <td>{row.calls}</td>
@@ -637,18 +729,18 @@ function Usage() {
 
 function Connectors({ overview }: { overview: AdminOverview }) {
   return (
-    <table className="w-full text-left text-sm [&_td]:pr-3 [&_th]:pr-3">
-      <thead className="text-xs text-muted">
+    <table className="w-full max-w-3xl text-left text-sm [&_td]:pr-4 [&_th]:pr-4">
+      <thead className="text-faint">
         <tr>
-          <th className="py-1">Connector</th>
+          <th className="py-2 font-medium">Connector</th>
           <th>Reached</th>
           <th>Tools declared</th>
         </tr>
       </thead>
       <tbody>
         {overview.connectors.map((connector) => (
-          <tr key={connector.name} className="border-t border-line">
-            <td className="py-1 font-mono text-xs">{connector.name}</td>
+          <tr key={connector.name} className="border-t border-line-soft">
+            <td className="py-2.5 font-mono text-[13px]">{connector.name}</td>
             <td className={connector.reached ? 'text-good' : 'text-bad'}>
               {connector.reached ? 'yes' : `no — ${connector.failure ?? 'not connected'}`}
             </td>

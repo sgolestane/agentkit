@@ -101,6 +101,8 @@ export function Console() {
         onOpen={threads.open}
         agents={overview?.agents ?? []}
         admin={overview?.admin === true}
+        user={typeof overview?.user === 'string' ? overview.user : overview?.tenant}
+        org={typeof overview?.org === 'string' ? overview.org : undefined}
         onCreate={(agent) => void threads.create(agent)}
         onRename={(id, title) => void threads.rename(id, title)}
         onForget={(id) => void threads.forget(id)}

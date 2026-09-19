@@ -52,13 +52,13 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
   }
 
   return (
-    <section aria-label="Propose a change" className="space-y-3 rounded-lg border border-line bg-panel p-3">
-      <p className="text-xs text-muted">
+    <section aria-label="Propose a change" className="space-y-3 rounded-[var(--radius-card)] border border-line bg-panel p-4">
+      <p className="text-sm text-muted">
         The host checks the change the way it would load it, then opens it for review as {where}. Nothing changes for
         anyone until it is merged.
       </p>
       <div className="flex gap-3">
-        <ul className="w-56 shrink-0 text-xs" aria-label="Files">
+        <ul className="w-56 shrink-0 text-[13px]" aria-label="Files">
           {files.map((file) => {
             const edited = file.path in edits && edits[file.path] !== file.content
             return (
@@ -67,7 +67,7 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
                   type="button"
                   onClick={() => setSelected(file.path)}
                   aria-current={selected === file.path ? 'true' : undefined}
-                  className={`block w-full truncate rounded px-2 py-1 text-left font-mono ${
+                  className={`block w-full truncate rounded-[var(--radius-item)] px-2.5 py-1.5 text-left font-mono ${
                     selected === file.path ? 'bg-canvas text-ink' : 'text-muted hover:text-ink'
                   }`}
                 >
@@ -84,24 +84,24 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
             value={current}
             onChange={(event) => setEdits((all) => ({ ...all, [selected]: event.target.value }))}
             spellCheck={false}
-            className="h-80 min-w-0 flex-1 rounded border border-line bg-canvas p-2 font-mono text-xs outline-none focus:border-accent"
+            className="h-80 min-w-0 flex-1 rounded-[var(--radius-item)] border border-line bg-canvas p-3 font-mono text-[13px] leading-5 outline-none focus:border-accent"
           />
         ) : null}
       </div>
-      <label className="block text-xs">
+      <label className="block text-sm text-muted">
         Title
         <input
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          className="mt-1 block w-full rounded border border-line bg-canvas px-2 py-1 text-sm outline-none focus:border-accent"
+          className="mt-1 block w-full rounded-[var(--radius-item)] border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-accent"
         />
       </label>
-      <label className="block text-xs">
+      <label className="block text-sm text-muted">
         Why (optional)
         <textarea
           value={description}
           onChange={(event) => setDescription(event.target.value)}
-          className="mt-1 block h-16 w-full rounded border border-line bg-canvas px-2 py-1 text-sm outline-none focus:border-accent"
+          className="mt-1 block h-16 w-full rounded-[var(--radius-item)] border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-accent"
         />
       </label>
       <div className="flex items-center gap-3">
@@ -113,12 +113,12 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
         >
           {working ? 'Checking…' : 'Check and open for review'}
         </button>
-        <span className="text-xs text-muted">
+        <span className="text-sm text-muted">
           {changed.length === 0 ? 'Nothing edited yet.' : `${changed.length} file${changed.length === 1 ? '' : 's'} changed`}
         </span>
       </div>
       {outcome?.opened ? (
-        <div role="status" className="rounded border border-good p-2 text-sm">
+        <div role="status" className="rounded-[var(--radius-item)] border border-good p-3 text-sm">
           <p className="text-good">
             Opened for review:{' '}
             {outcome.url ? (
@@ -129,15 +129,15 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
               <code>{outcome.branch}</code>
             )}
           </p>
-          <div className="mt-1 text-xs">
+          <div className="mt-1 text-sm">
             <Markdown text={outcome.summary ?? ''} />
           </div>
         </div>
       ) : null}
       {outcome && !outcome.opened ? (
-        <div role="alert" className="rounded border border-bad p-2 text-sm text-bad">
+        <div role="alert" className="rounded-[var(--radius-item)] border border-bad p-3 text-sm text-bad">
           <p>Not opened, because:</p>
-          <ul className="mt-1 list-disc pl-5 text-xs">
+          <ul className="mt-1 list-disc pl-5">
             {(outcome.problems ?? []).map((one) => (
               <li key={one}>{one}</li>
             ))}
