@@ -493,8 +493,8 @@ public final class ChatRuntime implements AutoCloseable {
                 && (turn.agent() != null || finished.stream().anyMatch(earlier -> earlier.agent() != null));
         StringBuilder text = new StringBuilder(routed
                 ? "Earlier in this conversation, oldest first, for context. Each message went to the agent named with "
-                        + "its answer, or to AgentKit, which routes messages. Only the message above is for you; "
-                        + "answer it, and do not act on or comment on the others."
+                        + "its answer (which may be you), or to AgentKit, which routes messages. The message above is "
+                        + "the one to answer now; the others are context, and are not requests to you."
                 : "Earlier in this conversation, oldest first, for context. The message above is the one to answer now.");
         for (Turn earlier : finished.subList(Math.max(0, finished.size() - history.turns()),
                 finished.size())) {

@@ -28,12 +28,18 @@ public record RoutingCase(String name, String as, List<Earlier> before, String s
     }
 
     /**
-     * Who should answer: exactly one of an agent's id, the router answering, or the router asking.
+     * Who should answer: exactly one of an agent's id, the router answering, the router asking, or the router offering
+     * an agent's form.
      */
-    public record Expect(String agent, boolean answers, boolean asks) {
+    public record Expect(String agent, boolean answers, boolean asks, String form) {
+
+        public Expect(String agent, boolean answers, boolean asks) {
+            this(agent, answers, asks, null);
+        }
 
         public String describe() {
-            return agent != null ? "goes to " + agent : answers ? "the router answers" : "the router asks";
+            return agent != null ? "goes to " + agent : answers ? "the router answers" : asks ? "the router asks"
+                    : "the router offers the " + form + " form";
         }
     }
 }

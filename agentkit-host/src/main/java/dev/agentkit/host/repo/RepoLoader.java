@@ -58,7 +58,7 @@ public final class RepoLoader {
     private static final Set<String> ROUTING_KEYS = Set.of("cases");
     private static final Set<String> ROUTING_CASE_KEYS = Set.of("name", "as", "before", "say", "expect");
     private static final Set<String> ROUTING_BEFORE_KEYS = Set.of("say", "agent", "answer");
-    private static final Set<String> ROUTING_EXPECT_KEYS = Set.of("agent", "answers", "asks");
+    private static final Set<String> ROUTING_EXPECT_KEYS = Set.of("agent", "answers", "asks", "form");
     private static final Set<String> SIGN_IN_KEYS = Set.of("issuer", "clientId", "emailClaim", "mcpAudience");
     private static final Set<String> REPOSITORY_KEYS = Set.of("github", "path", "base", "api");
     private static final Pattern GITHUB_REPOSITORY = Pattern.compile("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
@@ -274,18 +274,23 @@ public final class RepoLoader {
             JsonNode expect = c.get("expect");
             RoutingCase.Expect expected = null;
             if (expect == null || !expect.isObject()) {
-                problem(file, where + ".expect", "is required: one of {agent: <id>}, {answers: true} or {asks: true}");
+                problem(file, where + ".expect", "is required: one of {agent: <id>}, {answers: true}, {asks: true} or "
+                        + "{form: <id>}");
             } else {
                 unknownKeys(file, where + ".expect.", expect, ROUTING_EXPECT_KEYS);
                 String agent = text(file, where + ".expect.agent", expect.get("agent"), false);
                 boolean answers = expect.path("answers").asBoolean(false);
                 boolean asks = expect.path("asks").asBoolean(false);
-                if ((agent != null ? 1 : 0) + (answers ? 1 : 0) + (asks ? 1 : 0) != 1) {
-                    problem(file, where + ".expect", "is exactly one of {agent: <id>}, {answers: true} or {asks: true}");
+                String form = text(file, where + ".expect.form", expect.get("form"), false);
+                if ((agent != null ? 1 : 0) + (answers ? 1 : 0) + (asks ? 1 : 0) + (form != null ? 1 : 0) != 1) {
+                    problem(file, where + ".expect", "is exactly one of {agent: <id>}, {answers: true}, {asks: true} "
+                            + "or {form: <id>}");
                 } else if (agent != null && !agents.contains(agent)) {
                     problem(file, where + ".expect.agent", "there is no agent " + agent);
+                } else if (form != null && !agents.contains(form)) {
+                    problem(file, where + ".expect.form", "there is no agent " + form);
                 } else {
-                    expected = new RoutingCase.Expect(agent, answers, asks);
+                    expected = new RoutingCase.Expect(agent, answers, asks, form);
                 }
             }
             if (problems.size() == before && name != null && as != null && say != null && expected != null) {

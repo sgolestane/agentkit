@@ -64,7 +64,9 @@ With no directory, a person is their email and nothing more.
 A person who may use more than one agent doesn't have to pick one. In a conversation started
 without choosing, each message goes to the agent that handles it. When no agent needs to act, the
 router answers itself, for example with what the agents do, or a form written out as a fill-in
-template. When it can't tell, it asks.
+template. When it can't tell, it asks. When the person asks for an agent's form, it shows them the
+form. It never shows one they didn't ask for, and in these conversations the form isn't shown
+otherwise. In a conversation with an agent they chose, the agent's form is always there.
 
 - **What the router may do.** It chooses among the agents the person may use, and nothing
   else. Its answer is constrained to their ids, and it has no tools. The agent it chooses runs
@@ -89,7 +91,7 @@ cases:
   - name: access-request
     as: dana.kim@acme.example
     say: I need read access to the payments Datadog dashboards for 2 hours.
-    expect: {agent: access-desk}          # or {answers: true}, or {asks: true}
+    expect: {agent: access-desk}          # or {answers: true}, {asks: true}, or {form: onboarding}
   - name: follow-up-stays
     as: dana.kim@acme.example
     before:                               # earlier turns: what was said, who answered, what they said
@@ -210,6 +212,8 @@ prompt:
 - **What the person sees.** The plan appears as soon as it is made, and each step is announced as
   it starts, with its tool calls in the trace. The answer lists every step and what came of it,
   and says where the plan stopped if a step did not finish.
+- **Questions aren't planned.** When a request needs nothing done, such as a question or a
+  summary of what was done, the planner answers it directly, and nothing runs.
 - **Limits.** A plan longer than 20 steps is refused before anything runs.
 
 #### Reusing a settled plan

@@ -71,7 +71,7 @@ class RoutingIsSetInTheRepositoryTest {
                 .satisfies(e -> assertThat(((DefinitionException) e).problems()).extracting(Object::toString)
                         .containsExactlyInAnyOrder(
                                 "routing.yaml cases[0].expect.agent: there is no agent payroll",
-                                "routing.yaml cases[1].expect: is exactly one of {agent: <id>}, {answers: true} or "
-                                        + "{asks: true}"));
+                                "routing.yaml cases[1].expect: is exactly one of {agent: <id>}, {answers: true}, "
+                                        + "{asks: true} or {form: <id>}"));
     }
 }

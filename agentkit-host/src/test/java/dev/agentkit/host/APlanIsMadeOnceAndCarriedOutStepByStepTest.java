@@ -131,6 +131,24 @@ class APlanIsMadeOnceAndCarriedOutStepByStepTest {
     }
 
     @Test
+    void aQuestionIsAnsweredWithoutAPlanAndNothingIsCarriedOut() throws Exception {
+        ScriptedLlm llm = new ScriptedLlm(ScriptedLlm.text("ANSWER: I opened **TICKET-1001** for your laptop earlier."));
+        start(llm);
+
+        Conversation conversation = runtime.store().create(PRIYA, "laptop", new Conversation.Pin("replacement",
+                org.current().repo().version()));
+        Turn turn = say(conversation, "Give me a summary of what you did");
+
+        assertThat(turn.state()).isEqualTo(Turn.State.COMPLETED);
+        assertThat(turn.answer()).isEqualTo("I opened **TICKET-1001** for your laptop earlier.");
+        assertThat(turn.views()).as("no plan shown").isEmpty();
+        assertThat(llm.received()).hasSize(1);
+        assertThat(llm.received().get(0).system()).hasValueSatisfying(system -> assertThat(system)
+                .contains("do not plan. Reply starting with \"ANSWER:\""));
+        assertThat(helpdesk.calls("send_message")).isEmpty();
+    }
+
+    @Test
     void aStepWhoseChangeFailedIsNotCalledDoneThoughItsAgentFinished() throws Exception {
         ScriptedLlm llm = new ScriptedLlm(
                 ScriptedLlm.text("1. Look up nobody@acme.example.\n2. Tell nobody@acme.example it is replaced."),

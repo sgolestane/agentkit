@@ -118,6 +118,8 @@ public final class Rehearsal {
                         "the router answers", answer.why(), answer.text(), null);
                 case Router.Ask ask -> new RoutingResult(routingCase, "the router asks",
                         ask.why(), ask.text(), null);
+                case Router.OfferForm form -> new RoutingResult(routingCase,
+                        "the router offers the " + form.agent() + " form", form.why(), form.text(), null);
             };
         } catch (RuntimeException e) {
             return new RoutingResult(routingCase, null, "", "", String.valueOf(e.getMessage()));

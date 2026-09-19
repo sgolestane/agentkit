@@ -69,9 +69,14 @@ class EachMessageFindsItsAgentTest {
     };
 
     private void start(String orgYamlAdds) throws Exception {
+        start(orgYamlAdds, Map.of());
+    }
+
+    private void start(String orgYamlAdds, Map<String, String> files) throws Exception {
         helpdesk = new HelpdeskConnector();
         RepoFixture repo = RepoFixture.copyInto(dir);
         repo.write("org.yaml", repo.read("org.yaml") + orgYamlAdds);
+        files.forEach((file, text) -> repo.write(file, file.endsWith("agent.yaml") ? repo.read(file) + text : text));
         repo.commit("acme");
         org = OrgHost.open(repo.root(), AgentHost.Options.hosted(Secrets.of(Map.of(
                 "HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN))));
@@ -143,6 +148,37 @@ class EachMessageFindsItsAgentTest {
         assertThat(routerAsked).as("no router call for a chosen agent").isEmpty();
         assertThatThrownBy(() -> chat.forMessage(PRIYA, conversation, "security-desk"))
                 .isInstanceOf(ChatUnavailable.class).hasMessage("There is no agent security-desk for you.");
+    }
+
+    @Test
+    void aFormIsOfferedOnlyWhenAskedFor() throws Exception {
+        start("");
+        Conversation conversation = runtime.store().create(SAM, "", chat.pin(SAM, null));
+        routes.add(route("form", "helpdesk", "Here is the IT Helpdesk form."));
+
+        Turn offered = say(conversation, "Can I have the helpdesk form?");
+
+        // The helpdesk in this repository has no form, so the router says so rather than offering one.
+        assertThat(offered.answer()).isEqualTo("IT Helpdesk has no form; say what you need and it will be handled.");
+        assertThat(offered.views()).isEmpty();
+        assertThat(offered.agent()).isNull();
+    }
+
+    @Test
+    void anAgentsFormIsShownWhenAskedForAndNothingRuns() throws Exception {
+        start("", Map.of("agents/helpdesk/agent.yaml", "\ninput: {schema: input.yaml}\n",
+                "agents/helpdesk/input.yaml", "type: object\nproperties:\n  laptop: {type: string}\n"));
+        Conversation conversation = runtime.store().create(SAM, "", chat.pin(SAM, null));
+        routes.add(route("form", "helpdesk", "Here is the IT Helpdesk form."));
+
+        Turn offered = say(conversation, "Can I have the helpdesk form?");
+
+        assertThat(offered.answer()).isEqualTo("Here is the IT Helpdesk form.");
+        assertThat(offered.views()).singleElement().satisfies(view -> {
+            assertThat(view.kind()).isEqualTo("form");
+            assertThat(view.data()).containsEntry("agent", "helpdesk");
+        });
+        assertThat(offered.agent()).as("no agent ran").isNull();
     }
 
     @Test

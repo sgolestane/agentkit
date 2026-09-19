@@ -81,12 +81,13 @@ export function Console() {
     [conversation, uploads],
   )
 
-  // The open conversation's agent, when the console offers more than one: its form, if it has one. A conversation
-  // pinned to no agent offers the form of the agent that answered last.
+  // The form in front of the person: the agent's, when they chose one to talk to; in a conversation where each
+  // message finds its agent, only one they asked for — the form the latest answer offered.
   const pinnedAgentId = threads.threads.find((one) => one.id === threads.current)?.agent?.id
   const routed = Boolean(overview?.routing) && !pinnedAgentId && Boolean(threads.current)
-  const lastAgentId = [...conversation.transcript.turns].reverse().find((turn) => turn.agent)?.agent?.id
-  const openAgentId = pinnedAgentId ?? (routed ? lastAgentId : undefined)
+  const latest = conversation.transcript.turns[conversation.transcript.turns.length - 1]
+  const offeredForm = routed ? latest?.views.find((view) => view.kind === 'form')?.data.agent : undefined
+  const openAgentId = pinnedAgentId ?? (typeof offeredForm === 'string' ? offeredForm : undefined)
   const openAgent = overview?.agents?.find((agent) => agent.id === openAgentId)
 
   const problems = overview?.problems ?? []
@@ -163,7 +164,7 @@ export function Console() {
             key={threads.current}
             schema={openAgent.input}
             agentName={openAgent.name}
-            startOpen={conversation.transcript.turns.length === 0}
+            startOpen={routed || conversation.transcript.turns.length === 0}
             disabled={Boolean(unusable) || conversation.working}
             onSubmit={(input) => void conversation.say('', [], input, routed ? openAgent.id : undefined)}
           />

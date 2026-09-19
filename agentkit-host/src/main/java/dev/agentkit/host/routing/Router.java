@@ -46,6 +46,10 @@ public final class Router {
             start one, what a form asks for. You may write a form out as a fill-in text template. Anything about a \
             request, a grant, a task or its status goes to the agent that handled it, even if an earlier answer seems \
             to say it: only that agent can check. Never say something was done, and never make up a policy.
+            - Offer a form ("form") only when the person asks for an agent's form, or to fill in its form: "agent" is \
+            that agent's id, and "text" one short line introducing the form, which is shown to them: do not write the \
+            form out as well. Never offer a \
+            form they did not ask for; a request with the details in it goes to the agent.
             - Ask ("ask") one short question when two agents could fit, or when you cannot tell what is wanted. Name the \
             agents that could help.
             - "why" is one short sentence. "agent" is the chosen agent's id, or "" when you answer or ask. "text" is your \
@@ -85,6 +89,10 @@ public final class Router {
     public record Ask(String text, String why) implements Decision {
     }
 
+    /** The person asked for {@code agent}'s form: it is shown to them, with {@code text} introducing it. */
+    public record OfferForm(String agent, String text, String why) implements Decision {
+    }
+
     private Router() {
     }
 
@@ -103,7 +111,7 @@ public final class Router {
         ids.add("");
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("why", Map.of("type", "string"));
-        properties.put("action", Map.of("type", "string", "enum", List.of("agent", "answer", "ask")));
+        properties.put("action", Map.of("type", "string", "enum", List.of("agent", "answer", "ask", "form")));
         properties.put("agent", Map.of("type", "string", "enum", ids));
         properties.put("text", Map.of("type", "string"));
 
@@ -165,6 +173,14 @@ public final class Router {
             }
             case "answer" -> new Answer(reply.isBlank() ? "I can't help with that here." : reply, why);
             case "ask" -> new Ask(reply.isBlank() ? "Which of the agents is this for?" : reply, why);
+            case "form" -> {
+                Offered offered = agents.stream().filter(one -> one.id().equals(agent)).findFirst().orElseThrow(() ->
+                        new IllegalStateException("The router offered the form of " + agent
+                                + ", which is not an agent it was shown"));
+                yield offered.form().isBlank()
+                        ? new Answer(offered.name() + " has no form; say what you need and it will be handled.", why)
+                        : new OfferForm(agent, reply.isBlank() ? "Here is the " + offered.name() + " form." : reply, why);
+            }
             default -> throw new IllegalStateException("The router's answer had no action it knows: " + action);
         };
     }

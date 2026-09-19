@@ -51,6 +51,21 @@ import java.util.function.Supplier;
  */
 final class PlanExecuteTurn implements ChatRuntime.Runner {
 
+    /** How the planner says a request needs no plan. */
+    static final String ANSWER = "ANSWER:";
+
+    /** Added to every planner prompt: a request that needs nothing done is answered, not planned. */
+    static final String ANSWER_INSTEAD = "\n\nIf the request needs no action — a question, a summary of what was "
+            + "already done, something about this conversation — do not plan. Reply starting with \""
+            + ANSWER + "\", followed by the answer, written for the person, in Markdown.";
+
+    /** The planner answered instead of planning. */
+    private static final class AnsweredInstead extends RuntimeException {
+        AnsweredInstead(String answer) {
+            super(answer, null, false, false);
+        }
+    }
+
     /** The most steps a plan may have before it is refused rather than run. */
     static final int MAX_PLAN_STEPS = 20;
 
@@ -92,12 +107,14 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     @Override
     public AgentResult run(Goal goal, List<ContentBlock> alsoSent) {
         AtomicReference<TokenUsage> plannerUsage = new AtomicReference<>(TokenUsage.ZERO);
+        AtomicReference<String> plannerSaid = new AtomicReference<>("");
         LlmClient counted = request -> {
             LlmResponse response = llm.generate(request);
             plannerUsage.set(plannerUsage.get().plus(response.usage()));
+            plannerSaid.set(response.message().text());
             return response;
         };
-        LlmPlanner planner = new LlmPlanner(counted, agent.model(), agent.plannerPrompt(principal, now),
+        LlmPlanner planner = new LlmPlanner(counted, agent.model(), agent.plannerPrompt(principal, now) + ANSWER_INSTEAD,
                 agent.definition().maxTokens());
         AtomicReference<Plan> made = new AtomicReference<>();
         AtomicInteger built = new AtomicInteger();
@@ -119,6 +136,11 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             }
             Plan plan = planner.plan(task.flatMap(PlanExecuteTurn::lastPlan)
                     .map(last -> Goal.of(request.render() + "\n\n" + last)).orElse(request), tools);
+            String said = plannerSaid.get().strip();
+            if (said.startsWith(ANSWER)) {
+                // Nothing to do: a question, or a summary of what was done. Answered, and nothing is carried out.
+                throw new AnsweredInstead(said.substring(ANSWER.length()).strip());
+            }
             if (plan.size() > MAX_PLAN_STEPS) {
                 throw new IllegalStateException("The plan had " + plan.size() + " steps, more than the "
                         + MAX_PLAN_STEPS + " a turn may carry out.");
@@ -142,6 +164,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         PlanExecution execution;
         try {
             execution = planAndExecute.run(withWhatElseWasSent(goal, alsoSent));
+        } catch (AnsweredInstead answered) {
+            return AgentResult.completed(answered.getMessage(), 0, plannerUsage.get());
         } catch (IllegalStateException refused) {
             return AgentResult.failed(refused, refused.getMessage(), 0, plannerUsage.get());
         }

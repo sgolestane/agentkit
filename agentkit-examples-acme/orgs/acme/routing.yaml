@@ -24,3 +24,8 @@ cases:
         answer: "Which incident is this for?"
     say: INC-4302
     expect: {agent: access-desk}
+
+  - name: asks-for-the-form
+    as: dana.kim@acme.example
+    say: Can I have the onboarding form?
+    expect: {form: onboarding}

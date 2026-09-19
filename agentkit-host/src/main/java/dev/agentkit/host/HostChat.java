@@ -282,7 +282,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             HostedAgent chosen = version.agent(turn.agent().id()).filter(a -> a.admits(principal))
                     .orElseThrow(() -> new ChatUnavailable("There is no agent " + turn.agent().id() + " for you."));
             note(session, chosen.definition().id(), version.repo().version(), "chosen by you");
-            return runnerOf(session, turnOf(tenant, version, chosen)).run(goal, alsoSent);
+            return runnerOf(session, turnOf(tenant, version, chosen)).run(goal, withYou(chosen, alsoSent));
         }
         List<HostedAgent> offered = current.agentsFor(principal);
         OrgRepo account = current.repo();
@@ -312,8 +312,18 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             Conversation.Pin pin = new Conversation.Pin(chosen.definition().id(), current.repo().version());
             session.store().route(session.tenantId(), session.conversationId(), session.turnId(), pin);
             note(session, chosen.definition().id(), pin.version(), to.why(), millis);
-            AgentResult result = runnerOf(session, turnOf(tenant, current, chosen)).run(goal, alsoSent);
+            AgentResult result = runnerOf(session, turnOf(tenant, current, chosen)).run(goal, withYou(chosen, alsoSent));
             return withUsage(result, spent.get());
+        }
+        if (decision instanceof Router.OfferForm form) {
+            // Shown because they asked for it: the console puts the agent's form in front of them.
+            HostedAgent offeredAgent = offered.stream().filter(a -> a.definition().id().equals(form.agent())).findFirst()
+                    .orElseThrow();
+            session.store().show(session.tenantId(), session.conversationId(), session.turnId(),
+                    dev.agentkit.core.tool.View.of("form", Map.of("agent", form.agent(),
+                            "name", offeredAgent.definition().name())));
+            note(session, null, current.repo().version(), form.why(), millis);
+            return AgentResult.completed(form.text(), 1, spent.get());
         }
         String text = decision instanceof Router.Answer answer ? answer.text() : ((Router.Ask) decision).text();
         note(session, null, current.repo().version(), decision.why(), millis);
@@ -327,6 +337,19 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         AgentHost current = orgs.get(tenant.org()).current();
         return chosen || current.principal(tenant.email())
                 .map(principal -> routes(current, current.agentsFor(principal))).orElse(false);
+    }
+
+    /**
+     * What a routed turn's agent is sent with the message: who it is, so that in a conversation several agents answer,
+     * it knows which earlier answers were its own.
+     */
+    private static List<dev.agentkit.core.message.ContentBlock> withYou(HostedAgent agent,
+                                                                       List<dev.agentkit.core.message.ContentBlock> alsoSent) {
+        List<dev.agentkit.core.message.ContentBlock> blocks = new java.util.ArrayList<>(alsoSent);
+        blocks.add(dev.agentkit.core.message.TextBlock.of("You are " + agent.definition().name() + " (agent "
+                + agent.definition().id() + "). In the earlier turns above, answers marked \"Agent "
+                + agent.definition().id() + "\" are yours."));
+        return blocks;
     }
 
     /** The earlier turns of a routed turn's conversation, for the router: said, answered by whom, and the answer. */
