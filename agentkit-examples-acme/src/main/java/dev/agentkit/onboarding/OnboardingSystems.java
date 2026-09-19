@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -382,9 +383,14 @@ public final class OnboardingSystems {
                         "email", "first_name", "last_name", "groups"),
                 SideEffects.EXTERNAL, inv -> {
                     String email = lower(inv.stringArgument("email"));
-                    if (okta.containsKey(email)) {
+                    OktaUser existing = okta.get(email);
+                    if (existing != null && existing.status().equals("ACTIVE")) {
+                        return ToolResult.ok("Okta: " + email + " already has an active account, in groups "
+                                + existing.groups() + "; nothing was changed.");
+                    }
+                    if (existing != null) {
                         return ToolResult.error("Okta: a user with email " + email
-                                + " already exists (status " + okta.get(email).status() + ")");
+                                + " already exists (status " + existing.status() + ")");
                     }
                     okta.put(email, new OktaUser(email, inv.stringArgument("first_name"),
                             inv.stringArgument("last_name"), "ACTIVE", groups(inv)));
@@ -528,6 +534,10 @@ public final class OnboardingSystems {
                                 + "; it has to be obtained before they can be added.");
                     }
                     String team = lower(inv.stringArgument("team"));
+                    if (team.equals(githubMembers.get(identity.username()))) {
+                        return ToolResult.ok("GitHub: " + identity.username() + " is already in team " + team
+                                + "; nothing was changed.");
+                    }
                     githubMembers.put(identity.username(), team);
                     return ToolResult.ok("GitHub: added " + identity.username() + " to team " + team
                             + " (account source: " + identity.source() + ")");
@@ -563,7 +573,10 @@ public final class OnboardingSystems {
                     if (!Set.of("staging", "production").contains(grant.environment())) {
                         return ToolResult.error("AWS: unknown environment \"" + grant.environment() + "\"");
                     }
-                    awsGrants.add(grant);
+                    if (!awsGrants.add(grant)) {
+                        return ToolResult.ok("AWS: " + grant.email() + " already has " + grant.environment()
+                                + " access; nothing was changed.");
+                    }
                     return ToolResult.ok("AWS: granted " + grant.environment() + " to " + grant.email());
                 });
     }
@@ -590,7 +603,9 @@ public final class OnboardingSystems {
                 schema(Map.of("email", str("Work email")), "email"),
                 SideEffects.IDEMPOTENT, inv -> {
                     String email = lower(inv.stringArgument("email"));
-                    salesforceSeats.add(email);
+                    if (!salesforceSeats.add(email)) {
+                        return ToolResult.ok("Salesforce: " + email + " already has a seat; nothing was changed.");
+                    }
                     return ToolResult.ok("Salesforce: seat assigned to " + email);
                 });
     }
@@ -624,7 +639,13 @@ public final class OnboardingSystems {
                     for (String c : list(inv, "channels")) {
                         channels.add("#" + lower(c).replaceFirst("^#", ""));
                     }
-                    boolean existed = slack.containsKey(email);
+                    SlackAccount before = slack.get(email);
+                    if (before != null && before.accountType().equals(lower(inv.stringArgument("account_type")))
+                            && before.channels().containsAll(channels)) {
+                        return ToolResult.ok("Slack: " + email + " already has a " + before.accountType()
+                                + " account in " + before.channels() + "; nothing was changed.");
+                    }
+                    boolean existed = before != null;
                     slack.put(email, new SlackAccount(email, lower(inv.stringArgument("account_type")), channels));
                     slackProfiles.putIfAbsent(email, new LinkedHashMap<>());
                     return ToolResult.ok("Slack: " + (existed ? "updated pre-boarding" : "created") + " "
@@ -665,7 +686,13 @@ public final class OnboardingSystems {
                 schema(Map.of("email", str("Work email of the recipient"), "address", str("Full shipping address")),
                         "email", "address"),
                 SideEffects.EXTERNAL, inv -> {
-                    shipments.add(new Shipment(lower(inv.stringArgument("email")), inv.stringArgument("address")));
+                    String email = lower(inv.stringArgument("email"));
+                    Optional<Shipment> shipped = shipments.stream().filter(sh -> sh.email().equals(email)).findFirst();
+                    if (shipped.isPresent()) {
+                        return ToolResult.ok("Shipping: a laptop was already shipped to " + email + " at "
+                                + shipped.get().address() + "; nothing was sent.");
+                    }
+                    shipments.add(new Shipment(email, inv.stringArgument("address")));
                     return ToolResult.ok("Shipping: laptop dispatched to " + inv.stringArgument("address"));
                 });
     }
@@ -682,6 +709,14 @@ public final class OnboardingSystems {
                 SideEffects.EXTERNAL, inv -> {
                     ItTicket ticket = new ItTicket(lower(inv.stringArgument("category")),
                             lower(inv.stringArgument("for_email")), inv.stringArgument("summary"));
+                    for (int i = 0; i < tickets.size(); i++) {
+                        ItTicket open = tickets.get(i);
+                        if (ticket.category().equals("laptop_pickup") && open.category().equals(ticket.category())
+                                && open.forEmail().equals(ticket.forEmail())) {
+                            return ToolResult.ok("IT: ticket INC-" + (1001 + i) + " (laptop_pickup) is already open for "
+                                    + ticket.forEmail() + "; no new ticket was opened.");
+                        }
+                    }
                     tickets.add(ticket);
                     return ToolResult.ok("IT: opened ticket INC-" + (1000 + tickets.size())
                             + " (" + ticket.category() + ")");
@@ -693,7 +728,10 @@ public final class OnboardingSystems {
                 new ToolDeclaration("workday", ToolEffect.GRANT, "employee_id"),
                 schema(Map.of("employee_id", str("Workday employee id")), "employee_id"),
                 SideEffects.IDEMPOTENT, inv -> {
-                    benefitsEnrolled.add(inv.stringArgument("employee_id"));
+                    if (!benefitsEnrolled.add(inv.stringArgument("employee_id"))) {
+                        return ToolResult.ok("Workday: " + inv.stringArgument("employee_id")
+                                + " is already enrolled in benefits; nothing was changed.");
+                    }
                     return ToolResult.ok("Workday: benefits enrolled for " + inv.stringArgument("employee_id"));
                 });
     }

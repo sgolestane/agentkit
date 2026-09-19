@@ -207,6 +207,30 @@ host calls that tool itself, with the subject's id, and it answers with one JSON
 
 An error, or anything that is not such an object, means the subject does not exist.
 
+## 6. Checks before planning
+
+A plan-execute agent can name read tools to call before it plans (`before: [{tool, with}]`). The
+host calls each one as the person, for each task, with arguments from the task's fields.
+
+- **An error means no.** Nothing is planned or done for that task, and the error text is shown
+  to the person as the reason. Write it for them: "Only Ravi Menon's manager can onboard them,
+  and sam.okafor@acme.example is not."
+- **Anything else is given to the planner.** A JSON object may carry `already_in_place`, mapping
+  each system to what it already holds for the task. The planner leaves those out, and the
+  answer lists them under "Already in place, so not done again".
+
+```json
+{
+  "allowed": true,
+  "manager": "dana.kim@acme.example",
+  "already_in_place": {"okta": "account ACTIVE in groups [engineering, all-staff]"}
+}
+```
+
+A tool that changes something should also answer a repeat as success, saying nothing changed
+("already has an active account; nothing was changed"), rather than as an error. The step then
+reads "Already done" rather than "Failed".
+
 ## Bound arguments, alongside the assertion
 
 An agent definition can still bind an argument to who is asking, for example

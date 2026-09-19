@@ -64,6 +64,25 @@ class AGrantIsOnlyForTheHiresManagerTest {
     }
 
     @Test
+    void doingSomethingAgainChangesNothingAndSaysSo() {
+        Map<String, Object> okta = Map.of("email", MARCUS, "first_name", "Marcus", "last_name", "Bell",
+                "groups", List.of("sales"), "requested_by", LENA);
+        assertThat(call("okta_create_user", okta).content()).startsWith("Okta: created");
+        ToolResult again = call("okta_create_user", okta);
+        assertThat(again.isError()).isFalse();
+        assertThat(again.content()).contains("already has an active account").endsWith("nothing was changed.");
+
+        Map<String, Object> ship = Map.of("email", MARCUS, "address", "1 Main St", "requested_by", LENA);
+        call("ship_laptop", ship);
+        assertThat(call("ship_laptop", ship).content()).contains("already shipped").endsWith("nothing was sent.");
+        assertThat(systems.shipments()).hasSize(1);
+
+        Map<String, Object> ticket = Map.of("category", "laptop_pickup", "for_email", MARCUS, "summary", "New York");
+        assertThat(call("it_create_ticket", ticket).content()).startsWith("IT: opened ticket INC-1001");
+        assertThat(call("it_create_ticket", ticket).content()).contains("INC-1001 (laptop_pickup) is already open");
+    }
+
+    @Test
     void onlyToolsThatGrantOrRevokeAskWhoIsAsking() {
         assertThat(systems.catalog().entries()).allSatisfy(entry -> {
             boolean asks = entry.tool().inputSchema().toString().contains("requested_by");

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { PlanAnswer, planSteps } from './PlanAnswer'
+import { PlanAnswer, planAnswer, planSteps } from './PlanAnswer'
 
 const answer = [
   '1. Okta: create an account for marcus.bell@acme.example.',
@@ -39,6 +39,15 @@ describe('A carried-out plan', () => {
     render(<PlanAnswer steps={steps!} />)
     expect(screen.getByText('Already done')).toHaveClass('text-muted')
     expect(screen.getByText('Not done')).toHaveClass('text-warn')
+  })
+
+  it('keeps what the host says after the steps apart from them', () => {
+    const read = planAnswer(['1. Slack: create a member account.', '   - Done: Created it.', '',
+      'Already in place, so not done again:', '- okta: account ACTIVE'].join('\n'))
+    expect(read?.steps).toHaveLength(1)
+    expect(read?.after).toBe('Already in place, so not done again:\n- okta: account ACTIVE')
+    expect(planAnswer('1. A step\n   - Done: It.')?.after).toBe('')
+    expect(planAnswer('Nothing was done. Only their manager can.')).toBeNull()
   })
 
   it('shows each step with what came of it folded away until opened', async () => {

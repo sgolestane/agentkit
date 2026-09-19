@@ -90,6 +90,28 @@ class OnboardingIsConfigurationOnTheHostTest {
     }
 
     @Test
+    void whatIsAlreadyInPlaceIsGivenToThePlannerAndListedInTheAnswer() throws Exception {
+        call("salesforce_assign_seat", Map.of("email", MARCUS, "requested_by", LENA));
+        ScriptedModel llm = new ScriptedModel(
+                text("1. Send lena.ortiz@acme.example a Slack message reporting what was done."),
+                toolUse("slack_send_message", Map.of("to_email", LENA, "text", "Marcus already had his seat.")),
+                text("Told Lena.\nOUTCOME: done"));
+        try (AcmeOnTheHost acme = start(llm)) {
+            Turn turn = onboard(acme, LENA, OnboardingEvalTest.form(systems.worker("W-1002")));
+
+            assertThat(llm.requests.get(0).messages().toString()).contains("Checked before planning")
+                    .contains("Plan nothing for what they say is already in place")
+                    .contains("\"salesforce\":\"a seat\"");
+            assertThat(turn.answer()).isEqualTo("""
+                    1. Send lena.ortiz@acme.example a Slack message reporting what was done.
+                       - Done: Told Lena.
+
+                    Already in place, so not done again:
+                    - salesforce: a seat""");
+        }
+    }
+
+    @Test
     void aManagerCannotOnboardSomeoneElsesHire() throws Exception {
         ScriptedModel llm = new ScriptedModel();
         try (AcmeOnTheHost acme = start(llm)) {

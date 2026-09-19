@@ -67,6 +67,17 @@ export function planSteps(answer: string): PlanStep[] | null {
   return steps
 }
 
+/**
+ * A carried-out plan's answer read back: its steps, and what the host says after them past a
+ * blank line, such as what was already in place and not done again. Null when the answer does
+ * not start with a plan's steps.
+ */
+export function planAnswer(answer: string): { steps: PlanStep[]; after: string } | null {
+  const at = answer.indexOf('\n\n')
+  const steps = planSteps(at < 0 ? answer : answer.slice(0, at))
+  return steps ? { steps, after: at < 0 ? '' : answer.slice(at + 2).trim() } : null
+}
+
 /** Whether a turn carried out a plan: its trace has the plan it made. */
 export function isPlanTurn(turn: Turn): boolean {
   return turn.steps.some((step) => step.kind === 'NOTE' && step.name === 'plan')

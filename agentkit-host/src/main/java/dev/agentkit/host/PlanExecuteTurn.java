@@ -219,7 +219,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         AgentResult overall = execution.overall();
         List<List<String>> failed = failedChanges(execution.stepResults().size(), startedAfter);
         task.ifPresent(f -> keep(f, execution, reused.isPresent(), failed));
-        String answer = answer(execution, failed);
+        String answer = answer(execution, failed) + (checked.inPlace().isEmpty() ? ""
+                : "\n\nAlready in place, so not done again:\n- " + String.join("\n- ", checked.inPlace()));
         TokenUsage usage = overall.usage().plus(plannerUsage.get());
         return overall.stopReason() == StopReason.COMPLETED
                 ? AgentResult.completed(answer, overall.steps(), usage)
@@ -288,10 +289,11 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
      * @param refused   for each task a check refused, which task and why
      * @param unchecked whether the request holds work the checks could not be made for: in plain words, or without a
      *                  field a check needs
+     * @param inPlace   what the checks said is already in place, one line each, as the answer lists it
      */
-    record Checked(List<String> passed, List<String> refused, boolean unchecked) {
+    record Checked(List<String> passed, List<String> refused, boolean unchecked, List<String> inPlace) {
 
-        static final Checked NOTHING = new Checked(List.of(), List.of(), true);
+        static final Checked NOTHING = new Checked(List.of(), List.of(), true, List.of());
 
         /** The answer when every task was refused: nothing was done, and why. */
         String refusal() {
@@ -306,7 +308,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             }
             StringBuilder text = new StringBuilder(request.render());
             if (!passed.isEmpty()) {
-                text.append("\n\nChecked before planning, as the person asking; what the systems answered:\n")
+                text.append("\n\nChecked before planning, as the person asking; what the systems answered. Plan "
+                                + "nothing for what they say is already in place: it is not done again.\n")
                         .append(Spotlight.wrap(Spotlight.Kind.EVIDENCE, Source.of("checks"), String.join("\n\n", passed)));
             }
             if (!refused.isEmpty()) {
@@ -336,6 +339,7 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         List<String> passed = new java.util.ArrayList<>();
         List<String> refused = new java.util.ArrayList<>();
         boolean unchecked = false;
+        List<String> inPlace = new java.util.ArrayList<>();
         for (Map<String, String> record : records) {
             StringBuilder answers = new StringBuilder();
             String refusal = null;
@@ -367,6 +371,7 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
                 }
                 answers.append(check.tool().tool()).append(" (").append(which).append("): ")
                         .append(body(result.get().content())).append('\n');
+                inPlace.addAll(alreadyInPlace(body(result.get().content()), records.size() == 1 ? null : which));
             }
             if (refusal != null) {
                 refused.add(records.size() == 1 ? refusal : which + ": " + refusal);
@@ -374,7 +379,26 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
                 passed.add(answers.toString().strip());
             }
         }
-        return new Checked(passed, refused, unchecked);
+        return new Checked(passed, refused, unchecked, inPlace);
+    }
+
+    /**
+     * What a check says is already in place, one line each: its answer's {@code already_in_place}, when it is a JSON
+     * object with one — each system and what it holds — as {@code docs/MCP-CONNECTORS.md} describes; nothing otherwise.
+     *
+     * @param which the task, when a request holds several; null for one
+     */
+    static List<String> alreadyInPlace(String answer, String which) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode in = new com.fasterxml.jackson.databind.ObjectMapper().readTree(answer)
+                    .path("already_in_place");
+            List<String> lines = new java.util.ArrayList<>();
+            in.fields().forEachRemaining(held -> lines.add((which == null ? "" : which + ", ")
+                    + OneLine.of(held.getKey()) + ": " + OneLine.of(held.getValue().asText(held.getValue().toString()))));
+            return lines;
+        } catch (Exception notJson) {
+            return List.of();
+        }
     }
 
     private static final java.util.regex.Pattern FENCED = java.util.regex.Pattern.compile(
