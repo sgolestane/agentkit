@@ -9,7 +9,10 @@ import dev.agentkit.chat.store.InMemoryChatStore;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** In a conversation pinned to no agent, which agent each turn went to is kept, in Postgres as in memory. */
+/**
+ * In a conversation pinned to no agent, which agent each turn went to is kept, in Postgres as in memory; and in any
+ * conversation, whether the person left a turn out.
+ */
 class ATurnsAgentIsKeptInPostgresAsInMemoryTest {
 
     @Test
@@ -36,5 +39,11 @@ class ATurnsAgentIsKeptInPostgresAsInMemoryTest {
         assertThat(store.turn(tenant, conversation.id(), picked.id()).orElseThrow().agent()).isEqualTo(chosen);
         assertThat(store.turns(tenant, conversation.id())).extracting(Turn::agent)
                 .containsExactly(new Conversation.Pin("helpdesk", "v1"), chosen);
+
+        // And whether the person left a turn out of the conversation.
+        assertThat(store.leaveOut(tenant, conversation.id(), routed.id(), true).orElseThrow().leftOut()).isTrue();
+        assertThat(store.turns(tenant, conversation.id())).extracting(Turn::leftOut).containsExactly(true, false);
+        store.leaveOut(tenant, conversation.id(), routed.id(), false);
+        assertThat(store.turn(tenant, conversation.id(), routed.id()).orElseThrow().leftOut()).isFalse();
     }
 }

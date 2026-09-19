@@ -35,6 +35,7 @@ export function Transcript({
   onStop,
   onDecide,
   onRegenerate,
+  onLeaveOut,
   onEdit,
   routed = false,
   agents = [],
@@ -52,6 +53,8 @@ export function Transcript({
     body?: Record<string, unknown>,
   ) => void
   onRegenerate: () => void
+  /** Leaves a finished turn out of what the agents read next, or puts it back. */
+  onLeaveOut?: (turnId: string, left: boolean) => void
   onEdit: (text: string) => void
   /** Whether each message finds its own agent: then each answer says which agent gave it, and it can be asked of another. */
   routed?: boolean
@@ -107,7 +110,9 @@ export function Transcript({
               {routed && !turn.state.match(/QUEUED|RUNNING/) ? (
                 <AnsweredBy turn={turn} agents={agents} onSendTo={onSendTo} />
               ) : null}
-              {!turn.state.match(/QUEUED|RUNNING/) ? <TurnAnswer turn={turn} /> : null}
+              {!turn.state.match(/QUEUED|RUNNING/) ? (
+                <TurnAnswer turn={turn} onLeaveOut={onLeaveOut ? (left) => onLeaveOut(turn.id, left) : undefined} />
+              ) : null}
               {turn.state === 'QUEUED' || turn.state === 'RUNNING' ? (
                 <>
                   {turn.answer ? <TurnAnswer turn={turn} /> : null}
@@ -269,10 +274,38 @@ function CopyAnswer({ text }: { text: string }) {
   )
 }
 
-function TurnAnswer({ turn }: { turn: Turn }) {
+/**
+ * Leaves a finished answer out of the conversation, or puts it back. Left out, it stays on the page, faded, and no
+ * agent reads it again as something said: for an answer that was wrong, which would otherwise be repeated.
+ */
+function LeaveOut({ turn, onLeaveOut }: { turn: Turn; onLeaveOut: (left: boolean) => void }) {
+  return turn.leftOut ? (
+    <p className="mt-2 flex items-center gap-2 text-xs text-faint" data-testid="left-out">
+      Left out of the conversation: no agent reads it again.
+      <button
+        type="button"
+        onClick={() => onLeaveOut(false)}
+        className="rounded-[var(--radius-item)] px-2 py-0.5 text-muted hover:bg-hover hover:text-ink"
+      >
+        Put back
+      </button>
+    </p>
+  ) : (
+    <button
+      type="button"
+      onClick={() => onLeaveOut(true)}
+      title="Leave this answer out of what the agents read next"
+      className="mt-1 rounded-[var(--radius-item)] px-2 py-1 text-xs text-faint opacity-0 transition hover:bg-hover hover:text-ink group-hover:opacity-100 focus:opacity-100"
+    >
+      Leave out
+    </button>
+  )
+}
+
+function TurnAnswer({ turn, onLeaveOut }: { turn: Turn; onLeaveOut?: (left: boolean) => void }) {
   const streaming = turn.state === 'RUNNING' && turn.answer.length > 0
   return (
-    <div className="w-full self-start">
+    <div className={`w-full self-start ${turn.leftOut ? 'opacity-60' : ''}`}>
       {/* Above the answer, not below it. A tool's table is what the sentence underneath is
           about, and a reader who has to scroll past the prose to find the numbers reads the
           prose without them. */}
@@ -298,8 +331,10 @@ function TurnAnswer({ turn }: { turn: Turn }) {
           })()}
           {streaming ? <span className="ml-0.5 animate-pulse text-muted">▍</span> : null}
           {!streaming ? <CopyAnswer text={turn.answer} /> : null}
+          {!streaming && onLeaveOut && !turn.leftOut ? <LeaveOut turn={turn} onLeaveOut={onLeaveOut} /> : null}
         </div>
       ) : null}
+      {onLeaveOut && turn.leftOut ? <LeaveOut turn={turn} onLeaveOut={onLeaveOut} /> : null}
 
       {turn.state === 'CANCELLED' ? (
         <p className="mt-1 text-sm text-muted">{turn.detail || 'You stopped this.'}</p>

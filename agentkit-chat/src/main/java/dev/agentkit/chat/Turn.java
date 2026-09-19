@@ -47,11 +47,13 @@ import java.util.Objects;
  * @param agent          in a conversation not pinned to one agent, the agent (at its version) this turn went to,
  *                       chosen by the person or routed to; null when the conversation is pinned, or when nothing but
  *                       the router answered
+ * @param leftOut        whether the person left it out of the conversation — a wrong answer, or one regenerated — so
+ *                       that no agent reads it again as what was said; it stays in the transcript
  */
 public record Turn(String id, String conversationId, long ordinal, String userText,
                    List<String> attachmentIds, String answer, List<View> views,
                    List<Step> steps, State state, String detail, TokenUsage usage,
-                   Instant startedAt, Instant endedAt, Conversation.Pin agent) {
+                   Instant startedAt, Instant endedAt, Conversation.Pin agent, boolean leftOut) {
 
     /**
      * How a turn ended.
@@ -98,6 +100,14 @@ public record Turn(String id, String conversationId, long ordinal, String userTe
         Objects.requireNonNull(startedAt, "startedAt");
     }
 
+    /** A turn nobody has left out. */
+    public Turn(String id, String conversationId, long ordinal, String userText, List<String> attachmentIds,
+                String answer, List<View> views, List<Step> steps, State state, String detail, TokenUsage usage,
+                Instant startedAt, Instant endedAt, Conversation.Pin agent) {
+        this(id, conversationId, ordinal, userText, attachmentIds, answer, views, steps, state, detail, usage,
+                startedAt, endedAt, agent, false);
+    }
+
     /** A turn that went to no agent of its own: the conversation's, if it is pinned to one. */
     public Turn(String id, String conversationId, long ordinal, String userText, List<String> attachmentIds,
                 String answer, List<View> views, List<Step> steps, State state, String detail, TokenUsage usage,
@@ -139,7 +149,7 @@ public record Turn(String id, String conversationId, long ordinal, String userTe
     public Turn running() {
         return state != State.QUEUED ? this
                 : new Turn(id, conversationId, ordinal, userText, attachmentIds, answer, views,
-                        steps, State.RUNNING, detail, usage, startedAt, endedAt, agent);
+                        steps, State.RUNNING, detail, usage, startedAt, endedAt, agent, leftOut);
     }
 
     /** This turn with one more step on the record. */
@@ -148,7 +158,7 @@ public record Turn(String id, String conversationId, long ordinal, String userTe
         List<Step> more = new ArrayList<>(steps);
         more.add(step);
         return new Turn(id, conversationId, ordinal, userText, attachmentIds, answer, views,
-                more, state, detail, usage, startedAt, endedAt, agent);
+                more, state, detail, usage, startedAt, endedAt, agent, leftOut);
     }
 
     /** This turn with one more thing for a person to look at. */
@@ -157,13 +167,13 @@ public record Turn(String id, String conversationId, long ordinal, String userTe
         List<View> more = new ArrayList<>(views);
         more.add(view);
         return new Turn(id, conversationId, ordinal, userText, attachmentIds, answer, more,
-                steps, state, detail, usage, startedAt, endedAt, agent);
+                steps, state, detail, usage, startedAt, endedAt, agent, leftOut);
     }
 
     /** This turn, gone to {@code chosen}: the agent, at its version, that carries it out. */
     public Turn routedTo(Conversation.Pin chosen) {
         return new Turn(id, conversationId, ordinal, userText, attachmentIds, answer, views, steps, state, detail,
-                usage, startedAt, endedAt, chosen);
+                usage, startedAt, endedAt, chosen, leftOut);
     }
 
     /**
@@ -187,7 +197,13 @@ public record Turn(String id, String conversationId, long ordinal, String userTe
                     + " and cannot end again as " + finalState + ".");
         }
         return new Turn(id, conversationId, ordinal, userText, attachmentIds, answerText, views,
-                steps, finalState, detailText, cost, startedAt, now, agent);
+                steps, finalState, detailText, cost, startedAt, now, agent, leftOut);
+    }
+
+    /** This turn, left out of the conversation — or put back — as the person says. */
+    public Turn leavingOut(boolean left) {
+        return new Turn(id, conversationId, ordinal, userText, attachmentIds, answer, views, steps, state, detail,
+                usage, startedAt, endedAt, agent, left);
     }
 
     /** The steps of one kind, for a console that shows tool calls and model calls apart. */

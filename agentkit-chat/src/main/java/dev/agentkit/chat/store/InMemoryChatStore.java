@@ -248,6 +248,11 @@ public class InMemoryChatStore implements ChatStore {
     }
 
     @Override
+    public Optional<Turn> leaveOut(String tenantId, String conversationId, String turnId, boolean left) {
+        return replace(tenantId, conversationId, turnId, turn -> turn.leavingOut(left));
+    }
+
+    @Override
     public Optional<Turn> markRunning(String tenantId, String conversationId, String turnId) {
         return replace(tenantId, conversationId, turnId, Turn::running);
     }

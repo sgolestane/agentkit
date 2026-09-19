@@ -93,6 +93,15 @@ public interface ChatStore {
         throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot record a turn's agent");
     }
 
+    /**
+     * Leaves a finished turn out of the conversation, or puts it back: a turn left out stays in the transcript, and no
+     * agent reads it again as something said. A store that cannot keep it refuses, rather than let a wrong answer
+     * back in.
+     */
+    default Optional<Turn> leaveOut(String tenantId, String conversationId, String turnId, boolean left) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot leave a turn out");
+    }
+
     /** One turn, if it exists in a conversation belonging to {@code tenantId}. */
     Optional<Turn> turn(String tenantId, String conversationId, String turnId);
 

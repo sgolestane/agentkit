@@ -357,7 +357,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         Conversation conversation = session.store().conversation(session.tenantId(), session.conversationId())
                 .orElseThrow();
         return session.store().turns(session.tenantId(), session.conversationId()).stream()
-                .filter(one -> one.ordinal() < turn.ordinal() && one.state().isTerminal())
+                .filter(one -> one.ordinal() < turn.ordinal() && one.state().isTerminal() && !one.leftOut())
                 .map(one -> new Router.Earlier(one.userText(),
                         one.agent() != null ? one.agent().id()
                                 : conversation.agent() != null ? conversation.agent().id() : null,

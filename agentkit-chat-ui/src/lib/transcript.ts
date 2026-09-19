@@ -53,6 +53,15 @@ export function asTurn(raw: Partial<Turn> & { id: string }): Turn {
     startedAt: raw.startedAt ?? '',
     endedAt: raw.endedAt ?? null,
     ...(raw.agent ? { agent: raw.agent } : {}),
+    ...(raw.leftOut ? { leftOut: true } : {}),
+  }
+}
+
+/** The transcript with one turn left out of the conversation, or put back. */
+export function withLeftOut(transcript: Transcript, turnId: string, left: boolean): Transcript {
+  return {
+    ...transcript,
+    turns: transcript.turns.map((turn) => (turn.id === turnId ? { ...turn, leftOut: left } : turn)),
   }
 }
 

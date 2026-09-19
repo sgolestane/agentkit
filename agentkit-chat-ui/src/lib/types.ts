@@ -120,6 +120,8 @@ export interface Turn {
    * when the router answered it itself, or when the conversation is with one agent.
    */
   agent?: { id: string; version: string }
+  /** The person left it out of the conversation: it stays here, and no agent reads it again. */
+  leftOut?: boolean
 }
 
 export interface Conversation {

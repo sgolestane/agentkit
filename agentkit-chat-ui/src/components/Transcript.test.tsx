@@ -26,6 +26,26 @@ function turn(over: Partial<Turn> = {}): Turn {
 const noop = () => {}
 
 describe('Transcript', () => {
+  it('leaves an answer out of the conversation, and puts it back', async () => {
+    const onLeaveOut = vi.fn()
+    const { rerender } = render(
+      <Transcript turns={[turn()]} working={false} runningTool={null} onRegenerate={noop} onEdit={noop}
+        onLeaveOut={onLeaveOut} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Leave out' }))
+    expect(onLeaveOut).toHaveBeenCalledWith('turn-1', true)
+
+    rerender(
+      <Transcript turns={[turn({ leftOut: true })]} working={false} runningTool={null} onRegenerate={noop}
+        onEdit={noop} onLeaveOut={onLeaveOut} />,
+    )
+    expect(screen.getByTestId('left-out')).toHaveTextContent('Left out of the conversation: no agent reads it again.')
+    expect(screen.queryByRole('button', { name: 'Leave out' })).toBeNull()
+    expect(screen.getByText('Twelve are open.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Put back' }))
+    expect(onLeaveOut).toHaveBeenLastCalledWith('turn-1', false)
+  })
+
   it('shows what the tools produced for a person to look at', () => {
     // Nothing else in this file asserts that a turn's views render at all — removing <Views/>
     // from the transcript left every test green, and a table a tool produced simply never

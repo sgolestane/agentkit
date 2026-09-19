@@ -77,6 +77,9 @@ with 10px of horizontal padding.
 - **Who answered.** In a conversation where each message finds its agent, every answer has a
   small `bg-hover` pill naming the agent, or AgentKit when the router answered itself, with a
   ghost "Ask another agent" beside it.
+- **Leave out.** Under a finished answer, beside Copy, a ghost "Leave out" takes it out of what
+  the agents read next. A left-out answer stays on the page at 60% opacity, with "Left out of the
+  conversation" and a "Put back" button. Regenerate leaves out the answer it replaces.
 - **Views** a tool or the host shows above an answer (a plan, a table, cards, a diff, a chart) are
   outlined in `border-line`, so they read as something shown rather than something said.
 

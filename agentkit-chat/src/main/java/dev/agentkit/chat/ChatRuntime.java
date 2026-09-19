@@ -482,7 +482,8 @@ public final class ChatRuntime implements AutoCloseable {
             return Optional.empty();
         }
         List<Turn> finished = store.turns(tenantId, conversationId).stream()
-                .filter(earlier -> earlier.ordinal() < turn.ordinal() && earlier.state().isTerminal())
+                .filter(earlier -> earlier.ordinal() < turn.ordinal() && earlier.state().isTerminal()
+                        && !earlier.leftOut())
                 .toList();
         if (finished.isEmpty()) {
             return Optional.empty();

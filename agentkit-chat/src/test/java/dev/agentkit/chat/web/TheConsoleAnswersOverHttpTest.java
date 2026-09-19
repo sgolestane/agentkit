@@ -396,6 +396,31 @@ class TheConsoleAnswersOverHttpTest {
     }
 
     @Test
+    void aFinishedTurnIsLeftOutAndPutBack() throws Exception {
+        start(NO_MODEL);
+        String id = String.valueOf(asMap(post("/api/conversations", "{}")).get("id"));
+        post("/api/conversations/" + id + "/messages", "{\"text\":\"hello\"}");
+        String turnId = String.valueOf(eventuallyFinished(id).get("id"));
+
+        assertThat(asMap(patch("/api/conversations/" + id + "/turns/" + turnId, "{\"leftOut\":true}")))
+                .containsEntry("leftOut", true);
+        assertThat(eventuallyFinished(id)).containsEntry("leftOut", true);
+        assertThat(asMap(patch("/api/conversations/" + id + "/turns/" + turnId, "{\"leftOut\":false}")))
+                .containsEntry("leftOut", false);
+        HttpResponse<String> unsaid = patch("/api/conversations/" + id + "/turns/" + turnId, "{}");
+        assertThat(unsaid.statusCode()).isEqualTo(409);
+        assertThat(patch("/api/conversations/" + id + "/turns/nope", "{\"leftOut\":true}").statusCode())
+                .isEqualTo(404);
+    }
+
+    private HttpResponse<String> patch(String path, String body) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create(url(path)))
+                        .header("Content-Type", "application/json")
+                        .method("PATCH", HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
     void aConversationIsListedRenamedAndDeleted() throws Exception {
         start(NO_MODEL);
         Map<String, Object> conversation = asMap(post("/api/conversations",

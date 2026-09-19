@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from './api'
-import { applied, asTurn, emptyTranscript, isWorking, loaded, type Transcript } from './transcript'
+import { applied, asTurn, emptyTranscript, isWorking, loaded, withLeftOut, type Transcript } from './transcript'
 import type { Attachment, ChatEvent, PendingDecision } from './types'
 
 /**
@@ -39,6 +39,8 @@ export interface Conversation {
   /** Says something; with `input`, the agent's form filled in, which the server makes into the request. */
   say: (text: string, attachments?: string[], input?: Record<string, unknown>, agent?: string) => Promise<void>
   stop: () => Promise<void>
+  /** Leaves a finished turn out of what the agents read next, or puts it back. */
+  leaveOut: (turnId: string, left: boolean) => Promise<void>
   decide: (
     id: string,
     verdict: 'approve' | 'reject' | 'edit' | 'answer',
@@ -260,6 +262,23 @@ export function useConversation(conversationId: string | null): Conversation {
     [],
   )
 
+  const leaveOut = useCallback(
+    async (turnId: string, left: boolean) => {
+      if (!conversationId) {
+        return
+      }
+      // Shown at once, and taken back if the server did not keep it.
+      setTranscript((current) => withLeftOut(current, turnId, left))
+      try {
+        await api.leaveOut(conversationId, turnId, left)
+      } catch (error: unknown) {
+        setTranscript((current) => withLeftOut(current, turnId, !left))
+        setProblem(error instanceof ApiError && error.isStated ? error.message : 'That could not be changed.')
+      }
+    },
+    [conversationId],
+  )
+
   const stop = useCallback(async () => {
     if (!conversationId) {
       return
@@ -293,6 +312,7 @@ export function useConversation(conversationId: string | null): Conversation {
     },
     say,
     stop,
+    leaveOut,
     decide,
   }
 }

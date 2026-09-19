@@ -132,6 +132,13 @@ export const api = {
       body: '{}',
     }),
 
+  /** Leaves a finished turn out of what the agents read next, or puts it back. */
+  leaveOut: (id: string, turnId: string, leftOut: boolean) =>
+    call<Turn>(`/conversations/${encodeURIComponent(id)}/turns/${encodeURIComponent(turnId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ leftOut }),
+    }),
+
   rename: (id: string, title: string) =>
     call<Conversation>(`/conversations/${encodeURIComponent(id)}`, {
       method: 'PATCH',

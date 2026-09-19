@@ -389,6 +389,18 @@ public final class ChatServer implements AutoCloseable {
                     default -> null;
                 };
             }
+            if (parts.size() == 4 && parts.get(2).equals("turns") && method.equals("PATCH")) {
+                // Leaving a finished answer out of what the agents read next, or putting it back.
+                String id = decode(parts.get(1));
+                String turnId = decode(parts.get(3));
+                Object left = readJson(exchange).get("leftOut");
+                if (!(left instanceof Boolean leftOut)) {
+                    throw new IllegalArgumentException("Say leftOut: true or false.");
+                }
+                return store.turn(tenantId, id, turnId).filter(turn -> turn.state().isTerminal())
+                        .flatMap(turn -> store.leaveOut(tenantId, id, turnId, leftOut))
+                        .map(ChatServer::turnJson).orElse(null);
+            }
             if (parts.size() == 3 && parts.get(2).equals("attachments")
                     && method.equals("GET")) {
                 return store.attachments(tenantId, decode(parts.get(1))).stream()
@@ -635,6 +647,7 @@ public final class ChatServer implements AutoCloseable {
         if (turn.agent() != null) {
             json.put("agent", Map.of("id", turn.agent().id(), "version", turn.agent().version()));
         }
+        json.put("leftOut", turn.leftOut());
         return json;
     }
 

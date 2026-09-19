@@ -136,6 +136,20 @@ class EachMessageFindsItsAgentTest {
     }
 
     @Test
+    void theRouterIsNotShownAnAnswerLeftOut() throws Exception {
+        start("");
+        Conversation conversation = runtime.store().create(SAM, "", chat.pin(SAM, null));
+        routes.add(route("agent", "helpdesk", ""));
+        Turn laptop = say(conversation, "My laptop will not boot");
+        runtime.store().leaveOut(SAM, conversation.id(), laptop.id(), true);
+        routes.add(route("answer", "", "Ask the helpdesk."));
+        say(conversation, "What happened to my laptop?");
+
+        String asked = routerAsked.get(1).messages().stream().map(Message::text).reduce("", String::concat);
+        assertThat(asked).doesNotContain("Helpdesk here.").doesNotContain("My laptop will not boot");
+    }
+
+    @Test
     void aPersonMaySendOneMessageToAnAgentOfTheirChoosingButOnlyOneTheyMayUse() throws Exception {
         start("");
         Conversation conversation = runtime.store().create(SAM, "", chat.pin(SAM, null));

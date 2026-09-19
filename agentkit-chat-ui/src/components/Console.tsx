@@ -148,11 +148,13 @@ export function Console() {
           onStop={() => void conversation.stop()}
           onDecide={(id, verdict, body) => void conversation.decide(id, verdict, body)}
           onRegenerate={() => {
+            // The answer being replaced is left out, so the agent does not read it and repeat it.
             const last = conversation.transcript.turns[conversation.transcript.turns.length - 1]
             if (last?.userText) {
-              void conversation.say(last.userText)
+              void conversation.leaveOut(last.id, true).then(() => conversation.say(last.userText))
             }
           }}
+          onLeaveOut={(turnId, left) => void conversation.leaveOut(turnId, left)}
           onEdit={setDraft}
           routed={routed}
           agents={overview?.agents ?? []}

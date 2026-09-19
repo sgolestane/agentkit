@@ -75,6 +75,25 @@ class ATurnSeesTheConversationSoFarTest {
     }
 
     @Test
+    void anAnswerLeftOutIsNotGivenAgain() throws Exception {
+        start(ChatRuntime.History.DEFAULT);
+        Conversation conversation = store.create("acme", "");
+
+        say(conversation, "What did you do?");
+        Turn wrong = store.turns("acme", conversation.id()).getFirst();
+        store.leaveOut("acme", conversation.id(), wrong.id(), true);
+        say(conversation, "What did you do?");
+
+        assertThat(seen.get(1).messages().getFirst().content()).as("nothing earlier to give").hasSize(1);
+        assertThat(store.turn("acme", conversation.id(), wrong.id()).orElseThrow().leftOut()).isTrue();
+
+        store.leaveOut("acme", conversation.id(), wrong.id(), false);
+        say(conversation, "And then?");
+        String earlier = ((TextBlock) seen.get(2).messages().getFirst().content().get(1)).text();
+        assertThat(earlier).contains("answer 1").contains("answer 2");
+    }
+
+    @Test
     void onlyTheMostRecentTurnsAreGivenAndEachIsBounded() throws Exception {
         start(new ChatRuntime.History(2, 40));
         Conversation conversation = store.create("acme", "");
