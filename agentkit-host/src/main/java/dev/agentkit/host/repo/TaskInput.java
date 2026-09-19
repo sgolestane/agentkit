@@ -174,6 +174,46 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         return problems;
     }
 
+    /** A line of a request that gives one field: {@code name: value}, maybe as a list item. */
+    private static final Pattern FIELD_LINE = Pattern.compile("^\\s*(?:[-*]\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*:\\s?(.*)$");
+
+    /**
+     * The records a request writes out as this input's fields, {@code name: value} one per line — as the form's own
+     * request does, and a template filled in and pasted — in order; empty when it is in plain words. A record starts
+     * again where a field it already has comes up again, so a message may hold several. Only the fields given, as
+     * written; a line naming no field of this input is not part of a record, and a record needs two fields, so a
+     * sentence with a colon in it is not taken for one.
+     */
+    public List<Map<String, String>> records(String request) {
+        Set<String> names = new java.util.HashSet<>(fields.stream().map(Field::name).toList());
+        List<Map<String, String>> records = new ArrayList<>();
+        Map<String, String> record = new LinkedHashMap<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String line : (request == null ? "" : request).split("\\R")) {
+            Matcher m = FIELD_LINE.matcher(line);
+            if (!m.matches() || !names.contains(m.group(1))) {
+                continue;
+            }
+            String name = m.group(1);
+            if (seen.contains(name)) {
+                if (record.size() >= 2) {
+                    records.add(record);
+                }
+                record = new LinkedHashMap<>();
+                seen = new java.util.HashSet<>();
+            }
+            seen.add(name);
+            String value = m.group(2).strip();
+            if (!value.isEmpty()) {
+                record.put(name, value);
+            }
+        }
+        if (record.size() >= 2) {
+            records.add(record);
+        }
+        return records.stream().map(java.util.Collections::unmodifiableMap).toList();
+    }
+
     /** The request for {@code input}, which must be valid, from nobody in particular. */
     public String render(Map<String, Object> input) {
         return render(input, path -> java.util.Optional.empty());

@@ -53,6 +53,30 @@ class ATaskTakesTheInputItsFormDescribesTest {
     }
 
     @Test
+    void theRecordsARequestWritesOutAreReadBackOneAfterAnother() throws Exception {
+        TaskInput hire = parse(HIRE, "Onboard {{name}}.\n{{input}}", new ArrayList<>());
+        Map<String, Object> input = Map.of("name", "Jo Park", "work_email", "jo.park@acme.example",
+                "start_date", "2026-10-01", "employment", "contractor");
+
+        // The form's own request, and a template pasted twice with a field left empty.
+        assertThat(hire.records(hire.render(input))).containsExactly(Map.of("name", "Jo Park",
+                "work_email", "jo.park@acme.example", "start_date", "2026-10-01", "employment", "contractor"));
+        assertThat(hire.records("""
+                Onboard these:
+
+                name: Jo Park
+                work_email: jo.park@acme.example
+                desk:
+
+                name: Ann Lee
+                work_email: ann.lee@acme.example
+                owner: someone@acme.example
+                """)).containsExactly(Map.of("name", "Jo Park", "work_email", "jo.park@acme.example"),
+                Map.of("name", "Ann Lee", "work_email", "ann.lee@acme.example"));
+        assertThat(hire.records("Please onboard Jo Park. Note: she starts on Monday.")).isEmpty();
+    }
+
+    @Test
     void theTemplateMayNameThePersonStartingItAsTheHostKnowsThem() throws Exception {
         TaskInput hire = parse(HIRE, "Onboard {{name}}. I am their manager, {{principal.name}} "
                 + "({{principal.email}}); my desk is {{principal.desk}}.", new ArrayList<>());

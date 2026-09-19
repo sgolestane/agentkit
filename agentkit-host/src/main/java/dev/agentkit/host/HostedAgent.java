@@ -16,6 +16,8 @@ import dev.agentkit.core.tool.DeclaredTools;
 import dev.agentkit.core.tool.SimpleToolRegistry;
 import dev.agentkit.core.tool.Tool;
 import dev.agentkit.core.tool.ToolEffect;
+import dev.agentkit.core.tool.ToolInvocation;
+import dev.agentkit.core.tool.ToolResult;
 import dev.agentkit.core.util.OneLine;
 import dev.agentkit.host.auth.CallerSigner;
 import dev.agentkit.host.repo.AgentDefinition;
@@ -201,6 +203,26 @@ public final class HostedAgent {
             }
         }
 
+        // Checks before a plan: each is one of the agent's own tools, reads, and takes the arguments it is given.
+        for (int i = 0; i < definition.before().size(); i++) {
+            AgentDefinition.Check check = definition.before().get(i);
+            Selected tool = byName.get(check.tool().tool());
+            if (tool == null || !tool.connector().equals(check.tool().connector())) {
+                problems.add(new Problem(file, "before[" + i + "].tool", check.tool() + " is not one of this agent's tools"));
+            } else if (tool.entry().declaration().effect() != ToolEffect.READ) {
+                problems.add(new Problem(file, "before[" + i + "].tool", check.tool() + " is declared "
+                        + tool.entry().declaration().effect().wire() + "; a check only reads, since it runs before "
+                        + "anything is confirmed"));
+            } else {
+                for (String argument : check.with().keySet()) {
+                    if (!BoundTool.hasArgument(tool.entry().tool().inputSchema(), argument)) {
+                        problems.add(new Problem(file, "before[" + i + "].with." + argument,
+                                check.tool() + " has no argument " + argument));
+                    }
+                }
+            }
+        }
+
         // Deferred work: every subject is looked up by a tool that exists and takes the argument named.
         Optional<SubjectResolver> subjects = Optional.empty();
         if (definition.deferred() != null) {
@@ -328,6 +350,27 @@ public final class HostedAgent {
             tools.add(connectors.asserted(s.connector(), tool, caller), s.entry().declaration());
         }
         return tools;
+    }
+
+    /**
+     * Makes {@code check} for one task, as {@code principal} in this turn — bound and asserted as any call of theirs —
+     * with its arguments from {@code record}, the task's fields as written; empty when the task does not give one of
+     * them.
+     */
+    Optional<ToolResult> check(AgentDefinition.Check check, Principal principal, String conversation, String turn,
+                               Map<String, String> record) {
+        Map<String, Object> arguments = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> argument : check.with().entrySet()) {
+            String value = record.get(argument.getValue().substring("input.".length()));
+            if (value == null || value.isBlank()) {
+                return Optional.empty();
+            }
+            arguments.put(argument.getKey(), value);
+        }
+        Tool tool = tools(principal, conversation, turn).entries().stream().map(DeclaredTools.Entry::tool)
+                .filter(t -> t.name().equals(check.tool().tool())).findFirst()
+                .orElseThrow(() -> new IllegalStateException(check.tool() + " is not one of " + definition.id() + "'s tools"));
+        return Optional.of(tool.execute(new ToolInvocation("check-" + java.util.UUID.randomUUID(), tool.name(), arguments)));
     }
 
     /**

@@ -148,6 +148,8 @@ bind:                               # hidden from the model, filled from the per
 
 limits: {maxSteps: 12, maxTokens: 1024}
 plans: {reuse: {after: 3}}          # optional, plan-execute with a form: reuse a settled plan
+before:                             # optional, plan-execute with a form: checked before planning
+  - {tool: onboarding/onboarding_check, with: {employee_id: input.employee_id}}
 
 input:                              # optional: the form that starts its task
   schema: input.yaml                # a flat JSON Schema: string (enum, date, email), integer, number, boolean
@@ -214,7 +216,24 @@ prompt:
   and says where the plan stopped if a step did not finish.
 - **Questions aren't planned.** When a request needs nothing done, such as a question or a
   summary of what was done, the planner answers it directly, and nothing runs.
+- **How each step ended.** Each step's agent ends its answer with an `OUTCOME:` line: done,
+  already done, or not done. A step that refused or wasn't allowed reads "Not done", not "Done".
+  A change that reported an error still reads "Failed", and a step that didn't finish "Stopped".
 - **Limits.** A plan longer than 20 steps is refused before anything runs.
+
+#### Checking before planning
+
+`before:` names read-only tools of the agent's that run, as the person, for each task a request
+holds, before anything is planned. Each argument comes from a field of the form
+(`input.<field>`). The fields come from the form, from `field: value` lines pasted into a message
+(several tasks in one message are checked one by one), or, for a request in plain words, from one
+small model call that reads them out.
+
+- A check that answers with an error refuses that task. Nothing is planned or done for it, and
+  the answer says why: "Nothing was done. Only Ravi Menon's manager can onboard them…".
+- Anything else a check answers, such as who the task is about or what is already in place, is
+  given to the planner and to each step.
+- `validate` checks that each tool is one of the agent's, reads, and takes the arguments named.
 
 #### Reusing a settled plan
 

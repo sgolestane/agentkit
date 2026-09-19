@@ -90,3 +90,26 @@ cases:
         with: {environment: production}
       # She has no end date, so nothing is scheduled for one.
       - never: schedule_deferred_action
+
+  # Refused before anything is planned: only a hire's own manager may onboard them.
+  - name: not-their-hire
+    as: sam.okafor@acme.example
+    input:
+      employee_id: W-1001
+      name: Ravi Menon
+      work_email: ravi.menon@acme.example
+      title: Senior Backend Engineer
+      department: Engineering
+      employment_type: full-time
+      rehire: false
+      work_location: remote
+      home_address: Rua Augusta 100, 1100-053 Lisbon, Portugal
+      github_username: rmenon-dev
+      github_team: backend
+      production_aws_access_requested: false
+      start_date: "2026-10-01"
+    expect:
+      - answer_contains: "Nothing was done"
+      - never: okta_create_user
+      - never: ship_laptop
+      - never: slack_send_message

@@ -267,7 +267,7 @@ public final class OnboardingSystems {
 
     private List<Tool> allTools() {
         return List.of(
-                hrisGetWorker(),
+                hrisGetWorker(), onboardingCheck(),
                 oktaCreateUser(), oktaReactivateUser(), oktaDeactivateUser(),
                 slackGetProfile(), githubSearchUsers(), slackRequestGithubUsername(),
                 githubAddMember(), githubRemoveMember(),
@@ -299,6 +299,70 @@ public final class OnboardingSystems {
                     record.put("holdings", holdings(worker));
                     try {
                         return ToolResult.ok(JSON.writeValueAsString(record));
+                    } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                    }
+                });
+    }
+
+    /**
+     * Whether the person asking may have this worker onboarded — only their manager may — and, when they may, the
+     * worker's HRIS record and what each system already holds for them, so work already done is not done again.
+     */
+    private FunctionTool onboardingCheck() {
+        return tool("onboarding_check",
+                "Check, before onboarding a worker, that the person asking is their manager, and say what is already "
+                        + "in place for them in each system. An error means they may not be onboarded by this person.",
+                new ToolDeclaration("hris", ToolEffect.READ, "employee_id"),
+                schema(Map.of("employee_id", str("Employee id, such as W-1001, or work email"),
+                        "requested_by", str("Work email of the person asking")), "employee_id", "requested_by"),
+                SideEffects.NONE, inv -> {
+                    String refused = refusal(inv.stringArgument("employee_id"), inv.stringArgument("requested_by"));
+                    if (refused != null) {
+                        return ToolResult.error(refused.replace("can have access granted or removed for them",
+                                "can onboard them"));
+                    }
+                    Worker worker = workerFor(inv.stringArgument("employee_id"));
+                    String email = lower(worker.email());
+                    Map<String, Object> already = new LinkedHashMap<>();
+                    OktaUser user = okta.get(email);
+                    if (user != null) {
+                        already.put("okta", "account " + user.status() + " in groups " + user.groups());
+                    }
+                    SlackAccount account = slack.get(email);
+                    if (account != null) {
+                        already.put("slack", account.accountType() + " account in " + account.channels());
+                    }
+                    GithubIdentity identity = githubIdentities.get(email);
+                    if (identity != null) {
+                        String team = githubMembers.get(identity.username());
+                        already.put("github", "account " + identity.username()
+                                + (team == null ? ", not in the acme org" : " in the acme org, team " + team));
+                    }
+                    List<String> aws = awsGrants.stream().filter(g -> g.email().equals(email))
+                            .map(AwsGrant::environment).distinct().toList();
+                    if (!aws.isEmpty()) {
+                        already.put("aws", "access to " + aws);
+                    }
+                    if (salesforceSeats.contains(email)) {
+                        already.put("salesforce", "a seat");
+                    }
+                    if (benefitsEnrolled.contains(worker.employeeId())) {
+                        already.put("workday", "enrolled in benefits");
+                    }
+                    if (shipments.stream().anyMatch(sh -> sh.email().equals(email))) {
+                        already.put("laptop", "shipped");
+                    } else if (tickets.stream().anyMatch(t -> t.category().equals("laptop_pickup")
+                            && lower(t.forEmail()).equals(email))) {
+                        already.put("laptop", "pickup ticket open");
+                    }
+                    Map<String, Object> answer = new LinkedHashMap<>();
+                    answer.put("allowed", true);
+                    answer.put("manager", lower(worker.manager()));
+                    answer.put("worker", new java.util.TreeMap<>(worker.fields()));
+                    answer.put("already_in_place", already);
+                    try {
+                        return ToolResult.ok(JSON.writeValueAsString(answer));
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }

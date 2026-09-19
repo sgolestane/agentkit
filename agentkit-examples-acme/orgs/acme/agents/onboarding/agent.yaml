@@ -28,6 +28,12 @@ confirm:
 bind:
   onboarding/*: {requested_by: principal.email}
 
+# Before anything is planned: only the hire's manager may onboard them, and what is already in
+# place for the hire is not done again.
+before:
+  - tool: onboarding/onboarding_check
+    with: {employee_id: input.employee_id}
+
 # The manager starts it from the hire's record.
 input:
   schema: input.yaml

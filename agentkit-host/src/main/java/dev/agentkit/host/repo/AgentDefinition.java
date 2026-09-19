@@ -34,12 +34,13 @@ import java.util.Set;
  * @param evals        the cases a pull request rehearses, from {@code evals.yaml}; empty when there is none
  * @param planReuse    for a {@link Pattern#PLAN_EXECUTE} agent started from its form, when a settled plan is reused
  *                     rather than made again; null when every plan is made by the model
+ * @param before       for a {@link Pattern#PLAN_EXECUTE} agent, what is checked before a plan is made; empty for nothing
  */
 public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
                               List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
                               List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
                               int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt,
-                              TaskInput input, List<EvalCase> evals, PlanReuse planReuse) {
+                              TaskInput input, List<EvalCase> evals, PlanReuse planReuse, List<Check> before) {
 
     /** The audience that admits anyone in the organization. */
     public static final String EVERYONE = "everyone";
@@ -58,6 +59,19 @@ public record AgentDefinition(String id, String name, String description, Patter
     public record PlanReuse(int after, int recheckEvery, List<String> sameWhen) {
         public PlanReuse {
             sameWhen = List.copyOf(sameWhen);
+        }
+    }
+
+    /**
+     * A check made before a plan is made, for each task a request holds: a tool that reads, called as the person with
+     * {@code with} — each of its arguments from a field of the task, {@code input.<field>}. An error from it is a no:
+     * nothing is planned or done for that task, and the person is told why. Anything else it answers — who the task
+     * is about, what is already in place — is given to the planner.
+     */
+    public record Check(ToolRef tool, Map<String, String> with) {
+        public Check {
+            Objects.requireNonNull(tool, "tool");
+            with = Map.copyOf(with);
         }
     }
 
@@ -86,6 +100,7 @@ public record AgentDefinition(String id, String name, String description, Patter
         bind = Map.copyOf(bind);
         mcpDirect = mcpDirect == null ? List.of() : List.copyOf(mcpDirect);
         evals = evals == null ? List.of() : List.copyOf(evals);
+        before = before == null ? List.of() : List.copyOf(before);
         if (pattern == Pattern.PLAN_EXECUTE) {
             Objects.requireNonNull(plannerPrompt, "plannerPrompt");
         }

@@ -48,6 +48,22 @@ class AGrantIsOnlyForTheHiresManagerTest {
     }
 
     @Test
+    void theCheckBeforeOnboardingRefusesAnyoneButTheManagerAndSaysWhatIsInPlace() {
+        ToolResult byDana = call("onboarding_check", Map.of("employee_id", "W-1002", "requested_by", "dana.kim@acme.example"));
+        assertThat(byDana.isError()).isTrue();
+        assertThat(byDana.content()).isEqualTo("Only Marcus Bell's manager can onboard them, and "
+                + "dana.kim@acme.example is not.");
+
+        assertThat(call("onboarding_check", Map.of("employee_id", "W-1002", "requested_by", LENA)).content())
+                .contains("\"allowed\":true", "\"manager\":\"" + LENA + "\"", "\"already_in_place\":{}");
+        call("okta_create_user", Map.of("email", MARCUS, "first_name", "Marcus", "last_name", "Bell",
+                "groups", List.of("sales", "contractors"), "requested_by", LENA));
+        call("salesforce_assign_seat", Map.of("email", MARCUS, "requested_by", LENA));
+        assertThat(call("onboarding_check", Map.of("employee_id", MARCUS, "requested_by", LENA)).content())
+                .contains("\"okta\":\"account ACTIVE in groups [sales, contractors]\"", "\"salesforce\":\"a seat\"");
+    }
+
+    @Test
     void onlyToolsThatGrantOrRevokeAskWhoIsAsking() {
         assertThat(systems.catalog().entries()).allSatisfy(entry -> {
             boolean asks = entry.tool().inputSchema().toString().contains("requested_by");
@@ -55,7 +71,9 @@ class AGrantIsOnlyForTheHiresManagerTest {
                 case GRANT, REVOKE -> true;
                 default -> false;
             };
-            assertThat(asks).as(entry.tool().name()).isEqualTo(changesAccess);
+            // And the check before onboarding, which says whether the person asking may.
+            assertThat(asks).as(entry.tool().name()).isEqualTo(changesAccess
+                    || entry.tool().name().equals("onboarding_check"));
         });
         assertThat(call("it_create_ticket", Map.of("category", "laptop_pickup", "for_email", MARCUS,
                 "summary", "Pickup in New York")).isError()).isFalse();

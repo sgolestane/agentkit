@@ -66,7 +66,8 @@ public final class RepoLoader {
     private static final Set<String> CONNECTOR_KEYS = Set.of("url", "command", "headers", "trustAnnotations",
             "authoritative", "timeoutSeconds", "tools");
     private static final Set<String> AGENT_KEYS = Set.of("name", "description", "pattern", "model", "audience",
-            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp", "input", "plans");
+            "prompt", "tools", "confirm", "bind", "limits", "deferred", "mcp", "input", "plans", "before");
+    private static final Set<String> CHECK_KEYS = Set.of("tool", "with");
     private static final Set<String> PLANS_KEYS = Set.of("reuse");
     private static final Set<String> REUSE_KEYS = Set.of("after", "recheckEvery", "sameWhen");
     private static final Set<String> INPUT_KEYS = Set.of("schema", "goal");
@@ -547,11 +548,66 @@ public final class RepoLoader {
             planReuse = planReuse(file, plans, pattern, input);
         }
 
+        List<AgentDefinition.Check> checks = new ArrayList<>();
+        JsonNode beforeNode = node.get("before");
+        if (beforeNode != null) {
+            checks = checks(file, beforeNode, pattern, input, connectors);
+        }
+
         if (problems.size() > before) {
             return Optional.empty();
         }
         return Optional.of(new AgentDefinition(id, name, description, pattern, model, audience, system, policy, tools,
-                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input, evals, planReuse));
+                confirm, bind, maxSteps, maxTokens, deferred, direct, planner, input, evals, planReuse, checks));
+    }
+
+    /**
+     * {@code before: [{tool: connector/tool, with: {argument: input.<field>}}]}: what a plan-execute agent with a form
+     * checks before it plans. That the tool is one of the agent's, and reads, is checked when the agent is assembled.
+     */
+    private List<AgentDefinition.Check> checks(String file, JsonNode node, AgentDefinition.Pattern pattern,
+                                               TaskInput input, Set<String> connectors) {
+        List<AgentDefinition.Check> checks = new ArrayList<>();
+        if (!node.isArray()) {
+            problem(file, "before", "must be a list of {tool: connector/tool, with: {argument: input.<field>}}");
+            return checks;
+        }
+        if (pattern != AgentDefinition.Pattern.PLAN_EXECUTE) {
+            problem(file, "before", "is for a plan-execute agent: it is checked before the plan is made");
+        }
+        if (input == null) {
+            problem(file, "before", "needs input: a check is made with the fields of the task");
+        }
+        Set<String> fields = input == null ? Set.of()
+                : new java.util.HashSet<>(input.fields().stream().map(TaskInput.Field::name).toList());
+        for (int i = 0; i < node.size(); i++) {
+            String where = "before[" + i + "]";
+            JsonNode check = node.get(i);
+            if (!check.isObject()) {
+                problem(file, where, "must be {tool: connector/tool, with: {argument: input.<field>}}");
+                continue;
+            }
+            unknownKeys(file, where + ".", check, CHECK_KEYS);
+            String tool = text(file, where + ".tool", check.get("tool"), true);
+            Optional<ToolRef> ref = tool == null ? Optional.empty() : toolRef(file, where + ".tool", tool, connectors, false);
+            Map<String, String> with = new LinkedHashMap<>();
+            JsonNode withNode = check.get("with");
+            if (withNode == null || !withNode.isObject() || withNode.isEmpty()) {
+                problem(file, where + ".with", "is required: each argument of the tool and input.<field> it is from");
+            } else {
+                withNode.fields().forEachRemaining(argument -> {
+                    String path = argument.getValue().asText("");
+                    if (!path.startsWith("input.") || !fields.contains(path.substring("input.".length()))) {
+                        problem(file, where + ".with." + argument.getKey(), "\"" + path
+                                + "\" is not input.<field> of a field of the agent's input");
+                    } else {
+                        with.put(argument.getKey(), path);
+                    }
+                });
+            }
+            ref.ifPresent(r -> checks.add(new AgentDefinition.Check(r, with)));
+        }
+        return checks;
     }
 
     /** {@code plans: {reuse: {after, recheckEvery, sameWhen}}}: for a plan-execute agent started from its form. */

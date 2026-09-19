@@ -91,15 +91,14 @@ class OnboardingIsConfigurationOnTheHostTest {
 
     @Test
     void aManagerCannotOnboardSomeoneElsesHire() throws Exception {
-        ScriptedModel llm = new ScriptedModel(
-                text("1. Assign a Salesforce seat to marcus.bell@acme.example."),
-                toolUse("salesforce_assign_seat", Map.of("email", MARCUS)),
-                text("It was refused."));
+        ScriptedModel llm = new ScriptedModel();
         try (AcmeOnTheHost acme = start(llm)) {
             Turn turn = onboard(acme, DANA, OnboardingEvalTest.form(systems.worker("W-1002")));
 
-            assertThat(turn.answer()).contains("It was refused.");
-            assertThat(llm.requests.get(2).messages().toString()).contains("Only Marcus Bell's manager");
+            // Refused by the check before planning: no plan is made, no model is asked, and nothing is done.
+            assertThat(turn.answer()).isEqualTo("Nothing was done. Only Marcus Bell's manager can onboard them, and "
+                    + "dana.kim@acme.example is not.");
+            assertThat(llm.requests).isEmpty();
             assertThat(systems.salesforceSeats()).isEmpty();
         }
     }
