@@ -108,6 +108,10 @@ class OnboardingIsConfigurationOnTheHostTest {
 
                     Already in place, so not done again:
                     - salesforce: a seat""");
+            // Its plan depends on what the systems held, not on the form alone: it is not kept for reuse.
+            dev.agentkit.host.plans.PlanBook.Agent onboarding = new dev.agentkit.host.plans.PlanBook.Agent("acme",
+                    "onboarding", acme.org().current().repo().version());
+            assertThat(acme.chat().plans().book().shapes(onboarding)).isEmpty();
         }
     }
 

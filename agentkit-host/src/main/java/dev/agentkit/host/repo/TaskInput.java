@@ -214,6 +214,42 @@ public record TaskInput(Map<String, Object> schema, List<Field> fields, String t
         return records.stream().map(java.util.Collections::unmodifiableMap).toList();
     }
 
+    /** The longest line a pasted form may have around its fields, such as "Onboard this employee:". */
+    static final int PASTED_INTRO_CHARS = 80;
+
+    /**
+     * The input a message gives when it is this form filled in and pasted: one record, valid, with at most one short
+     * line around it. Empty for anything else — several records, a field missing, or words of the person's own that
+     * may ask for something the form does not say.
+     */
+    public java.util.Optional<Map<String, Object>> pasted(String message) {
+        List<Map<String, String>> found = records(message);
+        if (found.size() != 1) {
+            return java.util.Optional.empty();
+        }
+        Set<String> names = new java.util.HashSet<>(fields.stream().map(Field::name).toList());
+        List<String> others = new ArrayList<>();
+        for (String line : message.split("\\R")) {
+            Matcher m = FIELD_LINE.matcher(line);
+            if (!line.isBlank() && !(m.matches() && names.contains(m.group(1)))) {
+                others.add(line.strip());
+            }
+        }
+        if (others.size() > 1 || others.stream().anyMatch(line -> line.length() > PASTED_INTRO_CHARS)) {
+            return java.util.Optional.empty();
+        }
+        Map<String, Object> input = new LinkedHashMap<>();
+        for (Field field : fields) {
+            String value = found.get(0).get(field.name());
+            if (value == null) {
+                continue;
+            }
+            input.put(field.name(), field.type().equals("boolean") && value.equalsIgnoreCase("yes") ? "true"
+                    : field.type().equals("boolean") && value.equalsIgnoreCase("no") ? "false" : value);
+        }
+        return problems(input).isEmpty() ? java.util.Optional.of(input) : java.util.Optional.empty();
+    }
+
     /** The request for {@code input}, which must be valid, from nobody in particular. */
     public String render(Map<String, Object> input) {
         return render(input, path -> java.util.Optional.empty());

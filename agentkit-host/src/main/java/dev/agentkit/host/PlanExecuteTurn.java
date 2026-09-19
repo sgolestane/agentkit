@@ -161,9 +161,18 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         AtomicInteger built = new AtomicInteger();
         // Where each plan step's recorded calls begin, to tell afterwards which of its calls failed.
         List<Long> startedAfter = new java.util.concurrent.CopyOnWriteArrayList<>();
-        // This turn is the form's task only if nothing else was said with it.
-        Optional<FormTask> task = form.filter(f -> alsoSent.isEmpty()
-                && goal.render().strip().equals(f.request().strip()));
+        // What is checked before anything is planned: a task the person may not ask for stops here.
+        Checked checked = checkFirst(goal, counted);
+        if (!checked.refused().isEmpty() && checked.passed().isEmpty() && !checked.unchecked()) {
+            return AgentResult.completed(checked.refusal(), 0, plannerUsage.get());
+        }
+
+        // This turn is the form's task only if nothing else was said with it: the earlier turns, and who the agent is,
+        // are text beside it; a file sent with it is something else said. And only if nothing of it is in place
+        // already: its plan then depends on what the systems hold, not on the form alone, and is not one to reuse
+        // or to keep for reuse.
+        Optional<FormTask> task = form.filter(f -> alsoSent.stream().allMatch(block -> block instanceof TextBlock)
+                && goal.render().strip().equals(f.request().strip()) && checked.inPlace().isEmpty());
         Optional<PlanReuse.Settled> settled = task.flatMap(f -> f.plans().forRun(f.where(),
                 agent.definition().planReuse(), f.task()));
         Optional<Plan> reused = settled.flatMap(s -> instantiate(s, task.get().task()));
@@ -201,12 +210,6 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             }
             return executors.get();
         });
-
-        // What is checked before anything is planned: a task the person may not ask for stops here.
-        Checked checked = checkFirst(goal, counted);
-        if (!checked.refused().isEmpty() && checked.passed().isEmpty() && !checked.unchecked()) {
-            return AgentResult.completed(checked.refusal(), 0, plannerUsage.get());
-        }
 
         PlanExecution execution;
         try {

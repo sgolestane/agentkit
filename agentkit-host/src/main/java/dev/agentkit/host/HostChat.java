@@ -215,8 +215,11 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     }
 
     private ChatRuntime.Runner runnerOf(ChatRuntime.Session session, Turn turn) {
+        // The form, sent from the console or over MCP; or the form filled in and pasted into a message.
         Optional<PlanExecuteTurn.FormTask> form = Optional.ofNullable(
                         forms.remove(session.tenantId() + '\n' + session.userText()))
+                .or(() -> Optional.ofNullable(turn.agent().definition().input())
+                        .flatMap(input -> input.pasted(session.userText())))
                 .filter(input -> turn.agent().definition().planReuse() != null)
                 .map(input -> new PlanExecuteTurn.FormTask(plans, new PlanBook.Agent(Tenant.parse(session.tenantId())
                         .orElseThrow().org(), turn.agent().definition().id(), turn.version()),

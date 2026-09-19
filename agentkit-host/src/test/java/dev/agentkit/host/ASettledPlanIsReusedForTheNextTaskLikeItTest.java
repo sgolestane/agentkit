@@ -154,6 +154,24 @@ class ASettledPlanIsReusedForTheNextTaskLikeItTest {
         assertThat(plansAsked.get()).as("the form's task and something else said").isEqualTo(4);
     }
 
+    @Test
+    void theFormFilledInAndPastedIsATaskLikeAnyOther() {
+        fill("Marcus Bell", "mac");
+        fill("Ravi Menon", "mac");
+        assertThat(plansAsked.get()).isEqualTo(2);
+
+        Conversation conversation = runtime.store().create(PRIYA, "pasted", chat.pin(PRIYA, "replacement"));
+        Turn pasted = say(conversation, "Please replace this one:\nrecipient: Lena Ortiz\nlaptop: mac");
+
+        assertThat(plansAsked.get()).as("the settled plan, with no planning call").isEqualTo(2);
+        assertThat(pasted.answer()).startsWith("1. Order a mac for Lena Ortiz.");
+
+        // A second message in the same conversation, with the first before it, is still the form's task.
+        Turn again = say(conversation, "recipient: Jo Park\nlaptop: mac");
+        assertThat(plansAsked.get()).isEqualTo(2);
+        assertThat(again.answer()).startsWith("1. Order a mac for Jo Park.");
+    }
+
     private Turn fill(String recipient, String laptop) {
         Conversation conversation = runtime.store().create(PRIYA, recipient, chat.pin(PRIYA, "replacement"));
         String request = chat.message(PRIYA, conversation, Map.of("recipient", recipient, "laptop", laptop));

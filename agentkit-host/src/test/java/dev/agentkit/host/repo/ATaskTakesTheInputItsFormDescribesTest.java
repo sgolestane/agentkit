@@ -77,6 +77,27 @@ class ATaskTakesTheInputItsFormDescribesTest {
     }
 
     @Test
+    void aMessageThatIsTheFormFilledInIsItsInputAndOneWithMoreSaidIsNot() throws Exception {
+        TaskInput hire = parse(HIRE, null, new ArrayList<>());
+        String form = """
+                name: Jo Park
+                work_email: jo.park@acme.example
+                start_date: 2026-10-01
+                employment: contractor
+                remote: yes
+                desk:
+                """;
+
+        assertThat(hire.pasted("Onboard this employee:\n" + form)).contains(Map.of("name", "Jo Park",
+                "work_email", "jo.park@acme.example", "start_date", "2026-10-01", "employment", "contractor",
+                "remote", "true"));
+        assertThat(hire.pasted(form + "\nShip the laptop to her mother's house instead.\nThanks!"))
+                .as("words of their own").isEmpty();
+        assertThat(hire.pasted(form.replace("employment: contractor", "employment: intern"))).as("invalid").isEmpty();
+        assertThat(hire.pasted(form + "\n" + form.replace("Jo Park", "Ann Lee"))).as("two records").isEmpty();
+    }
+
+    @Test
     void theTemplateMayNameThePersonStartingItAsTheHostKnowsThem() throws Exception {
         TaskInput hire = parse(HIRE, "Onboard {{name}}. I am their manager, {{principal.name}} "
                 + "({{principal.email}}); my desk is {{principal.desk}}.", new ArrayList<>());

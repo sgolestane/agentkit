@@ -238,7 +238,9 @@ small model call that reads them out.
 #### Reusing a settled plan
 
 A plan-and-execute agent started from its form can skip the planning call for tasks it has
-already planned the same way several times:
+already planned the same way several times. A message that is the form filled in and pasted, as
+`field: value` lines with at most one short line around them, counts as started from the form.
+A message with more words of the person's own is planned as it is.
 
 ```yaml
 plans:
@@ -275,6 +277,9 @@ plans:
   values put back and no planning call. Each step still runs on the model as the person, and each
   confirmation is still asked. The plan tells the person it was reused. A plan that names a value
   this task doesn't have is not reused.
+- **Not when work is in place.** When a check before planning finds some of the task already
+  done, its plan depends on what the systems hold, not on the form alone. That plan is neither
+  reused nor kept for reuse.
 - **What it saves.** The planning call only. The steps are where most of a task's tokens go,
   and they still run on the model.
 - **Scope.** Plans are kept per organization, agent and version, so a merge starts over. They are
