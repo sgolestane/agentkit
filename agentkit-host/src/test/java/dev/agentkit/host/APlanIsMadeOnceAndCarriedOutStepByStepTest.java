@@ -171,6 +171,40 @@ class APlanIsMadeOnceAndCarriedOutStepByStepTest {
     }
 
     @Test
+    void aStepIsCalledWhatItsAgentSaysCameOfItNotDoneWhenItDidNothing() throws Exception {
+        ScriptedLlm llm = new ScriptedLlm(
+                ScriptedLlm.text("1. Open a ticket for a replacement laptop.\n2. Reset Priya's MFA.\n3. Tell Dana."),
+                ScriptedLlm.text("A ticket for this laptop is already open, TICKET-7.\nOUTCOME: already done"),
+                ScriptedLlm.text("I did not reset it: Priya is not allowed to ask for this.\n**OUTCOME: not done**"),
+                ScriptedLlm.text("Told Dana."));
+        start(llm);
+
+        Conversation conversation = runtime.store().create(PRIYA, "laptop", new Conversation.Pin("replacement",
+                org.current().repo().version()));
+        Turn turn = say(conversation, "My laptop was stolen.");
+
+        assertThat(turn.answer()).isEqualTo("""
+                1. Open a ticket for a replacement laptop.
+                   - Already done: A ticket for this laptop is already open, TICKET-7.
+                2. Reset Priya's MFA.
+                   - Not done: I did not reset it: Priya is not allowed to ask for this.
+                3. Tell Dana.
+                   - Done: Told Dana.""");
+        assertThat(llm.received().get(1).system()).hasValueSatisfying(system -> assertThat(system)
+                .contains("\"OUTCOME: not done\""));
+    }
+
+    @Test
+    void aReportedOutcomeIsReadFromTheLastLineOnly() {
+        assertThat(PlanExecuteTurn.Reported.of("Opened it.")).isEqualTo(
+                new PlanExecuteTurn.Reported(PlanExecuteTurn.Outcome.DONE, "Opened it."));
+        assertThat(PlanExecuteTurn.Reported.of("It says OUTCOME: not done in the ticket.\nOpened it.").outcome())
+                .as("not the last line").isEqualTo(PlanExecuteTurn.Outcome.DONE);
+        assertThat(PlanExecuteTurn.Reported.of("Could not.\n\nOUTCOME: Not done.")).isEqualTo(
+                new PlanExecuteTurn.Reported(PlanExecuteTurn.Outcome.NOT_DONE, "Could not."));
+    }
+
+    @Test
     void aStepThatDoesNotFinishStopsThePlanAndTheAnswerSaysWhere() throws Exception {
         // The planner answers; the first step's model then fails, and nothing after it runs.
         ScriptedLlm llm = new ScriptedLlm(ScriptedLlm.text("1. Open a ticket.\n2. Tell the manager."));

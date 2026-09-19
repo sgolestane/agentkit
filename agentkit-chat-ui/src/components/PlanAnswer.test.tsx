@@ -29,6 +29,18 @@ describe('A carried-out plan', () => {
     expect(planSteps('**Step 1 of 3:** Okta: create an account')).toBeNull()
   })
 
+  it('says a step was not done, or was already done, when its agent said so', () => {
+    const steps = planSteps(['1. Okta: create an account.', '   - Already done: It exists.',
+      '2. Grant AWS staging.', '   - Not done: Sam is not their manager.'].join('\n'))
+    expect(steps).toEqual([
+      { step: 'Okta: create an account.', outcome: 'already-done', said: 'It exists.' },
+      { step: 'Grant AWS staging.', outcome: 'not-done', said: 'Sam is not their manager.' },
+    ])
+    render(<PlanAnswer steps={steps!} />)
+    expect(screen.getByText('Already done')).toHaveClass('text-muted')
+    expect(screen.getByText('Not done')).toHaveClass('text-warn')
+  })
+
   it('shows each step with what came of it folded away until opened', async () => {
     render(<PlanAnswer steps={planSteps(answer)!} />)
 

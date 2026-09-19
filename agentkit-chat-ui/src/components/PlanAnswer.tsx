@@ -5,10 +5,11 @@ import { Markdown } from './Markdown'
 export interface PlanStep {
   step: string
   /**
-   * 'done'; 'failed' when its agent finished but a change it made reported an error; 'stopped' when its agent did
-   * not finish; or 'not-started'
+   * 'done'; 'already-done' when it was in place already; 'not-done' when its agent finished but says it did not do
+   * it; 'failed' when its agent finished but a change it made reported an error; 'stopped' when its agent did not
+   * finish; or 'not-started'
    */
-  outcome: 'done' | 'failed' | 'stopped' | 'not-started'
+  outcome: 'done' | 'already-done' | 'not-done' | 'failed' | 'stopped' | 'not-started'
   /** Why it stopped ("failed", "budget exhausted", …), or which tools failed */
   reason?: string
   /** What the step's agent said it did; empty for a step that did not start. */
@@ -17,6 +18,8 @@ export interface PlanStep {
 
 const STEP = /^(\d+)\. (.*)$/
 const DONE = /^ {3}- Done: (.*)$/
+const ALREADY_DONE = /^ {3}- Already done: (.*)$/
+const NOT_DONE = /^ {3}- Not done: (.*)$/
 const FAILED = /^ {3}- Failed \(([^)]*)\): (.*)$/
 const STOPPED = /^ {3}- Stopped \(([^)]*)\): (.*)$/
 const NOT_STARTED = /^ {3}- Not started\.$/
@@ -43,8 +46,14 @@ export function planSteps(answer: string): PlanStep[] | null {
     const done = DONE.exec(outcome)
     const stopped = STOPPED.exec(outcome)
     const failed = FAILED.exec(outcome)
+    const already = ALREADY_DONE.exec(outcome)
+    const notDone = NOT_DONE.exec(outcome)
     if (done) {
       steps.push({ step: text, outcome: 'done', said: done[1] ?? '' })
+    } else if (already) {
+      steps.push({ step: text, outcome: 'already-done', said: already[1] ?? '' })
+    } else if (notDone) {
+      steps.push({ step: text, outcome: 'not-done', said: notDone[1] ?? '' })
     } else if (failed) {
       steps.push({ step: text, outcome: 'failed', reason: failed[1] ?? '', said: failed[2] ?? '' })
     } else if (stopped) {
@@ -80,14 +89,17 @@ export function PlanAnswer({ steps }: { steps: PlanStep[] }) {
             <details className="group" data-testid="plan-step-outcome">
               <summary
                 className={`inline-flex cursor-pointer select-none list-none items-center gap-1 rounded-[var(--radius-item)] px-1.5 py-0.5 text-sm hover:bg-hover [&::-webkit-details-marker]:hidden ${
-                  one.outcome === 'failed' ? 'text-bad' : one.outcome === 'stopped' ? 'text-warn' : 'text-muted'
+                  one.outcome === 'failed' ? 'text-bad'
+                    : one.outcome === 'stopped' || one.outcome === 'not-done' ? 'text-warn' : 'text-muted'
                 }`}
               >
                 <span className="inline-block transition-transform group-open:rotate-90" aria-hidden="true">
                   ›
                 </span>
                 {one.outcome === 'failed' ? `Failed: ${one.reason}`
-                  : one.outcome === 'stopped' ? `Stopped (${one.reason})` : 'Done'}
+                  : one.outcome === 'stopped' ? `Stopped (${one.reason})`
+                    : one.outcome === 'not-done' ? 'Not done'
+                      : one.outcome === 'already-done' ? 'Already done' : 'Done'}
               </summary>
               <div className="mt-1 border-l-2 border-line pl-4 text-muted">
                 <Markdown text={one.said || '(nothing said)'} />

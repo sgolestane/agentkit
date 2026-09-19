@@ -520,7 +520,8 @@ public final class HostedAgent {
         if (definition.pattern() == AgentDefinition.Pattern.PLAN_EXECUTE) {
             check(principal);
             return new PlanExecuteTurn(this, llm, principal, now,
-                    () -> builder(session, llm, principal, now, runtime, alsoGiven).streaming(false).build(), session,
+                    () -> builder(session, llm, principal, now, runtime, alsoGiven, PlanExecuteTurn.OUTCOME_RULE)
+                            .streaming(false).build(), session,
                     definition.planReuse() == null ? Optional.empty() : form);
         }
         return turn(session, llm, principal, now, runtime, alsoGiven)::run;
@@ -528,13 +529,19 @@ public final class HostedAgent {
 
     private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
                                   ChatRuntime runtime, List<Tool> alsoGiven) {
+        return builder(session, llm, principal, now, runtime, alsoGiven, "");
+    }
+
+    /** @param promptAdds added to the end of the system prompt: for a plan's step, how to say how it ended */
+    private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
+                                  ChatRuntime runtime, List<Tool> alsoGiven, String promptAdds) {
         check(principal);
         List<Tool> tools = new ArrayList<>(tools(principal, session.conversationId(), session.turnId()).entries().stream()
                 .map(DeclaredTools.Entry::tool).toList());
         tools.addAll(alsoGiven);
         tools.add(ChatTools.askPerson(runtime, session));
         ToolGate gate = gate(session.approver());
-        return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now)))
+        return session.agent(llm, new SimpleToolRegistry(tools), config(systemPrompt(principal, now) + promptAdds))
                 .name(definition.id() + (rehearsal ? "-rehearsal" : ""))
                 .toolGate(rehearsal ? ToolGates.allOf(rehearsalGate(changing(alsoGiven)), gate) : gate);
     }

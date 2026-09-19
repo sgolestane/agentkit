@@ -41,7 +41,9 @@ import java.util.function.Supplier;
  * <p>What the person sees, as it happens: the plan, as soon as it is made, and each step as it starts, with its tool
  * calls in the trace. The answer is every step and what came of it, and says where the plan stopped if a step did
  * not finish. A step whose agent finished but whose change — a grant, a request, a message — reported an error is
- * "Failed", naming the tools, not "Done": it did not do what it was for. The plan is a step in the trace, and the
+ * "Failed", naming the tools, not "Done": it did not do what it was for. Each step's agent also ends its answer saying
+ * whether it did the step, found it already done, or did not do it ({@link #OUTCOME_RULE}), so a step that did nothing
+ * — refused, or found it was not allowed — reads "Not done" and not "Done". The plan is a step in the trace, and the
  * planner's tokens are counted in the turn's.
  *
  * <p><strong>Reusing a settled plan.</strong> For an agent with {@code plans.reuse}, started from its form, every plan
@@ -58,6 +60,45 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     static final String ANSWER_INSTEAD = "\n\nIf the request needs no action — a question, a summary of what was "
             + "already done, something about this conversation — do not plan. Reply starting with \""
             + ANSWER + "\", followed by the answer, written for the person, in Markdown.";
+
+    /** How a step's agent says how the step ended, on its answer's last line. */
+    static final String OUTCOME = "OUTCOME:";
+
+    /** Added to the prompt of each step's agent: say how the step ended, so it is not called done when it was not. */
+    static final String OUTCOME_RULE = "\n\nWhen you have finished the step, end your answer with one last line on its "
+            + "own saying how it ended: \"" + OUTCOME + " done\" if you carried out what the step asks, \"" + OUTCOME
+            + " already done\" if it was already in place and you changed nothing, or \"" + OUTCOME + " not done\" if "
+            + "you did not or could not carry it out, for any reason. Say why in the answer above that line.";
+
+    /** How a step ended, as the answer and the console show it. */
+    enum Outcome {
+        DONE("Done"), ALREADY_DONE("Already done"), NOT_DONE("Not done");
+
+        final String label;
+
+        Outcome(String label) {
+            this.label = label;
+        }
+    }
+
+    /** A step's answer read back: how its agent said it ended — done when it did not say — and what it said above. */
+    record Reported(Outcome outcome, String said) {
+
+        static Reported of(String output) {
+            String text = output == null ? "" : output.strip();
+            int lineStart = text.lastIndexOf('\n') + 1;
+            // The last line, without the emphasis a model may put around it.
+            String last = text.substring(lineStart).replaceAll("[*_`]", "").strip();
+            if (!last.regionMatches(true, 0, OUTCOME, 0, OUTCOME.length())) {
+                return new Reported(Outcome.DONE, text);
+            }
+            String said = text.substring(0, lineStart).strip();
+            String how = last.substring(OUTCOME.length()).strip().toLowerCase(java.util.Locale.ROOT);
+            Outcome outcome = how.startsWith("not") ? Outcome.NOT_DONE
+                    : how.startsWith("already") ? Outcome.ALREADY_DONE : Outcome.DONE;
+            return new Reported(outcome, said);
+        }
+    }
 
     /** The planner answered instead of planning. */
     private static final class AnsweredInstead extends RuntimeException {
@@ -221,7 +262,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         }
         boolean clean = execution.overall().stopReason() == StopReason.COMPLETED
                 && execution.stepResults().size() == execution.plan().size()
-                && execution.stepResults().stream().allMatch(r -> r.stopReason() == StopReason.COMPLETED)
+                && execution.stepResults().stream().allMatch(r -> r.stopReason() == StopReason.COMPLETED
+                        && Reported.of(r.output()).outcome() != Outcome.NOT_DONE)
                 && failed.stream().allMatch(List::isEmpty);
         try {
             f.plans().book().add(f.where(), f.task().shape(), new PlanBook.Run(
@@ -285,13 +327,14 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             answer.append(i + 1).append(". ").append(OneLine.of(steps.get(i)));
             if (i < results.size()) {
                 AgentResult result = results.get(i);
-                String output = Cut.to(OneLine.of(result.output() == null ? "" : result.output()), MAX_STEP_OUTPUT_CHARS);
+                Reported reported = Reported.of(result.output());
+                String output = Cut.to(OneLine.of(reported.said()), MAX_STEP_OUTPUT_CHARS);
                 // A nested item, so the answer reads as a list of steps each with its outcome under it.
                 List<String> failedTools = i < failed.size() ? failed.get(i) : List.of();
                 answer.append(result.stopReason() != StopReason.COMPLETED ? "\n   - Stopped ("
                                 + result.stopReason().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + "): "
                                 : !failedTools.isEmpty() ? "\n   - Failed (" + String.join(", ", failedTools) + "): "
-                                : "\n   - Done: ")
+                                : "\n   - " + reported.outcome().label + ": ")
                         .append(output.isEmpty() ? "(nothing said)" : output);
             } else {
                 answer.append("\n   - Not started.");
