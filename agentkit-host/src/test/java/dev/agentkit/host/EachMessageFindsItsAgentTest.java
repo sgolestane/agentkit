@@ -133,6 +133,35 @@ class EachMessageFindsItsAgentTest {
         assertThat(third.tools()).isEmpty();
         assertThat(third.outputSchema().orElseThrow().schema().toString())
                 .contains("helpdesk", "security-desk");
+
+        // The router's call is in the trace and counted, and where each message went is logged for the admin view.
+        assertThat(what.steps()).filteredOn(s -> s.kind() == Step.Kind.MODEL_CALL).singleElement()
+                .satisfies(s -> assertThat(s.name()).isEqualTo("router"));
+        assertThat(chat.routing().recent("acme", 10)).extracting(r -> r.action() + ":" + r.to())
+                .containsExactly("answer:null", "agent:security-desk", "agent:helpdesk");
+    }
+
+    @Test
+    void aMessageSentAgainToAnotherAgentIsKeptAsAMisrouteWithTheTurnsBeforeIt() throws Exception {
+        start("");
+        Conversation conversation = runtime.store().create(SAM, "", chat.pin(SAM, null));
+        routes.add(route("agent", "helpdesk", ""));
+        say(conversation, "My laptop will not boot");
+        routes.add(route("agent", "helpdesk", ""));
+        say(conversation, "Who is Dana's manager?");
+
+        await(conversation, runtime.say(SAM, conversation.id(), "Who is Dana's manager?", List.of(),
+                chat.forMessage(SAM, conversation, "security-desk")));
+
+        assertThat(chat.routing().misroutes("acme", 10)).singleElement().satisfies(misroute -> {
+            assertThat(misroute.said()).isEqualTo("Who is Dana's manager?");
+            assertThat(misroute.routedTo()).isEqualTo("helpdesk");
+            assertThat(misroute.chosen()).isEqualTo("security-desk");
+            assertThat(misroute.before()).singleElement().satisfies(before -> {
+                assertThat(before.said()).isEqualTo("My laptop will not boot");
+                assertThat(before.agent()).isEqualTo("helpdesk");
+            });
+        });
     }
 
     @Test

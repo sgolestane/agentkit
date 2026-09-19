@@ -45,6 +45,8 @@ import java.util.function.Supplier;
  * GET  /host/admin/rehearsals        the rehearsals its pull requests reported, newest first
  * GET  /host/admin/usage             its model account: whose, calls at once, budgets, and what it spent today and
  *                                   this month, by agent
+ * GET  /host/admin/routing           where messages went over the last 30 days, the router's own answers and its
+ *                                   spend, and the messages people sent again to another agent
  * GET  /host/admin/agents/{id}/files the agent's files at the current version, to edit for a proposal
  * POST /host/admin/proposals         a change to agents' files, checked and opened as a pull request ({@link Proposals})
  * POST /host/rehearsals/{org}        a pull request's rehearsal report, from rehearse, with the org's REHEARSAL_TOKEN
@@ -69,6 +71,7 @@ public final class AdminApi {
     private final Proposals proposals;
     private final Optional<ModelAccounts> models;
     private final Optional<PlanReuse> plans;
+    private final Optional<dev.agentkit.host.routing.RoutingLog> routing;
 
     /**
      * @param reportToken the token a rehearsal report for an organization must carry; empty when it takes none
@@ -87,6 +90,15 @@ public final class AdminApi {
     public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
                     RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
                     Proposals proposals, ModelAccounts models, PlanReuse plans) {
+        this(orgs, deferred, tenants, rehearsals, reportToken, clock, proposals, models, plans, null);
+    }
+
+    /** @param routing where each routed message went, and the ones sent again; null when none is kept */
+    public AdminApi(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ChatServer.Tenants tenants,
+                    RehearsalLog rehearsals, Function<String, Optional<String>> reportToken, Supplier<Instant> clock,
+                    Proposals proposals, ModelAccounts models, PlanReuse plans,
+                    dev.agentkit.host.routing.RoutingLog routing) {
+        this.routing = Optional.ofNullable(routing);
         this.models = Optional.ofNullable(models);
         this.plans = Optional.ofNullable(plans);
         this.orgs = Map.copyOf(orgs);
@@ -149,6 +161,12 @@ public final class AdminApi {
                         send(exchange, 404, Map.of("error", "This host keeps no account of model use."));
                     } else {
                         send(exchange, 200, models.get().report(org.current().repo()));
+                    }
+                } else if (path.equals("/routing")) {
+                    if (routing.isEmpty()) {
+                        send(exchange, 404, Map.of("error", "This host keeps no account of routing."));
+                    } else {
+                        send(exchange, 200, routing(org, routing.get()));
                     }
                 } else if (path.equals("/rehearsals")) {
                     send(exchange, 200, Map.of("reports", rehearsals.recent(org.org(), 20)));
@@ -416,6 +434,66 @@ public final class AdminApi {
         view.put("answers", c.answers());
         view.put("expect", c.expect().stream().map(EvalCase.Expectation::describe).toList());
         return view;
+    }
+
+    /** How many days the routing account covers. */
+    static final int ROUTING_DAYS = 30;
+
+    /** Where the organization's messages went over the last {@link #ROUTING_DAYS} days, and what the router spent. */
+    private Map<String, Object> routing(OrgHost org, dev.agentkit.host.routing.RoutingLog log) {
+        Instant now = clock.get();
+        Instant since = now.minus(java.time.Duration.ofDays(ROUTING_DAYS));
+        java.time.LocalDate today = now.atZone(java.time.ZoneOffset.UTC).toLocalDate();
+        List<dev.agentkit.host.routing.RoutingLog.Route> routes = log.recent(org.org(), dev.agentkit.host.routing
+                .RoutingLog.KEPT).stream().filter(route -> route.at().isAfter(since)).toList();
+        List<dev.agentkit.host.routing.RoutingLog.Misroute> misroutes = log.misroutes(org.org(), 100).stream()
+                .filter(misroute -> misroute.at().isAfter(since)).toList();
+        Map<String, String> names = new LinkedHashMap<>();
+        org.current().agents().forEach((id, agent) -> names.put(id, agent.definition().name()));
+
+        Map<String, Long> byAgent = new java.util.TreeMap<>();
+        Map<String, Long> byAction = new java.util.TreeMap<>();
+        long tokensToday = 0;
+        long tokens = 0;
+        for (dev.agentkit.host.routing.RoutingLog.Route route : routes) {
+            byAction.merge(route.action(), 1L, Long::sum);
+            if (route.to() != null && !route.action().equals("form")) {
+                byAgent.merge(route.to(), 1L, Long::sum);
+            }
+            long spent = route.inputTokens() + route.outputTokens();
+            tokens += spent;
+            if (route.at().atZone(java.time.ZoneOffset.UTC).toLocalDate().equals(today)) {
+                tokensToday += spent;
+            }
+        }
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("days", ROUTING_DAYS);
+        report.put("enabled", org.current().repo().router().enabled());
+        report.put("messages", routes.size());
+        report.put("byAgent", byAgent);
+        report.put("byAction", byAction);
+        report.put("names", names);
+        report.put("routerTokens", Map.of("today", tokensToday, "days", tokens));
+        report.put("misroutes", misroutes.stream().map(misroute -> {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("id", misroute.id());
+            one.put("at", misroute.at().toString());
+            one.put("said", misroute.said());
+            one.put("routedTo", misroute.routedTo());
+            one.put("chosen", misroute.chosen());
+            one.put("before", misroute.before());
+            return one;
+        }).toList());
+        report.put("recent", routes.stream().limit(30).map(route -> {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("at", route.at().toString());
+            one.put("said", dev.agentkit.core.util.Cut.to(route.said(), 200));
+            one.put("to", route.to());
+            one.put("action", route.action());
+            one.put("why", route.why());
+            return one;
+        }).toList());
+        return report;
     }
 
     private Map<String, Object> deferred(OrgHost org) {

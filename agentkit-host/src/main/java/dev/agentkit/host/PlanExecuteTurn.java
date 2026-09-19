@@ -152,16 +152,20 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     public AgentResult run(Goal goal, List<ContentBlock> alsoSent) {
         AtomicReference<TokenUsage> plannerUsage = new AtomicReference<>(TokenUsage.ZERO);
         AtomicReference<String> plannerSaid = new AtomicReference<>("");
-        LlmClient counted = request -> {
+        // The host's own calls — the plan, reading a request's fields — counted in the turn, and in its trace.
+        java.util.function.Function<String, LlmClient> counting = name -> request -> {
+            long called = System.nanoTime();
             LlmResponse response = llm.generate(request);
             plannerUsage.set(plannerUsage.get().plus(response.usage()));
             plannerSaid.set(response.message().text());
+            HostChat.modelCall(session, name, response, (System.nanoTime() - called) / 1_000_000);
             return response;
         };
+        LlmClient counted = counting.apply("planner");
         LlmPlanner planner = new LlmPlanner(counted, agent.model(),
                 agent.plannerPrompt(principal, now) + NEEDS_RULE + ANSWER_INSTEAD, agent.definition().maxTokens());
         // What is checked before anything is planned: a task the person may not ask for stops here.
-        Checked checked = checkFirst(goal, counted);
+        Checked checked = checkFirst(goal, counting.apply("reading the request"));
         if (!checked.refused().isEmpty() && checked.passed().isEmpty() && !checked.unchecked()) {
             return AgentResult.completed(checked.refusal(), 0, plannerUsage.get());
         }

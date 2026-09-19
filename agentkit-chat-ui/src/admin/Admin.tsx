@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { api, ApiError } from '../lib/api'
 import { ProposeChange } from './ProposeChange'
 import { Account, RAIL, ROW, RailButton, useFolded } from '../components/Threads'
-import { AgentIcon, ChartIcon, ChatIcon, ClockIcon, PlugIcon, RehearsalIcon, SidebarIcon } from '../components/Icons'
+import { AgentIcon, ChartIcon, ChatIcon, ClockIcon, PlugIcon, RehearsalIcon, RouteIcon, SidebarIcon } from '../components/Icons'
 import type {
   AdminAgent,
   AdminDeferredAction,
   AdminOverview,
+  AdminRouting,
   AdminTool,
   AdminUsage,
   ModelSpend,
@@ -22,11 +23,12 @@ import type {
  * and this is where the effect of one is read — so there is nothing here to edit, and nothing
  * that could drift from what Git says.
  */
-type Section = 'agents' | 'rehearsals' | 'deferred' | 'usage' | 'connectors'
+type Section = 'agents' | 'rehearsals' | 'routing' | 'deferred' | 'usage' | 'connectors'
 
 const SECTIONS: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: 'agents', label: 'Agents', icon: <AgentIcon /> },
   { id: 'rehearsals', label: 'Rehearsals', icon: <RehearsalIcon /> },
+  { id: 'routing', label: 'Routing', icon: <RouteIcon /> },
   { id: 'deferred', label: 'Deferred work', icon: <ClockIcon /> },
   { id: 'usage', label: 'Model use', icon: <ChartIcon /> },
   { id: 'connectors', label: 'Connectors', icon: <PlugIcon /> },
@@ -98,6 +100,8 @@ export function Admin() {
               <Rehearsals />
             ) : section === 'deferred' ? (
               <Deferred />
+            ) : section === 'routing' ? (
+              <Routing />
             ) : section === 'usage' ? (
               <Usage />
             ) : (
@@ -746,6 +750,105 @@ function Usage() {
             </tbody>
           </table>
         ) : null}
+      </section>
+    </div>
+  )
+}
+
+/** Where the organization's messages went, what the router spent, and the messages sent again to another agent. */
+function Routing() {
+  const [routing, setRouting] = useState<AdminRouting | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.admin
+      .routing()
+      .then(setRouting)
+      .catch((error: unknown) => setProblem(error instanceof ApiError ? error.message : 'Nothing loaded.'))
+  }, [])
+
+  if (problem) {
+    return <p className="text-sm text-bad">{problem}</p>
+  }
+  if (!routing) {
+    return <p className="text-sm text-muted">Loading…</p>
+  }
+  const name = (id: string | null) => (id ? routing.names[id] ?? id : 'AgentKit')
+  const byAction = (action: string) => routing.byAction[action] ?? 0
+  const when = (at: string) => new Date(at).toLocaleString()
+  return (
+    <div className="space-y-6 text-sm">
+      <section aria-label="Where messages went">
+        <h2 className="mb-2 text-base font-semibold">Where messages went</h2>
+        {!routing.enabled ? (
+          <p className="text-warn">The router is off in org.yaml: people choose the agent for each conversation.</p>
+        ) : null}
+        <p data-testid="routing-summary">
+          In the last {routing.days} days, {routing.messages} messages
+          {Object.keys(routing.byAgent).length > 0
+            ? `: ${Object.entries(routing.byAgent).map(([id, count]) => `${name(id)} ${count}`).join(', ')}`
+            : ''}
+          . AgentKit answered {byAction('answer')}, asked {byAction('ask')} back and showed a form {byAction('form')}{' '}
+          times; people chose the agent themselves {byAction('chosen')} times.
+        </p>
+        <p className="mt-1 text-muted" data-testid="router-tokens">
+          The router used {routing.routerTokens.today.toLocaleString()} tokens today and{' '}
+          {routing.routerTokens.days.toLocaleString()} in {routing.days} days.
+        </p>
+      </section>
+
+      <section aria-label="Sent again to another agent">
+        <h2 className="mb-1 text-base font-semibold">Sent again to another agent</h2>
+        <p className="mb-2 text-muted">
+          Messages someone sent again with “Ask another agent”: the router chose one agent and they wanted another.
+        </p>
+        {routing.misroutes.length === 0 ? (
+          <p className="text-faint">None.</p>
+        ) : (
+          <ul className="space-y-2">
+            {routing.misroutes.map((misroute) => (
+              <li key={misroute.id} className="rounded-[var(--radius-item)] border border-line px-3 py-2" data-testid="misroute">
+                <p className="text-ink">“{misroute.said}”</p>
+                <p className="text-muted">
+                  Went to {name(misroute.routedTo)}; sent again to {name(misroute.chosen)} · {when(misroute.at)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-label="Recent messages">
+        <h2 className="mb-2 text-base font-semibold">Recent messages</h2>
+        {routing.recent.length === 0 ? (
+          <p className="text-faint">No messages yet.</p>
+        ) : (
+          <table className="w-full text-left text-sm [&_td]:pr-4 [&_th]:pr-4">
+            <thead className="text-faint">
+              <tr>
+                <th className="py-2 font-medium">When</th>
+                <th>Message</th>
+                <th>Went to</th>
+                <th>Why</th>
+              </tr>
+            </thead>
+            <tbody>
+              {routing.recent.map((route, index) => (
+                <tr key={index} className="border-t border-line align-top">
+                  <td className="whitespace-nowrap py-2.5 text-muted">{when(route.at)}</td>
+                  <td className="max-w-xs truncate">{route.said}</td>
+                  <td className="whitespace-nowrap">
+                    {route.action === 'chosen' ? `${name(route.to)} (chosen)`
+                      : route.action === 'agent' ? name(route.to)
+                        : route.action === 'form' ? `AgentKit (${name(route.to)} form)`
+                          : `AgentKit (${route.action === 'ask' ? 'asked' : 'answered'})`}
+                  </td>
+                  <td className="text-muted">{route.why}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
     </div>
   )

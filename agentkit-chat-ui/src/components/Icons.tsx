@@ -119,6 +119,17 @@ export function ChartIcon() {
   )
 }
 
+/** A path that forks: where messages were routed. */
+export function RouteIcon() {
+  return (
+    <Icon>
+      <path d="M5 19V13a4 4 0 0 1 4-4h10" />
+      <path d="m15 5 4 4-4 4" />
+      <path d="M5 5v4" />
+    </Icon>
+  )
+}
+
 /** A plug: the connectors. */
 export function PlugIcon() {
   return (

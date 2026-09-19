@@ -81,7 +81,15 @@ otherwise. In a conversation with an agent they chose, the agent's form is alway
 - **Choosing still works.** An agent picked in the sidebar starts a conversation pinned to it,
   as before. `router: {enabled: false}` turns routing off, so a person picks an agent to start.
 - **Cost.** One small model call per message, on the organization's account as `router`, so
-  budgets apply.
+  budgets apply. The call is in the turn's trace and its count of model calls.
+- **In the admin view.** The Routing section covers the last 30 days:
+  - how many messages went to each agent;
+  - how often the router answered, asked back or showed a form, and how often people chose the
+    agent themselves;
+  - what the router spent;
+  - the messages people sent again with "Ask another agent".
+
+  It's kept in Postgres (`route`, `misroute`) when the host has a database.
 
 `routing.yaml`, at the repository's root, says who should answer what. Every pull request's
 rehearsal asks the router each case, and nothing else runs:

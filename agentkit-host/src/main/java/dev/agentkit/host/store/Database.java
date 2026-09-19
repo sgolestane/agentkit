@@ -154,6 +154,34 @@ public final class Database implements AutoCloseable {
                 at            timestamptz not null
             );
             create index plan_run_by_shape on plan_run (org_id, agent_id, agent_version, shape_digest, id desc);
+            """, """
+            create table route (
+                id            bigserial primary key,
+                org_id        text not null,
+                at            timestamptz not null,
+                tenant_id     text not null,
+                conversation_id text not null,
+                turn_id       text not null,
+                said          text not null,
+                to_agent      text,
+                action        text not null,
+                why           text not null,
+                input_tokens  bigint not null,
+                output_tokens bigint not null
+            );
+            create index route_by_org on route (org_id, at desc);
+            create table misroute (
+                id              text primary key,
+                org_id          text not null,
+                at              timestamptz not null,
+                tenant_id       text not null,
+                conversation_id text not null,
+                said            text not null,
+                routed_to       text,
+                chosen          text not null,
+                before_turns    json not null
+            );
+            create index misroute_by_org on misroute (org_id, at desc);
             """);
 
     private final HikariDataSource pool;

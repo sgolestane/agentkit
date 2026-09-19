@@ -48,6 +48,7 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                 }
             });
     private final Supplier<ChatRuntime> runtime;
+    private final dev.agentkit.host.routing.RoutingLog routing;
 
     /**
      * @param orgs    each organization's agents, by organization id
@@ -74,6 +75,14 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     /** @param plans the plans plan-execute agents carried out from their forms, which settled ones are reused from */
     public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ModelAccounts models,
                     PlanBook plans, Supplier<Instant> clock, Supplier<ChatRuntime> runtime) {
+        this(orgs, deferred, models, plans, dev.agentkit.host.routing.RoutingLog.inMemory(), clock, runtime);
+    }
+
+    /** @param routing where each routed message went, and the ones sent again to another agent */
+    public HostChat(Map<String, OrgHost> orgs, Map<String, DeferredWork> deferred, ModelAccounts models,
+                    PlanBook plans, dev.agentkit.host.routing.RoutingLog routing, Supplier<Instant> clock,
+                    Supplier<ChatRuntime> runtime) {
+        this.routing = Objects.requireNonNull(routing, "routing");
         this.plans = new PlanReuse(plans);
         this.orgs = Map.copyOf(orgs);
         this.deferred = Map.copyOf(deferred);
@@ -169,6 +178,11 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
     /** That {@code tenantId} sent {@code input} as a form, which made {@code request}: its turn is that task. */
     void formSent(String tenantId, String request, Map<String, Object> input) {
         forms.put(tenantId + '\n' + request, Map.copyOf(input));
+    }
+
+    /** Where each routed message went, and the ones sent again to another agent. */
+    public dev.agentkit.host.routing.RoutingLog routing() {
+        return routing;
     }
 
     /** The plans plan-execute agents carried out from their forms. */
@@ -302,6 +316,8 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
             HostedAgent chosen = version.agent(turn.agent().id()).filter(a -> a.admits(principal))
                     .orElseThrow(() -> new ChatUnavailable("There is no agent " + turn.agent().id() + " for you."));
             note(session, chosen.definition().id(), version.repo().version(), "chosen by you");
+            logRoute(session, tenant, turn, chosen.definition().id(), "chosen", "chosen by the person", TokenUsage.ZERO);
+            misrouted(session, tenant, turn, chosen.definition().id());
             return runnerOf(session, turnOf(tenant, version, chosen)).run(goal, withYou(chosen, alsoSent));
         }
         List<HostedAgent> offered = current.agentsFor(principal);
@@ -313,9 +329,12 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         java.util.concurrent.atomic.AtomicReference<TokenUsage> spent = new java.util.concurrent.atomic.AtomicReference<>(
                 TokenUsage.ZERO);
         LlmClient routerLlm = models.client(account, "router", ModelAccounts.Purpose.TURN);
+        java.util.concurrent.atomic.AtomicReference<dev.agentkit.core.llm.LlmResponse> answered =
+                new java.util.concurrent.atomic.AtomicReference<>();
         LlmClient counted = request -> {
             dev.agentkit.core.llm.LlmResponse response = routerLlm.generate(request);
             spent.set(spent.get().plus(response.usage()));
+            answered.set(response);
             return response;
         };
         long started = System.nanoTime();
@@ -326,6 +345,12 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
                         agent.definition().input() == null ? "" : agent.definition().input().describe())).toList(),
                 earlier(session, turn), session.userText());
         long millis = (System.nanoTime() - started) / 1_000_000;
+        // The router's call, in the trace and the count of model calls, as any agent's is.
+        Optional.ofNullable(answered.get()).ifPresent(response -> modelCall(session, "router", response, millis));
+        logRoute(session, tenant, turn, decision instanceof Router.ToAgent to ? to.agent()
+                        : decision instanceof Router.OfferForm offer ? offer.agent() : null,
+                decision instanceof Router.ToAgent ? "agent" : decision instanceof Router.OfferForm ? "form"
+                        : decision instanceof Router.Ask ? "ask" : "answer", decision.why(), spent.get());
         if (decision instanceof Router.ToAgent to) {
             HostedAgent chosen = offered.stream().filter(a -> a.definition().id().equals(to.agent())).findFirst()
                     .orElseThrow();
@@ -348,6 +373,64 @@ public final class HostChat implements ChatRuntime.Agents, ChatServer.AgentCatal
         String text = decision instanceof Router.Answer answer ? answer.text() : ((Router.Ask) decision).text();
         note(session, null, current.repo().version(), decision.why(), millis);
         return AgentResult.completed(text, 1, spent.get());
+    }
+
+    /** A model call the host made itself, on the turn's trace as the agents' calls are. */
+    static void modelCall(ChatRuntime.Session session, String name, dev.agentkit.core.llm.LlmResponse response,
+                          long millis) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("step", 0);
+        detail.put("stopReason", response.stopReason().name());
+        detail.put("inputTokens", response.usage().inputTokens());
+        detail.put("outputTokens", response.usage().outputTokens());
+        detail.put("text", dev.agentkit.core.util.Cut.to(response.message().text(), 2_000));
+        session.store().addStep(session.tenantId(), session.conversationId(), session.turnId(),
+                dev.agentkit.chat.Step.Kind.MODEL_CALL, name, detail, millis, false);
+    }
+
+    /** Where this message went, for the admin view; a log that fails is not the turn's failure. */
+    private void logRoute(ChatRuntime.Session session, Tenant tenant, dev.agentkit.chat.Turn turn, String to,
+                          String action, String why, TokenUsage spent) {
+        try {
+            routing.add(tenant.org(), new dev.agentkit.host.routing.RoutingLog.Route(clock.get(), session.tenantId(),
+                    session.conversationId(), turn.id(), dev.agentkit.core.util.Cut.to(turn.userText(), 2_000), to,
+                    action, why, spent.inputTokens(), spent.outputTokens()));
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(HostChat.class).warn("Could not log where a message went", e);
+        }
+    }
+
+    /**
+     * A message the person sent again to {@code chosen} after the router sent it elsewhere — "Ask another agent" —
+     * kept as a misroute, with the turns before it, so it can become a routing case.
+     */
+    private void misrouted(ChatRuntime.Session session, Tenant tenant, dev.agentkit.chat.Turn turn, String chosen) {
+        try {
+            List<dev.agentkit.chat.Turn> turns = session.store().turns(session.tenantId(), session.conversationId());
+            Optional<dev.agentkit.chat.Turn> first = turns.stream()
+                    .filter(one -> one.ordinal() < turn.ordinal() && one.state().isTerminal()
+                            && one.userText().strip().equals(turn.userText().strip())
+                            && one.steps().stream().anyMatch(step -> step.kind() == dev.agentkit.chat.Step.Kind.NOTE
+                                    && step.name().equals("routed") && !"chosen by you".equals(step.detail().get("why")))
+                            && (one.agent() == null || !one.agent().id().equals(chosen)))
+                    .reduce((a, b) -> b);
+            if (first.isEmpty()) {
+                return;
+            }
+            List<dev.agentkit.host.routing.RoutingLog.Before> before = turns.stream()
+                    .filter(one -> one.ordinal() < first.get().ordinal() && one.state().isTerminal() && !one.leftOut())
+                    .map(one -> new dev.agentkit.host.routing.RoutingLog.Before(
+                            dev.agentkit.core.util.Cut.to(one.userText(), 400),
+                            one.agent() == null ? null : one.agent().id(),
+                            dev.agentkit.core.util.Cut.to(one.answer(), 400)))
+                    .toList();
+            routing.addMisroute(tenant.org(), new dev.agentkit.host.routing.RoutingLog.Misroute(turn.id(), clock.get(),
+                    session.tenantId(), session.conversationId(), dev.agentkit.core.util.Cut.to(turn.userText(), 2_000),
+                    first.get().agent() == null ? null : first.get().agent().id(), chosen,
+                    before.subList(Math.max(0, before.size() - 3), before.size())));
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(HostChat.class).warn("Could not log a misroute", e);
+        }
     }
 
     /** Whether this turn is routed: the person chose its agent, or the router is on and they have a choice. */

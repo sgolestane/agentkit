@@ -174,7 +174,9 @@ public final class AgentHostApp {
         });
         AtomicReference<ChatRuntime> self = new AtomicReference<>();
         HostChat chat = new HostChat(orgs, deferred, models,
-                database.<PlanBook>map(PostgresPlanBook::new).orElseGet(PlanBook::inMemory), Instant::now, self::get);
+                database.<PlanBook>map(PostgresPlanBook::new).orElseGet(PlanBook::inMemory),
+                database.<dev.agentkit.host.routing.RoutingLog>map(dev.agentkit.host.store.PostgresRoutingLog::new)
+                        .orElseGet(dev.agentkit.host.routing.RoutingLog::inMemory), Instant::now, self::get);
         // With a database, several instances may share it: each notes the turns it runs, says it is running, and ends
         // the turns an instance that stopped left behind.
         Optional<Instances> instances = database.map(db -> new Instances(db, Instant::now));
@@ -205,7 +207,7 @@ public final class AgentHostApp {
                         .map(token -> new GitHubProposer(spec, token))),
                 name -> new AgentHost.Options(secretsFor(name), Map.of(), allowLocal).signedBy(signer));
         AdminApi admin = new AdminApi(orgs, deferred, tenants, rehearsals, org -> secretsFor(org).get("REHEARSAL_TOKEN"),
-                Instant::now, proposals, models, chat.plans());
+                Instant::now, proposals, models, chat.plans(), chat.routing());
         server.mount("/host/admin", admin.admin());
         server.mount("/host/rehearsals/", admin.reports());
         HostMcp mcp = new HostMcp(orgs, chat, self::get,

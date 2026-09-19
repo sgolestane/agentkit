@@ -315,6 +315,30 @@ export interface ModelSpend {
 }
 
 /** An organization's model account: whose, how many calls at once, its budgets and what it spent. */
+/** Where an organization's messages went: the admin view's Routing section. */
+export interface AdminRouting {
+  days: number
+  enabled: boolean
+  messages: number
+  /** Messages each agent was given, by id. */
+  byAgent: Record<string, number>
+  /** How many of each: agent, answer, ask, form (the router's decisions), chosen (the person named the agent). */
+  byAction: Record<string, number>
+  /** Each agent's name, by id. */
+  names: Record<string, string>
+  routerTokens: { today: number; days: number }
+  /** Messages the person sent again to another agent than the one the router chose. */
+  misroutes: {
+    id: string
+    at: string
+    said: string
+    routedTo: string | null
+    chosen: string
+    before: { said: string; agent: string | null; answer: string }[]
+  }[]
+  recent: { at: string; said: string; to: string | null; action: string; why: string }[]
+}
+
 export interface AdminUsage {
   /** 'host' for the host's account, or the provider of the organization's own. */
   account: string

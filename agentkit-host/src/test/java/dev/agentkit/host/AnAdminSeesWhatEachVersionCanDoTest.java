@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -46,6 +47,7 @@ class AnAdminSeesWhatEachVersionCanDoTest {
     private OrgHost org;
     private HttpServer server;
     private final RehearsalLog rehearsals = RehearsalLog.inMemory();
+    private final dev.agentkit.host.routing.RoutingLog routing = dev.agentkit.host.routing.RoutingLog.inMemory();
     private final ModelAccounts models = new ModelAccounts(
             Optional.of(new ScriptedLlm()), HostLimits.none(),
             UsageLedger.inMemory(), name -> Secrets.NONE, (p, k) -> new ScriptedLlm(),
@@ -65,7 +67,7 @@ class AnAdminSeesWhatEachVersionCanDoTest {
                 () -> Instant.parse("2026-09-18T20:00:00Z"),
                 new dev.agentkit.host.change.Proposals(o -> Optional.empty(), name -> AgentHost.Options.hosted(
                         Secrets.of(Map.of("HELPDESK_URL", helpdesk.url(), "HELPDESK_TOKEN", HelpdeskConnector.TOKEN)))),
-                models, null);
+                models, null, routing);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/host/admin", admin.admin());
         server.createContext("/host/rehearsals/", admin.reports());
@@ -121,6 +123,32 @@ class AnAdminSeesWhatEachVersionCanDoTest {
 
         assertThat(get("/host/admin/agents/nobody", "acme/" + SAM).statusCode()).isEqualTo(404);
         assertThat(json(get("/host/admin/deferred", "acme/" + SAM)).path("agents").isEmpty()).isTrue();
+    }
+
+    @Test
+    void itShowsWhereMessagesWentAndWhichWereSentAgainToAnotherAgent() throws Exception {
+        Instant now = Instant.parse("2026-09-18T20:00:00Z");
+        routing.add("acme", new dev.agentkit.host.routing.RoutingLog.Route(now.minusSeconds(60), "acme/" + SAM, "c1",
+                "t1", "My laptop will not boot", "helpdesk", "agent", "a device problem", 900, 40));
+        routing.add("acme", new dev.agentkit.host.routing.RoutingLog.Route(now.minusSeconds(30), "acme/" + SAM, "c1",
+                "t2", "What can you do?", null, "answer", "about the agents", 800, 60));
+        routing.add("acme", new dev.agentkit.host.routing.RoutingLog.Route(now.minus(Duration.ofDays(40)),
+                "acme/" + SAM, "c0", "t0", "Long ago", "helpdesk", "agent", "old", 1, 1));
+        routing.addMisroute("acme", new dev.agentkit.host.routing.RoutingLog.Misroute("t3", now.minusSeconds(10),
+                "acme/" + SAM, "c1", "Who is Dana's manager?", "helpdesk", "security-desk",
+                List.of(new dev.agentkit.host.routing.RoutingLog.Before("My laptop will not boot", "helpdesk", "On it."))));
+
+        JsonNode report = json(get("/host/admin/routing", "acme/" + SAM));
+
+        assertThat(report.path("messages").asInt()).as("the last 30 days only").isEqualTo(2);
+        assertThat(report.path("byAgent").path("helpdesk").asInt()).isEqualTo(1);
+        assertThat(report.path("byAction").path("answer").asInt()).isEqualTo(1);
+        assertThat(report.path("routerTokens").path("today").asLong()).isEqualTo(1800);
+        assertThat(report.path("names").path("security-desk").asText()).isEqualTo("Security Desk");
+        assertThat(report.path("misroutes").get(0).path("chosen").asText()).isEqualTo("security-desk");
+        assertThat(report.path("misroutes").get(0).path("before").get(0).path("agent").asText()).isEqualTo("helpdesk");
+        assertThat(report.path("recent").get(0).path("said").asText()).isEqualTo("What can you do?");
+        assertThat(get("/host/admin/routing", "acme/" + PRIYA).statusCode()).isEqualTo(403);
     }
 
     @Test

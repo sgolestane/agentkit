@@ -153,6 +153,32 @@ describe('The admin view', () => {
     expect(screen.getByRole('cell', { name: 'access-desk' })).toBeInTheDocument()
   })
 
+  it('shows where messages went, what the router spent, and the ones sent again to another agent', async () => {
+    serve({
+      '/admin': overview,
+      '/admin/routing': {
+        days: 30, enabled: true, messages: 5,
+        byAgent: { onboarding: 3, 'access-desk': 1 },
+        byAction: { agent: 3, answer: 1, chosen: 1 },
+        names: { onboarding: 'Onboarding', 'access-desk': 'Access Desk' },
+        routerTokens: { today: 2500, days: 12000 },
+        misroutes: [{ id: 't9', at: '2026-09-19T10:00:00Z', said: 'Give Ravi staging access', routedTo: 'onboarding',
+          chosen: 'access-desk', before: [] }],
+        recent: [{ at: '2026-09-19T10:01:00Z', said: 'What can you do?', to: null, action: 'answer',
+          why: 'about the agents' }],
+      },
+    })
+    render(<Admin />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Routing' }))
+    expect(await screen.findByTestId('routing-summary')).toHaveTextContent(
+      'In the last 30 days, 5 messages: Onboarding 3, Access Desk 1. AgentKit answered 1, asked 0 back and showed a '
+      + 'form 0 times; people chose the agent themselves 1 times.')
+    expect(screen.getByTestId('router-tokens')).toHaveTextContent('2,500 tokens today and 12,000 in 30 days')
+    expect(screen.getByTestId('misroute')).toHaveTextContent('Went to Onboarding; sent again to Access Desk')
+    expect(screen.getByRole('cell', { name: 'AgentKit (answered)' })).toBeInTheDocument()
+  })
+
   it('says why someone who is not an admin sees nothing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
       { error: 'Only the admins org.yaml names see this organization\'s admin view.' }), { status: 403 })))
