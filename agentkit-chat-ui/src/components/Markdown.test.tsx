@@ -324,3 +324,13 @@ describe('syntax colours', () => {
     expect(container.querySelector('pre')?.textContent).toContain('<script>alert(1)</script>')
   })
 })
+
+describe('Line breaks', () => {
+  it('keeps a line written on its own line, and leaves code alone', () => {
+    const { container } = render(<Markdown text={'employee_id:\nname:\nwork_email:\n\n```\na\nb\n```'} />)
+
+    expect(container.querySelectorAll('p br')).toHaveLength(2)
+    expect(container.querySelector('p')?.textContent).toBe('employee_id:\nname:\nwork_email:')
+    expect(container.querySelector('pre')?.textContent).toContain('a\nb')
+  })
+})

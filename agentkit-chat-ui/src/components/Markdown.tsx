@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { Options as SanitizeSchema } from 'rehype-sanitize'
 import { rehypeHighlightSubset } from '../lib/highlight'
+import { remarkLineBreaks } from '../lib/lineBreaks'
 import { remarkRawHtmlAsText } from '../lib/rawHtml'
 import { plain } from '../lib/text'
 import '../lib/highlight.css'
@@ -115,7 +116,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         // rehype one: it has to turn a block into text before that block becomes a `raw` node,
         // because the thing that drops it is the sanitizer and loosening the sanitizer is the
         // one move #356's boundary rests on not making.
-        remarkPlugins={[remarkRawHtmlAsText, remarkGfm]}
+        remarkPlugins={[remarkRawHtmlAsText, remarkGfm, remarkLineBreaks]}
         // Highlight, then sanitize. The forward reason is plain: sanitizing first would strip
         // the classes the highlighter is about to add, and the block would come out plain.
         //
