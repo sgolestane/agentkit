@@ -131,6 +131,28 @@ class APlanIsMadeOnceAndCarriedOutStepByStepTest {
     }
 
     @Test
+    void aStepWhoseChangeFailedIsNotCalledDoneThoughItsAgentFinished() throws Exception {
+        ScriptedLlm llm = new ScriptedLlm(
+                ScriptedLlm.text("1. Look up nobody@acme.example.\n2. Tell nobody@acme.example it is replaced."),
+                // A lookup that finds no one is not a failure of the step: it only read.
+                ScriptedLlm.toolUse("s1", "directory_lookup", Map.of("email", HelpdeskConnector.NOBODY)),
+                ScriptedLlm.text("They are not in the directory."),
+                ScriptedLlm.toolUse("s2", "send_message", Map.of("to_email", HelpdeskConnector.NOBODY, "text", "Hi")),
+                ScriptedLlm.text("I tried to message them."));
+        start(llm);
+
+        Conversation conversation = runtime.store().create(PRIYA, "laptop", new Conversation.Pin("replacement",
+                org.current().repo().version()));
+        Turn turn = say(conversation, "Tell nobody their laptop is replaced.");
+
+        assertThat(turn.answer()).isEqualTo("""
+                1. Look up nobody@acme.example.
+                   - Done: They are not in the directory.
+                2. Tell nobody@acme.example it is replaced.
+                   - Failed (send_message): I tried to message them.""");
+    }
+
+    @Test
     void aStepThatDoesNotFinishStopsThePlanAndTheAnswerSaysWhere() throws Exception {
         // The planner answers; the first step's model then fails, and nothing after it runs.
         ScriptedLlm llm = new ScriptedLlm(ScriptedLlm.text("1. Open a ticket.\n2. Tell the manager."));

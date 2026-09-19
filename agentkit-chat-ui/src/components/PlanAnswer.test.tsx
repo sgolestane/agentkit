@@ -9,6 +9,8 @@ const answer = [
   '2. Slack: create a member account.',
   '   - Stopped (failed): The HRIS does not know that email.',
   '3. Tell the manager.',
+  '   - Failed (send_message, open_ticket): I tried to message them.',
+  '4. Close the ticket.',
   '   - Not started.',
 ].join('\n')
 
@@ -18,7 +20,9 @@ describe('A carried-out plan', () => {
       { step: 'Okta: create an account for marcus.bell@acme.example.', outcome: 'done', said: 'I created the account.' },
       { step: 'Slack: create a member account.', outcome: 'stopped', reason: 'failed',
         said: 'The HRIS does not know that email.' },
-      { step: 'Tell the manager.', outcome: 'not-started', said: '' },
+      { step: 'Tell the manager.', outcome: 'failed', reason: 'send_message, open_ticket',
+        said: 'I tried to message them.' },
+      { step: 'Close the ticket.', outcome: 'not-started', said: '' },
     ])
     expect(planSteps('Done — I granted it.')).toBeNull()
     expect(planSteps('1. A step\nsomething else')).toBeNull()
@@ -29,8 +33,9 @@ describe('A carried-out plan', () => {
     render(<PlanAnswer steps={planSteps(answer)!} />)
 
     const outcomes = screen.getAllByTestId('plan-step-outcome') as HTMLDetailsElement[]
-    expect(outcomes).toHaveLength(2)
-    const [done, stopped] = outcomes as [HTMLDetailsElement, HTMLDetailsElement]
+    expect(outcomes).toHaveLength(3)
+    const [done, stopped, failed] = outcomes as [HTMLDetailsElement, HTMLDetailsElement, HTMLDetailsElement]
+    expect(within(failed).getByText('Failed: send_message, open_ticket')).toHaveClass('text-bad')
     expect(done.open || stopped.open).toBe(false)
     expect(within(done).getByText('Done')).toBeInTheDocument()
     expect(within(stopped).getByText('Stopped (failed)')).toHaveClass('text-warn')

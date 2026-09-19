@@ -29,6 +29,8 @@ final class HelpdeskConnector implements AutoCloseable {
     static final String PRIYA = "priya.natarajan@acme.example";
     static final String DANA = "dana.kim@acme.example";
     static final String SAM = "sam.okafor@acme.example";
+    /** Nobody: a message to them fails, as one to someone Slack does not know would. */
+    static final String NOBODY = "nobody@acme.example";
 
     /** One call that reached the connector. */
     /** A call that reached a tool, and who the caller assertion said it was from, when the connector is guarded. */
@@ -128,7 +130,9 @@ final class HelpdeskConnector implements AutoCloseable {
                         new ToolDeclaration("okta", ToolEffect.GRANT, "email"))
                 .add(tool("send_message", "Send someone a direct message.",
                         Map.of("to_email", str("Recipient"), "text", str("The message")), SideEffects.EXTERNAL,
-                        args -> ToolResult.ok("Sent to " + args.get("to_email"))),
+                        args -> NOBODY.equals(args.get("to_email"))
+                                ? ToolResult.error("Slack: no user " + NOBODY)
+                                : ToolResult.ok("Sent to " + args.get("to_email"))),
                         new ToolDeclaration("slack", ToolEffect.NOTIFY, "to_email"))
                 .add(tool("delete_account", "Delete a person's account everywhere.",
                         Map.of("email", str("Whose account")), SideEffects.EXTERNAL,

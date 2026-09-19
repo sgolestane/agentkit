@@ -4,9 +4,12 @@ import { Markdown } from './Markdown'
 /** One step of a carried-out plan, as the host reports it. */
 export interface PlanStep {
   step: string
-  /** 'done', 'stopped' or 'not-started' */
-  outcome: 'done' | 'stopped' | 'not-started'
-  /** Why it stopped, for a stopped step: "failed", "budget exhausted", … */
+  /**
+   * 'done'; 'failed' when its agent finished but a change it made reported an error; 'stopped' when its agent did
+   * not finish; or 'not-started'
+   */
+  outcome: 'done' | 'failed' | 'stopped' | 'not-started'
+  /** Why it stopped ("failed", "budget exhausted", …), or which tools failed */
   reason?: string
   /** What the step's agent said it did; empty for a step that did not start. */
   said: string
@@ -14,6 +17,7 @@ export interface PlanStep {
 
 const STEP = /^(\d+)\. (.*)$/
 const DONE = /^ {3}- Done: (.*)$/
+const FAILED = /^ {3}- Failed \(([^)]*)\): (.*)$/
 const STOPPED = /^ {3}- Stopped \(([^)]*)\): (.*)$/
 const NOT_STARTED = /^ {3}- Not started\.$/
 
@@ -38,8 +42,11 @@ export function planSteps(answer: string): PlanStep[] | null {
     const outcome = lines[i + 1] ?? ''
     const done = DONE.exec(outcome)
     const stopped = STOPPED.exec(outcome)
+    const failed = FAILED.exec(outcome)
     if (done) {
       steps.push({ step: text, outcome: 'done', said: done[1] ?? '' })
+    } else if (failed) {
+      steps.push({ step: text, outcome: 'failed', reason: failed[1] ?? '', said: failed[2] ?? '' })
     } else if (stopped) {
       steps.push({ step: text, outcome: 'stopped', reason: stopped[1] ?? '', said: stopped[2] ?? '' })
     } else if (NOT_STARTED.test(outcome)) {
@@ -58,8 +65,8 @@ export function isPlanTurn(turn: Turn): boolean {
 
 /**
  * The steps of a carried-out plan, each with what came of it folded away under how it ended, so
- * the plan reads as a list and a step's account is one click away. A step that stopped says so
- * in the fold's label, in the warning colour, so nothing that went wrong is hidden by folding.
+ * the plan reads as a list and a step's account is one click away. A step that failed or stopped
+ * says so in the fold's label, in colour, so nothing that went wrong is hidden by folding.
  */
 export function PlanAnswer({ steps }: { steps: PlanStep[] }) {
   return (
@@ -73,13 +80,14 @@ export function PlanAnswer({ steps }: { steps: PlanStep[] }) {
             <details className="group" data-testid="plan-step-outcome">
               <summary
                 className={`inline-flex cursor-pointer select-none list-none items-center gap-1 rounded-[var(--radius-item)] px-1.5 py-0.5 text-sm hover:bg-hover [&::-webkit-details-marker]:hidden ${
-                  one.outcome === 'stopped' ? 'text-warn' : 'text-muted'
+                  one.outcome === 'failed' ? 'text-bad' : one.outcome === 'stopped' ? 'text-warn' : 'text-muted'
                 }`}
               >
                 <span className="inline-block transition-transform group-open:rotate-90" aria-hidden="true">
                   ›
                 </span>
-                {one.outcome === 'stopped' ? `Stopped (${one.reason})` : 'Done'}
+                {one.outcome === 'failed' ? `Failed: ${one.reason}`
+                  : one.outcome === 'stopped' ? `Stopped (${one.reason})` : 'Done'}
               </summary>
               <div className="mt-1 border-l-2 border-line pl-4 text-muted">
                 <Markdown text={one.said || '(nothing said)'} />

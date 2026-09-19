@@ -40,7 +40,9 @@ import java.util.function.Supplier;
  *
  * <p>What the person sees, as it happens: the plan, as soon as it is made, and each step as it starts, with its tool
  * calls in the trace. The answer is every step and what came of it, and says where the plan stopped if a step did
- * not finish. The plan is a step in the trace, and the planner's tokens are counted in the turn's.
+ * not finish. A step whose agent finished but whose change — a grant, a request, a message — reported an error is
+ * "Failed", naming the tools, not "Done": it did not do what it was for. The plan is a step in the trace, and the
+ * planner's tokens are counted in the turn's.
  *
  * <p><strong>Reusing a settled plan.</strong> For an agent with {@code plans.reuse}, started from its form, every plan
  * carried out is kept with the task's values taken out ({@link PlanReuse}). Once the plans for a kind of task have
@@ -99,6 +101,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
                 agent.definition().maxTokens());
         AtomicReference<Plan> made = new AtomicReference<>();
         AtomicInteger built = new AtomicInteger();
+        // Where each plan step's recorded calls begin, to tell afterwards which of its calls failed.
+        List<Long> startedAfter = new java.util.concurrent.CopyOnWriteArrayList<>();
         // This turn is the form's task only if nothing else was said with it.
         Optional<FormTask> task = form.filter(f -> alsoSent.isEmpty()
                 && goal.render().strip().equals(f.request().strip()));
@@ -126,6 +130,9 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             // The first executor built only lends its tool catalog to the planner; each after it runs a step.
             int step = built.getAndIncrement();
             Plan plan = made.get();
+            if (step >= 1) {
+                startedAfter.add(lastRecorded());
+            }
             if (step >= 1 && plan != null && step <= plan.size()) {
                 say("**Step " + step + " of " + plan.size() + ":** " + OneLine.of(plan.steps().get(step - 1)) + "\n\n");
             }
@@ -139,8 +146,9 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             return AgentResult.failed(refused, refused.getMessage(), 0, plannerUsage.get());
         }
         AgentResult overall = execution.overall();
-        task.ifPresent(f -> keep(f, execution, reused.isPresent()));
-        String answer = answer(execution);
+        List<List<String>> failed = failedChanges(execution.stepResults().size(), startedAfter);
+        task.ifPresent(f -> keep(f, execution, reused.isPresent(), failed));
+        String answer = answer(execution, failed);
         TokenUsage usage = overall.usage().plus(plannerUsage.get());
         return overall.stopReason() == StopReason.COMPLETED
                 ? AgentResult.completed(answer, overall.steps(), usage)
@@ -183,13 +191,14 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     }
 
     /** The plan carried out, with the task's values taken out, and whether every step of it completed. */
-    private void keep(FormTask f, PlanExecution execution, boolean reused) {
+    private void keep(FormTask f, PlanExecution execution, boolean reused, List<List<String>> failed) {
         if (execution.plan().steps().isEmpty()) {
             return;
         }
         boolean clean = execution.overall().stopReason() == StopReason.COMPLETED
                 && execution.stepResults().size() == execution.plan().size()
-                && execution.stepResults().stream().allMatch(r -> r.stopReason() == StopReason.COMPLETED);
+                && execution.stepResults().stream().allMatch(r -> r.stopReason() == StopReason.COMPLETED)
+                && failed.stream().allMatch(List::isEmpty);
         try {
             f.plans().book().add(f.where(), f.task().shape(), new PlanBook.Run(
                     execution.plan().steps().stream().map(f.task()::parameterize).toList(), f.task().values(), reused,
@@ -211,8 +220,37 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         return Goal.of(text.toString());
     }
 
+    /** The sequence of the last step recorded on this turn so far: where the next plan step's calls begin. */
+    private long lastRecorded() {
+        return session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
+                .map(turn -> turn.steps().stream().mapToLong(Step::sequence).max().orElse(0L)).orElse(0L);
+    }
+
+    /**
+     * For each plan step carried out, the tools it called that change something — anything but a read — and reported
+     * an error. A step whose agent finished but whose grant, request or message failed did not do what it was for,
+     * and is not called done; a lookup that found nothing is not a failure of the step.
+     */
+    private List<List<String>> failedChanges(int carriedOut, List<Long> startedAfter) {
+        Map<String, String> effects = new java.util.HashMap<>();
+        agent.toolInfo().forEach(tool -> effects.put(tool.name(), tool.effect()));
+        List<Step> recorded = session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
+                .map(dev.agentkit.chat.Turn::steps).orElse(List.of());
+        List<List<String>> failed = new java.util.ArrayList<>();
+        for (int i = 0; i < carriedOut; i++) {
+            long from = i < startedAfter.size() ? startedAfter.get(i) : Long.MAX_VALUE;
+            long to = i + 1 < startedAfter.size() ? startedAfter.get(i + 1) : Long.MAX_VALUE;
+            failed.add(recorded.stream()
+                    .filter(step -> step.kind() == Step.Kind.TOOL_CALL && step.failed()
+                            && step.sequence() > from && step.sequence() <= to
+                            && !"read".equals(effects.get(step.name())))
+                    .map(Step::name).distinct().toList());
+        }
+        return failed;
+    }
+
     /** Every step and what came of it; where the plan stopped, if it did. */
-    private static String answer(PlanExecution execution) {
+    private static String answer(PlanExecution execution, List<List<String>> failed) {
         List<String> steps = execution.plan().steps();
         List<AgentResult> results = execution.stepResults();
         if (steps.isEmpty()) {
@@ -225,8 +263,11 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
                 AgentResult result = results.get(i);
                 String output = Cut.to(OneLine.of(result.output() == null ? "" : result.output()), MAX_STEP_OUTPUT_CHARS);
                 // A nested item, so the answer reads as a list of steps each with its outcome under it.
-                answer.append(result.stopReason() == StopReason.COMPLETED ? "\n   - Done: " : "\n   - Stopped ("
-                        + result.stopReason().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + "): ")
+                List<String> failedTools = i < failed.size() ? failed.get(i) : List.of();
+                answer.append(result.stopReason() != StopReason.COMPLETED ? "\n   - Stopped ("
+                                + result.stopReason().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + "): "
+                                : !failedTools.isEmpty() ? "\n   - Failed (" + String.join(", ", failedTools) + "): "
+                                : "\n   - Done: ")
                         .append(output.isEmpty() ? "(nothing said)" : output);
             } else {
                 answer.append("\n   - Not started.");
