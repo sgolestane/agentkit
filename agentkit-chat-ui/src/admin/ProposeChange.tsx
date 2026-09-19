@@ -109,7 +109,7 @@ export function ProposeChange({ agentId, agentName, where }: { agentId: string; 
           type="button"
           onClick={submit}
           disabled={working || changed.length === 0 || title.trim() === ''}
-          className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-full bg-primary px-4 py-1.5 text-sm font-medium text-on-primary hover:opacity-80 disabled:opacity-50"
         >
           {working ? 'Checking…' : 'Check and open for review'}
         </button>

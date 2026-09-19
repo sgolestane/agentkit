@@ -63,7 +63,7 @@ export function Transcript({
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
-        className="h-full overflow-y-auto px-4 py-4"
+        className="h-full overflow-y-auto px-4 pb-8 pt-6"
         onScroll={onScroll}
         data-testid="transcript"
       >
@@ -71,17 +71,17 @@ export function Transcript({
           <button
             type="button"
             onClick={() => setShowAll(true)}
-            className="mx-auto mb-4 block rounded-full border border-line px-3 py-1 text-xs text-muted"
+            className="mx-auto mb-6 block rounded-full bg-hover px-3 py-1.5 text-sm text-muted hover:text-ink"
           >
             {hidden} earlier {hidden === 1 ? 'turn' : 'turns'} — show them
           </button>
         ) : null}
 
-        <ol className="mx-auto flex max-w-3xl flex-col gap-5">
+        <ol className="mx-auto flex max-w-3xl flex-col gap-8">
           {shown.map((turn) => (
-            <li key={turn.id} className="flex flex-col gap-2">
+            <li key={turn.id} className="flex flex-col gap-3">
               {turn.userText ? (
-                <div className="self-end max-w-[85%] whitespace-pre-wrap rounded-2xl bg-accent px-4 py-2 text-white">
+                <div className="reading self-end max-w-[70%] whitespace-pre-wrap rounded-[var(--radius-bubble)] bg-bubble px-4 py-2.5 text-ink">
                   {turn.userText}
                 </div>
               ) : null}
@@ -129,18 +129,18 @@ export function Transcript({
         </ol>
 
         {!working && last && last.state === 'COMPLETED' ? (
-          <div className="mx-auto mt-4 flex max-w-3xl gap-2">
+          <div className="mx-auto mt-2 flex max-w-3xl gap-1">
             <button
               type="button"
               onClick={onRegenerate}
-              className="rounded-lg border border-line px-3 py-1 text-xs text-muted hover:text-ink"
+              className="rounded-[var(--radius-item)] px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-ink"
             >
               Regenerate
             </button>
             <button
               type="button"
               onClick={() => onEdit(last.userText)}
-              className="rounded-lg border border-line px-3 py-1 text-xs text-muted hover:text-ink"
+              className="rounded-[var(--radius-item)] px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-ink"
             >
               Edit and resend
             </button>
@@ -154,7 +154,7 @@ export function Transcript({
         <button
           type="button"
           onClick={jumpToEnd}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-line bg-panel px-3 py-1 text-xs shadow"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-panel px-3 py-1.5 text-sm text-ink shadow-[var(--shadow-menu)]"
         >
           Jump to the end
         </button>
@@ -189,7 +189,7 @@ function CopyAnswer({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="absolute right-2 top-2 rounded border border-line bg-canvas px-2 py-0.5 text-[11px] text-muted opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+      className="mt-1 rounded-[var(--radius-item)] px-2 py-1 text-xs text-faint opacity-0 transition hover:bg-hover hover:text-ink group-hover:opacity-100 focus:opacity-100"
     >
       {copied ? 'Copied' : 'Copy'}
     </button>
@@ -199,13 +199,13 @@ function CopyAnswer({ text }: { text: string }) {
 function TurnAnswer({ turn }: { turn: Turn }) {
   const streaming = turn.state === 'RUNNING' && turn.answer.length > 0
   return (
-    <div className="w-full max-w-[92%] self-start">
+    <div className="w-full self-start">
       {/* Above the answer, not below it. A tool's table is what the sentence underneath is
           about, and a reader who has to scroll past the prose to find the numbers reads the
           prose without them. */}
       <Views views={turn.views} />
       {turn.answer ? (
-        <div className="group relative rounded-2xl bg-panel px-4 py-2" data-testid="answer">
+        <div className="reading group relative" data-testid="answer">
           <Markdown text={turn.answer} />
           {streaming ? <span className="ml-0.5 animate-pulse text-muted">▍</span> : null}
           {!streaming ? <CopyAnswer text={turn.answer} /> : null}
@@ -213,13 +213,13 @@ function TurnAnswer({ turn }: { turn: Turn }) {
       ) : null}
 
       {turn.state === 'CANCELLED' ? (
-        <p className="mt-1 text-xs text-muted">{turn.detail || 'You stopped this.'}</p>
+        <p className="mt-1 text-sm text-muted">{turn.detail || 'You stopped this.'}</p>
       ) : null}
       {turn.state === 'FAILED' ? (
-        <p className="mt-1 text-xs text-bad">{turn.detail || 'That did not work.'}</p>
+        <p className="mt-1 text-sm text-bad">{turn.detail || 'That did not work.'}</p>
       ) : null}
       {turn.state === 'WAITING_FOR_HUMAN' ? (
-        <p className="mt-1 text-xs text-warn">{turn.detail || 'This needs a decision.'}</p>
+        <p className="mt-1 text-sm text-warn">{turn.detail || 'This needs a decision.'}</p>
       ) : null}
       <Trace turn={turn} />
     </div>

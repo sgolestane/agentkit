@@ -36,24 +36,25 @@ export function Threads({
   onForget: (id: string) => void
 }) {
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-panel md:flex">
-      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <h1 className="text-sm font-semibold">AgentKit</h1>
+    <aside className="hidden w-[260px] shrink-0 flex-col bg-sidebar md:flex">
+      <div className="flex h-[52px] items-center gap-2 px-3">
+        <h1 className="px-1 text-lg font-semibold">AgentKit</h1>
         <NewConversation agents={agents} onCreate={onCreate} />
       </div>
 
-      <div className="px-2 pt-2">
+      <div className="px-2 pb-2">
         <input
           type="search"
           aria-label="Search conversations"
           placeholder="Search…"
           value={filter}
           onChange={(event) => onFilter(event.target.value)}
-          className="w-full rounded border border-line bg-canvas px-2 py-1 text-xs outline-none focus:border-accent"
+          className="h-9 w-full rounded-[var(--radius-item)] bg-transparent px-2.5 text-sm text-ink outline-none placeholder:text-faint hover:bg-hover focus:bg-hover"
         />
       </div>
 
-      <ul className="flex-1 overflow-y-auto p-2" data-testid="threads">
+      <p className="px-4 pb-1 pt-3 text-sm font-medium text-faint">Conversations</p>
+      <ul className="flex-1 overflow-y-auto px-2 pb-2" data-testid="threads">
         {threads.map((thread) => (
           <ThreadRow
             key={thread.id}
@@ -67,11 +68,11 @@ export function Threads({
           />
         ))}
         {threads.length === 0 ? (
-          <li className="px-3 py-2 text-xs text-muted">Nothing matches that.</li>
+          <li className="px-2.5 py-2 text-sm text-faint">Nothing matches that.</li>
         ) : null}
       </ul>
       {admin ? (
-        <a href="/admin" className="border-t border-line px-3 py-2 text-xs text-muted hover:text-ink">
+        <a href="/admin" className="m-2 rounded-[var(--radius-item)] px-2.5 py-2 text-sm text-muted hover:bg-hover hover:text-ink">
           Admin: agents, versions and rehearsals
         </a>
       ) : null}
@@ -99,7 +100,7 @@ function NewConversation({
         onClick={() => onCreate(agents[0]?.id)}
         aria-label="Start a new conversation"
         title="Start a new conversation"
-        className="ml-auto rounded border border-line px-2 py-0.5 text-sm text-muted hover:text-ink"
+        className="ml-auto flex h-9 w-9 items-center justify-center rounded-[var(--radius-item)] text-lg text-muted hover:bg-hover hover:text-ink"
       >
         +
       </button>
@@ -114,7 +115,7 @@ function NewConversation({
         aria-expanded={choosing}
         aria-haspopup="menu"
         title="Start a new conversation"
-        className="rounded border border-line px-2 py-0.5 text-sm text-muted hover:text-ink"
+        className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-item)] text-lg text-muted hover:bg-hover hover:text-ink"
       >
         +
       </button>
@@ -122,7 +123,7 @@ function NewConversation({
         <ul
           role="menu"
           aria-label="Which agent"
-          className="absolute right-0 z-10 mt-1 w-56 rounded-lg border border-line bg-panel p-1 shadow-lg"
+          className="absolute right-0 z-10 mt-1 w-64 rounded-[var(--radius-card)] bg-panel p-1.5 shadow-[var(--shadow-menu)]"
         >
           {agents.map((agent) => (
             <li key={agent.id} role="none">
@@ -133,7 +134,7 @@ function NewConversation({
                   setChoosing(false)
                   onCreate(agent.id)
                 }}
-                className="w-full rounded px-2 py-1.5 text-left hover:bg-canvas"
+                className="w-full rounded-[var(--radius-item)] px-2.5 py-2 text-left hover:bg-hover"
               >
                 <span className="block text-sm text-ink">{agent.name}</span>
                 {agent.unavailable ?? agent.description ? (
@@ -196,7 +197,7 @@ function ThreadRow({
               setTitle(thread.title)
             }
           }}
-          className="w-full rounded border border-accent bg-canvas px-2 py-1 text-sm outline-none"
+          className="h-9 w-full rounded-[var(--radius-item)] border border-line bg-panel px-2.5 text-sm outline-none focus:border-accent"
         />
       </li>
     )
@@ -209,8 +210,8 @@ function ThreadRow({
         onClick={onOpen}
         onDoubleClick={() => setEditing(true)}
         aria-current={open ? 'true' : undefined}
-        className={`min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-left text-sm ${
-          open ? 'bg-canvas text-ink' : 'text-muted hover:text-ink'
+        className={`min-w-0 flex-1 truncate rounded-[var(--radius-item)] px-2.5 py-2 text-left text-sm ${
+          open ? 'bg-selected text-ink' : 'text-ink hover:bg-hover'
         }`}
       >
         {working ? (
@@ -220,7 +221,7 @@ function ThreadRow({
           />
         ) : null}
         {thread.title || 'New conversation'}
-        {agent ? <span className="block truncate text-xs text-muted">{agent}</span> : null}
+        {agent ? <span className="block truncate text-xs text-faint">{agent}</span> : null}
       </button>
 
       <button
@@ -240,8 +241,8 @@ function ThreadRow({
           setArmed(true)
           disarm.current = setTimeout(() => setArmed(false), 4000)
         }}
-        className={`shrink-0 rounded px-1.5 py-1 text-xs ${
-          armed ? 'text-bad' : 'text-muted opacity-0 group-hover:opacity-100 focus:opacity-100'
+        className={`shrink-0 rounded-[var(--radius-item)] px-2 py-2 text-xs ${
+          armed ? 'text-bad' : 'text-faint opacity-0 hover:bg-hover hover:text-ink group-hover:opacity-100 focus:opacity-100'
         }`}
       >
         {armed ? 'sure?' : '×'}

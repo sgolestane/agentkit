@@ -50,7 +50,7 @@ export function ApprovalCard({
 
   return (
     <section
-      className={`my-2 rounded-xl border px-3 py-2.5 ${question ? 'border-accent' : 'border-warn'}`}
+      className={`my-2 rounded-[var(--radius-card)] border bg-panel px-4 py-3 ${question ? 'border-accent' : 'border-warn'}`}
       data-testid="approval-card"
       aria-label={question ? 'A question for you' : 'A decision for you'}
     >
@@ -103,7 +103,7 @@ export function ApprovalCard({
           aria-label="Your answer"
           placeholder="Answer them…"
           onChange={(event) => setAnswer(event.target.value)}
-          className="mt-2 w-full resize-y rounded-lg border border-line bg-canvas px-2 py-1 text-sm outline-none focus:border-accent"
+          className="mt-2 w-full resize-y rounded-[var(--radius-item)] border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent"
         />
       ) : (
         <input
@@ -112,7 +112,7 @@ export function ApprovalCard({
           aria-label="Note"
           placeholder="Why? (optional, and read by the next run)"
           onChange={(event) => setNote(event.target.value)}
-          className="mt-2 w-full rounded-lg border border-line bg-canvas px-2 py-1 text-sm outline-none focus:border-accent"
+          className="mt-2 w-full rounded-[var(--radius-item)] border border-line bg-canvas px-3 py-2 text-sm outline-none focus:border-accent"
         />
       )}
 
@@ -135,7 +135,7 @@ export function ApprovalCard({
               type="button"
               disabled={busy || !answer.trim()}
               onClick={() => onDecide('answer', { answer: answer.trim() })}
-              className="rounded-lg bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-40"
+              className="rounded-full bg-primary px-4 py-1.5 text-sm font-medium text-on-primary hover:opacity-80 disabled:opacity-40"
             >
               Answer
             </button>
@@ -143,7 +143,7 @@ export function ApprovalCard({
               type="button"
               disabled={busy}
               onClick={() => onDecide('answer', { answer: '' })}
-              className="rounded-lg border border-line px-3 py-1 text-sm disabled:opacity-40"
+              className="rounded-full border border-line px-4 py-1.5 text-sm hover:bg-hover disabled:opacity-40"
             >
               I do not know
             </button>
@@ -158,7 +158,7 @@ export function ApprovalCard({
                   ? onDecide('approve', { note, standing })
                   : onDecide('edit', { arguments: parsed(edited), note, standing })
               }
-              className="rounded-lg bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-40"
+              className="rounded-full bg-primary px-4 py-1.5 text-sm font-medium text-on-primary hover:opacity-80 disabled:opacity-40"
             >
               {edited === null ? 'Approve' : 'Approve as edited'}
             </button>
@@ -166,7 +166,7 @@ export function ApprovalCard({
               type="button"
               disabled={busy}
               onClick={() => onDecide('reject', { note, standing })}
-              className="rounded-lg border border-bad px-3 py-1 text-sm text-bad disabled:opacity-40"
+              className="rounded-full border border-bad px-4 py-1.5 text-sm text-bad hover:bg-hover disabled:opacity-40"
             >
               Reject
             </button>
@@ -178,7 +178,7 @@ export function ApprovalCard({
                   current === null ? JSON.stringify(decision.arguments, null, 2) : null,
                 )
               }
-              className="rounded-lg border border-line px-3 py-1 text-sm disabled:opacity-40"
+              className="rounded-full border border-line px-4 py-1.5 text-sm hover:bg-hover disabled:opacity-40"
             >
               {edited === null ? 'Edit' : 'Cancel edit'}
             </button>
@@ -192,7 +192,7 @@ export function ApprovalCard({
           value={edited}
           aria-label="Arguments to run instead"
           onChange={(event) => setEdited(event.target.value)}
-          className="mt-2 w-full resize-y rounded-lg border border-line bg-canvas px-2 py-1 font-mono text-[12px] outline-none focus:border-accent"
+          className="mt-2 w-full resize-y rounded-[var(--radius-item)] border border-line bg-canvas px-3 py-2 font-mono text-[12px] outline-none focus:border-accent"
         />
       ) : null}
     </section>

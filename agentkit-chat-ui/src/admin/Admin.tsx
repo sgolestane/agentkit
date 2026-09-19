@@ -55,7 +55,7 @@ export function Admin() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-line bg-panel px-4 py-2">
+      <header className="flex h-[52px] items-center gap-3 border-b border-line-soft bg-canvas px-4">
         <h1 className="text-sm font-semibold">{overview ? `${overview.org} — admin` : 'Admin'}</h1>
         {overview ? (
           <span className="text-xs text-muted" data-testid="current-version">
@@ -75,7 +75,7 @@ export function Admin() {
 
       {overview ? (
         <div className="flex min-h-0 flex-1">
-          <nav className="w-44 shrink-0 border-r border-line bg-panel p-2" aria-label="Admin sections">
+          <nav className="w-52 shrink-0 bg-sidebar p-2" aria-label="Admin sections">
             {SECTIONS.map((one) => (
               <button
                 key={one.id}
@@ -85,8 +85,8 @@ export function Admin() {
                   setOpen(null)
                 }}
                 aria-current={section === one.id ? 'page' : undefined}
-                className={`block w-full rounded px-2 py-1 text-left text-sm ${
-                  section === one.id ? 'bg-canvas font-medium text-ink' : 'text-muted hover:text-ink'
+                className={`block w-full rounded-[var(--radius-item)] px-2.5 py-2 text-left text-sm ${
+                  section === one.id ? 'bg-selected font-medium text-ink' : 'text-ink hover:bg-hover'
                 }`}
               >
                 {one.label}

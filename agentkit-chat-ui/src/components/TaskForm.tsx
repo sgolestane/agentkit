@@ -45,14 +45,14 @@ export function TaskForm({
   return (
     <details
       open={startOpen}
-      className="mx-4 mb-2 rounded-lg border border-line bg-panel text-sm"
+      className="mx-auto mb-2 w-[calc(100%-2rem)] max-w-3xl rounded-[var(--radius-card)] bg-panel text-sm shadow-[var(--shadow-composer)]"
       data-testid="task-form"
     >
-      <summary className="cursor-pointer select-none px-3 py-2 text-muted hover:text-ink">
+      <summary className="cursor-pointer select-none px-4 py-3 text-muted hover:text-ink">
         Start {agentName} with its form
       </summary>
       <form
-        className="grid gap-3 px-3 pb-3 sm:grid-cols-2"
+        className="grid gap-3 px-4 pb-4 sm:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault()
           submit()
@@ -72,7 +72,7 @@ export function TaskForm({
           <button
             type="submit"
             disabled={disabled}
-            className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-full bg-primary px-4 py-1.5 text-sm font-medium text-on-primary hover:opacity-80 disabled:opacity-50"
           >
             Start
           </button>
@@ -105,7 +105,7 @@ function Field({
     </span>
   )
   const hint = field.description ? <span className="block text-xs text-muted">{field.description}</span> : null
-  const control = 'mt-1 w-full rounded border border-line bg-canvas px-2 py-1 outline-none focus:border-accent'
+  const control = 'mt-1 h-9 w-full rounded-[var(--radius-item)] border border-line bg-canvas px-3 outline-none focus:border-accent'
 
   if (field.type === 'boolean') {
     return (

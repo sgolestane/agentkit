@@ -118,12 +118,12 @@ export function Console() {
           </p>
         ) : null}
         {conversation.reconnecting ? (
-          <p className="border-b border-line bg-panel px-4 py-1 text-xs text-muted" role="status">
+          <p className="border-b border-line-soft px-4 py-1.5 text-xs text-muted" role="status">
             Reconnecting to the run…
           </p>
         ) : null}
         {conversation.spent.tokens > 0 ? (
-          <p className="border-b border-line bg-panel px-4 py-1 text-right text-xs text-muted" data-testid="spent">
+          <p className="px-4 py-1 text-right text-xs text-faint" data-testid="spent">
             {conversation.spent.tokens.toLocaleString()} tokens
             {typeof conversation.spent.costUsd === 'number'
               ? ` · ${money(conversation.spent.costUsd)}`
