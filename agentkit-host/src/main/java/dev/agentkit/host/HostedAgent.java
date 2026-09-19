@@ -570,8 +570,8 @@ public final class HostedAgent {
         if (definition.pattern() == AgentDefinition.Pattern.PLAN_EXECUTE) {
             check(principal);
             return new PlanExecuteTurn(this, llm, principal, now,
-                    () -> builder(session, llm, principal, now, runtime, alsoGiven, PlanExecuteTurn.OUTCOME_RULE)
-                            .streaming(false).build(), session,
+                    failedChange -> builder(session, llm, principal, now, runtime, alsoGiven,
+                            PlanExecuteTurn.OUTCOME_RULE, failedChange).streaming(false).build(), session,
                     definition.planReuse() == null ? Optional.empty() : form, label);
         }
         return turn(session, llm, principal, now, runtime, alsoGiven)::run;
@@ -579,15 +579,22 @@ public final class HostedAgent {
 
     private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
                                   ChatRuntime runtime, List<Tool> alsoGiven) {
-        return builder(session, llm, principal, now, runtime, alsoGiven, "");
+        return builder(session, llm, principal, now, runtime, alsoGiven, "", null);
     }
 
-    /** @param promptAdds added to the end of the system prompt: for a plan's step, how to say how it ended */
+    /**
+     * @param promptAdds   added to the end of the system prompt: for a plan's step, how to say how it ended
+     * @param failedChange for a plan's step, told the name of each tool that changes something and reported an error;
+     *                     null for none
+     */
     private Agent.Builder builder(ChatRuntime.Session session, LlmClient llm, Principal principal, Instant now,
-                                  ChatRuntime runtime, List<Tool> alsoGiven, String promptAdds) {
+                                  ChatRuntime runtime, List<Tool> alsoGiven, String promptAdds,
+                                  java.util.function.Consumer<String> failedChange) {
         check(principal);
         List<Tool> tools = new ArrayList<>(tools(principal, session.conversationId(), session.turnId()).entries().stream()
-                .map(DeclaredTools.Entry::tool).toList());
+                .map(entry -> failedChange == null || entry.declaration().effect() == ToolEffect.READ ? entry.tool()
+                        : (Tool) new ReportingTool(entry.tool(), failedChange))
+                .toList());
         tools.addAll(alsoGiven);
         tools.add(ChatTools.askPerson(runtime, session));
         ToolGate gate = gate(session.approver());

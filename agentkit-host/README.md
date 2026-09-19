@@ -219,6 +219,12 @@ prompt:
 - **How each step ended.** Each step's agent ends its answer with an `OUTCOME:` line: done,
   already done, or not done. A step that refused or wasn't allowed reads "Not done", not "Done".
   A change that reported an error still reads "Failed", and a step that didn't finish "Stopped".
+- **Independent steps at once.** The planner starts each step with what it needs:
+  `[needs: none]`, or `[needs: 1, 3]` for the earlier steps it uses or must follow. Steps that
+  need nothing of each other run at the same time, up to three at once. A step starts once the
+  steps it needs have finished, and is given their results. A step without a mark waits for every
+  step before it, so an unmarked plan runs in order. Once a step doesn't finish, nothing new
+  starts. The person sees the plan without the marks.
 - **Several tasks in one message.** A message that is the form filled in and pasted several
   times becomes one task per copy, carried out one after another in the same turn. Each is
   checked, planned (or its settled plan reused) and answered on its own, under a `### <label>`

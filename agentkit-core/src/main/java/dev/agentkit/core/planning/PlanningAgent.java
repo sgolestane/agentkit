@@ -10,6 +10,7 @@ import dev.agentkit.core.prompt.Spotlight;
 import dev.agentkit.core.util.Cut;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -119,6 +120,23 @@ public final class PlanningAgent {
      * bound every kind shares denies it a new objective or a tool the run was not given.
      */
     private static Goal stepGoal(Goal goal, Plan plan, List<AgentResult> done, int index) {
+        java.util.SortedMap<Integer, AgentResult> earlier = new java.util.TreeMap<>();
+        for (int i = 0; i < done.size(); i++) {
+            earlier.put(i, done.get(i));
+        }
+        return stepGoal(goal, plan, earlier, index);
+    }
+
+    /**
+     * The sub-goal for step {@code index} (from 0) of {@code plan}, given the results of the steps in {@code earlier}
+     * (by index, from 0) — for a caller that carries a plan out in its own order, such as independent steps at once,
+     * and gives each step the results of the steps it needs rather than of all before it. Fenced exactly as
+     * {@link #run} fences a step.
+     */
+    public static Goal stepGoal(Goal goal, Plan plan, java.util.SortedMap<Integer, AgentResult> earlier, int index) {
+        Objects.requireNonNull(goal, "goal");
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(earlier, "earlier");
         StringBuilder steps = new StringBuilder();
         for (int i = 0; i < plan.size(); i++) {
             steps.append(i == 0 ? "" : "\n").append(i + 1).append(". ").append(plan.steps().get(i));
@@ -126,11 +144,11 @@ public final class PlanningAgent {
         StringBuilder sb = new StringBuilder("Overall objective:\n").append(goal.render());
         sb.append("\n\nFull plan:\n")
                 .append(Spotlight.wrap(Spotlight.Kind.PROCEDURE, Source.of("plan"), steps.toString()));
-        if (!done.isEmpty()) {
+        if (!earlier.isEmpty()) {
             sb.append("\n\nResults from previous steps:");
-            for (int i = 0; i < done.size(); i++) {
+            for (Map.Entry<Integer, AgentResult> step : earlier.entrySet()) {
                 sb.append("\n").append(Spotlight.wrap(
-                        Source.of("step-" + (i + 1) + "-output"), truncate(done.get(i).output())));
+                        Source.of("step-" + (step.getKey() + 1) + "-output"), truncate(step.getValue().output())));
             }
         }
         sb.append("\n\nComplete step ").append(index + 1).append(" now:\n")

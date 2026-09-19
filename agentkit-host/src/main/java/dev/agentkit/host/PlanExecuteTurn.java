@@ -19,7 +19,6 @@ import dev.agentkit.core.message.ContentBlock;
 import dev.agentkit.core.message.TextBlock;
 import dev.agentkit.core.planning.LlmPlanner;
 import dev.agentkit.core.planning.Plan;
-import dev.agentkit.core.planning.PlanExecution;
 import dev.agentkit.core.planning.PlanningAgent;
 import dev.agentkit.core.tool.View;
 import dev.agentkit.core.util.Cut;
@@ -29,14 +28,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 
 /**
  * A turn with a plan-and-execute agent: the plan made once, from the request, the policy and who is asking; then each
  * step carried out by a fresh agent with the agent's tools — bound to the person, confirmations stopping for them, as in
- * any turn ({@link PlanningAgent} does the sequencing).
+ * any turn. Steps that need nothing of each other run at once, up to {@link #AT_ONCE}; a step waits for the steps it
+ * names as needed, and a plan whose steps name nothing is carried out in order.
  *
  * <p>What the person sees, as it happens: the plan, as soon as it is made, and each step as it starts, with its tool
  * calls in the trace. The answer is every step and what came of it, and says where the plan stopped if a step did
@@ -100,13 +98,6 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         }
     }
 
-    /** The planner answered instead of planning. */
-    private static final class AnsweredInstead extends RuntimeException {
-        AnsweredInstead(String answer) {
-            super(answer, null, false, false);
-        }
-    }
-
     /** The most steps a plan may have before it is refused rather than run. */
     static final int MAX_PLAN_STEPS = 20;
 
@@ -117,7 +108,7 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     private final LlmClient llm;
     private final Principal principal;
     private final Instant now;
-    private final Supplier<Agent> executors;
+    private final java.util.function.Function<java.util.function.Consumer<String>, Agent> executors;
     private final ChatRuntime.Session session;
     private final Optional<FormTask> form;
     /** Which of several tasks in one message this is, for the plan and the steps as they start; empty for one. */
@@ -131,18 +122,21 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     record FormTask(PlanReuse plans, PlanBook.Agent where, PlanTask task, String request) {
     }
 
-    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now, Supplier<Agent> executors,
+    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now,
+                    java.util.function.Function<java.util.function.Consumer<String>, Agent> executors,
                     ChatRuntime.Session session) {
         this(agent, llm, principal, now, executors, session, Optional.empty());
     }
 
-    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now, Supplier<Agent> executors,
+    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now,
+                    java.util.function.Function<java.util.function.Consumer<String>, Agent> executors,
                     ChatRuntime.Session session, Optional<FormTask> form) {
         this(agent, llm, principal, now, executors, session, form, "");
     }
 
     /** @param label which of several tasks in one message this is; empty when it is the only one */
-    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now, Supplier<Agent> executors,
+    PlanExecuteTurn(HostedAgent agent, LlmClient llm, Principal principal, Instant now,
+                    java.util.function.Function<java.util.function.Consumer<String>, Agent> executors,
                     ChatRuntime.Session session, Optional<FormTask> form, String label) {
         this.label = label == null ? "" : label;
         this.form = Objects.requireNonNull(form, "form");
@@ -164,12 +158,8 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
             plannerSaid.set(response.message().text());
             return response;
         };
-        LlmPlanner planner = new LlmPlanner(counted, agent.model(), agent.plannerPrompt(principal, now) + ANSWER_INSTEAD,
-                agent.definition().maxTokens());
-        AtomicReference<Plan> made = new AtomicReference<>();
-        AtomicInteger built = new AtomicInteger();
-        // Where each plan step's recorded calls begin, to tell afterwards which of its calls failed.
-        List<Long> startedAfter = new java.util.concurrent.CopyOnWriteArrayList<>();
+        LlmPlanner planner = new LlmPlanner(counted, agent.model(),
+                agent.plannerPrompt(principal, now) + NEEDS_RULE + ANSWER_INSTEAD, agent.definition().maxTokens());
         // What is checked before anything is planned: a task the person may not ask for stops here.
         Checked checked = checkFirst(goal, counted);
         if (!checked.refused().isEmpty() && checked.passed().isEmpty() && !checked.unchecked()) {
@@ -185,59 +175,196 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         Optional<PlanReuse.Settled> settled = task.flatMap(f -> f.plans().forRun(f.where(),
                 agent.definition().planReuse(), f.task()));
         Optional<Plan> reused = settled.flatMap(s -> instantiate(s, task.get().task()));
+        Goal request = checked.adding(withWhatElseWasSent(goal, alsoSent));
 
-        PlanningAgent planAndExecute = new PlanningAgent((request, tools) -> {
-            long started = System.nanoTime();
-            if (reused.isPresent()) {
-                made.set(reused.get());
-                show(reused.get(), 0, settled.get().agreed());
-                return reused.get();
+        // The plan: the settled one, or the model's.
+        long started = System.nanoTime();
+        Plan plan;
+        if (reused.isPresent()) {
+            plan = reused.get();
+        } else {
+            try {
+                plan = planner.plan(task.flatMap(PlanExecuteTurn::lastPlan)
+                        .map(last -> Goal.of(request.render() + "\n\n" + last)).orElse(request),
+                        executors.apply(name -> { }).toolSpecs());
+            } catch (RuntimeException failed) {
+                return AgentResult.failed(failed, "The plan could not be made: " + failed.getMessage(), 0,
+                        plannerUsage.get());
             }
-            Plan plan = planner.plan(task.flatMap(PlanExecuteTurn::lastPlan)
-                    .map(last -> Goal.of(request.render() + "\n\n" + last)).orElse(request), tools);
             String said = plannerSaid.get().strip();
             if (said.startsWith(ANSWER)) {
                 // Nothing to do: a question, or a summary of what was done. Answered, and nothing is carried out.
-                throw new AnsweredInstead(said.substring(ANSWER.length()).strip());
+                return AgentResult.completed(said.substring(ANSWER.length()).strip(), 0, plannerUsage.get());
             }
             if (plan.size() > MAX_PLAN_STEPS) {
-                throw new IllegalStateException("The plan had " + plan.size() + " steps, more than the "
-                        + MAX_PLAN_STEPS + " a turn may carry out.");
+                return AgentResult.failed(new IllegalStateException("too many steps"), "The plan had " + plan.size()
+                        + " steps, more than the " + MAX_PLAN_STEPS + " a turn may carry out.", 0, plannerUsage.get());
             }
-            made.set(plan);
-            show(plan, (System.nanoTime() - started) / 1_000_000, 0);
-            return plan;
-        }, () -> {
-            // The first executor built only lends its tool catalog to the planner; each after it runs a step.
-            int step = built.getAndIncrement();
-            Plan plan = made.get();
-            if (step >= 1) {
-                startedAfter.add(lastRecorded());
-            }
-            if (step >= 1 && plan != null && step <= plan.size()) {
-                say("**" + (label.isEmpty() ? "Step " : label + ", step ") + step + " of " + plan.size() + ":** "
-                        + OneLine.of(plan.steps().get(step - 1)) + "\n\n");
-            }
-            return executors.get();
-        });
-
-        PlanExecution execution;
-        try {
-            execution = planAndExecute.run(checked.adding(withWhatElseWasSent(goal, alsoSent)));
-        } catch (AnsweredInstead answered) {
-            return AgentResult.completed(answered.getMessage(), 0, plannerUsage.get());
-        } catch (IllegalStateException refused) {
-            return AgentResult.failed(refused, refused.getMessage(), 0, plannerUsage.get());
         }
-        AgentResult overall = execution.overall();
-        List<List<String>> failed = failedChanges(execution.stepResults().size(), startedAfter);
-        task.ifPresent(f -> keep(f, execution, reused.isPresent(), failed));
-        String answer = answer(execution, failed) + (checked.inPlace().isEmpty() ? ""
+        if (plan.isEmpty()) {
+            // Nothing to break down — often the planner asking something back: carried out as it is, by one agent.
+            List<String> failed = new java.util.ArrayList<>();
+            AgentResult direct = runStep(request, failed);
+            return new AgentResult(direct.stopReason(), Reported.of(direct.output()).said(), direct.steps(),
+                    direct.usage().plus(plannerUsage.get()), direct.error(), direct.awaiting());
+        }
+        Marked marked = Marked.of(plan);
+        show(new Plan(marked.steps()), reused.isPresent() ? 0 : (System.nanoTime() - started) / 1_000_000,
+                reused.isPresent() ? settled.get().agreed() : 0);
+
+        Carried carried;
+        try {
+            carried = carryOut(request, marked);
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+            return AgentResult.stopped(StopReason.ERROR, "Stopped.", 0, plannerUsage.get());
+        }
+        task.ifPresent(f -> keep(f, plan, carried, reused.isPresent()));
+        String answer = answer(marked.steps(), carried) + (checked.inPlace().isEmpty() ? ""
                 : "\n\nAlready in place, so not done again:\n- " + String.join("\n- ", checked.inPlace()));
-        TokenUsage usage = overall.usage().plus(plannerUsage.get());
-        return overall.stopReason() == StopReason.COMPLETED
-                ? AgentResult.completed(answer, overall.steps(), usage)
-                : new AgentResult(overall.stopReason(), answer, overall.steps(), usage, overall.error(), overall.awaiting());
+        TokenUsage usage = carried.usage().plus(plannerUsage.get());
+        Optional<AgentResult> stopped = carried.stopped();
+        return stopped.isEmpty() ? AgentResult.completed(answer, carried.steps(), usage)
+                : new AgentResult(stopped.get().stopReason(), answer, carried.steps(), usage, stopped.get().error(),
+                        stopped.get().awaiting());
+    }
+
+    /** Added to every planner prompt: say what each step needs, so steps that need nothing of each other run at once. */
+    static final String NEEDS_RULE = "\n\nBegin each step with what it needs: \"[needs: none]\" when it can be done "
+            + "straight away, or \"[needs: 1, 3]\" naming the earlier steps whose results it uses or that must be done "
+            + "before it. Steps that need nothing of each other are carried out at the same time.";
+
+    /** How a step says what it needs. */
+    private static final java.util.regex.Pattern NEEDS = java.util.regex.Pattern.compile(
+            "^\\s*\\[needs:\\s*([^\\]]*)]\\s*", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /** The most steps of one plan carried out at once. */
+    static final int AT_ONCE = 3;
+
+    /**
+     * A plan's steps as the person reads them, and what each needs: the earlier steps, from 0, it must wait for. A step
+     * that does not say needs every step before it, so a plan without marks is carried out in order, as it always was.
+     */
+    record Marked(List<String> steps, List<java.util.Set<Integer>> needs) {
+
+        static Marked of(Plan plan) {
+            List<String> steps = new java.util.ArrayList<>();
+            List<java.util.Set<Integer>> needs = new java.util.ArrayList<>();
+            for (int i = 0; i < plan.size(); i++) {
+                String step = plan.steps().get(i);
+                java.util.regex.Matcher m = NEEDS.matcher(step);
+                java.util.Set<Integer> before = new java.util.TreeSet<>();
+                if (m.find()) {
+                    for (java.util.regex.Matcher n = java.util.regex.Pattern.compile("\\d+").matcher(m.group(1));
+                         n.find(); ) {
+                        int earlier = Integer.parseInt(n.group()) - 1;
+                        if (earlier >= 0 && earlier < i) {
+                            before.add(earlier);
+                        }
+                    }
+                    step = step.substring(m.end());
+                } else {
+                    for (int earlier = 0; earlier < i; earlier++) {
+                        before.add(earlier);
+                    }
+                }
+                steps.add(step.strip());
+                needs.add(java.util.Set.copyOf(before));
+            }
+            return new Marked(List.copyOf(steps), List.copyOf(needs));
+        }
+    }
+
+    /**
+     * What came of carrying a plan out: each step's result, null for one not started, and each step's changes that
+     * reported an error.
+     */
+    record Carried(List<AgentResult> results, List<List<String>> failed) {
+
+        TokenUsage usage() {
+            return results.stream().filter(Objects::nonNull).map(AgentResult::usage)
+                    .reduce(TokenUsage.ZERO, TokenUsage::plus);
+        }
+
+        int steps() {
+            return results.stream().filter(Objects::nonNull).mapToInt(AgentResult::steps).sum();
+        }
+
+        /** The first step, in the plan's order, that did not finish. */
+        Optional<AgentResult> stopped() {
+            return results.stream().filter(r -> r != null && r.stopReason() != StopReason.COMPLETED).findFirst();
+        }
+    }
+
+    /**
+     * Carries out each step once the steps it needs have finished, up to {@link #AT_ONCE} at a time, each on a fresh
+     * agent given the results of the steps it needs. Once a step does not finish, no step starts after it; those
+     * running finish.
+     */
+    private Carried carryOut(Goal request, Marked marked) throws InterruptedException {
+        int n = marked.steps().size();
+        Plan plan = new Plan(marked.steps());
+        AgentResult[] results = new AgentResult[n];
+        List<List<String>> failed = new java.util.ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            failed.add(new java.util.concurrent.CopyOnWriteArrayList<>());
+        }
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(AT_ONCE,
+                Thread.ofVirtual().name("plan-step-", 1).factory());
+        java.util.concurrent.CompletionService<Integer> done = new java.util.concurrent.ExecutorCompletionService<>(pool);
+        java.util.Set<Integer> started = new java.util.HashSet<>();
+        java.util.Set<Integer> finished = new java.util.HashSet<>();
+        boolean halted = false;
+        int running = 0;
+        try {
+            while (true) {
+                if (!halted) {
+                    for (int i = 0; i < n && running < AT_ONCE; i++) {
+                        if (!started.contains(i) && finished.containsAll(marked.needs().get(i))) {
+                            int step = i;
+                            java.util.SortedMap<Integer, AgentResult> earlier = new java.util.TreeMap<>();
+                            marked.needs().get(i).forEach(need -> earlier.put(need, results[need]));
+                            started.add(i);
+                            running++;
+                            say("**" + (label.isEmpty() ? "Step " : label + ", step ") + (i + 1) + " of " + n + ":** "
+                                    + OneLine.of(marked.steps().get(i)) + "\n\n");
+                            done.submit(() -> {
+                                results[step] = runStep(PlanningAgent.stepGoal(request, plan, earlier, step),
+                                        failed.get(step));
+                                return step;
+                            });
+                        }
+                    }
+                }
+                if (running == 0) {
+                    break;
+                }
+                int step;
+                try {
+                    step = done.take().get();
+                } catch (java.util.concurrent.ExecutionException e) {
+                    throw new IllegalStateException("A plan step could not be carried out", e.getCause());
+                }
+                running--;
+                finished.add(step);
+                if (results[step].stopReason() != StopReason.COMPLETED) {
+                    halted = true;
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        return new Carried(java.util.Arrays.asList(results), failed);
+    }
+
+    /** One step, on a fresh agent; an agent that throws is the step failing, not the plan. */
+    private AgentResult runStep(Goal stepGoal, List<String> failed) {
+        try {
+            return executors.apply(failed::add).run(stepGoal);
+        } catch (RuntimeException e) {
+            return AgentResult.failed(e, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), 0,
+                    TokenUsage.ZERO);
+        }
     }
 
     /**
@@ -276,18 +403,13 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
     }
 
     /** The plan carried out, with the task's values taken out, and whether every step of it completed. */
-    private void keep(FormTask f, PlanExecution execution, boolean reused, List<List<String>> failed) {
-        if (execution.plan().steps().isEmpty()) {
-            return;
-        }
-        boolean clean = execution.overall().stopReason() == StopReason.COMPLETED
-                && execution.stepResults().size() == execution.plan().size()
-                && execution.stepResults().stream().allMatch(r -> r.stopReason() == StopReason.COMPLETED
+    private void keep(FormTask f, Plan plan, Carried carried, boolean reused) {
+        boolean clean = carried.results().stream().allMatch(r -> r != null && r.stopReason() == StopReason.COMPLETED
                         && Reported.of(r.output()).outcome() != Outcome.NOT_DONE)
-                && failed.stream().allMatch(List::isEmpty);
+                && carried.failed().stream().allMatch(List::isEmpty);
         try {
             f.plans().book().add(f.where(), f.task().shape(), new PlanBook.Run(
-                    execution.plan().steps().stream().map(f.task()::parameterize).toList(), f.task().values(), reused,
+                    plan.steps().stream().map(f.task()::parameterize).toList(), f.task().values(), reused,
                     clean, Instant.now()));
         } catch (RuntimeException e) {
             org.slf4j.LoggerFactory.getLogger(PlanExecuteTurn.class).warn("Could not keep the plan of {}",
@@ -489,51 +611,17 @@ final class PlanExecuteTurn implements ChatRuntime.Runner {
         return Goal.of(text.toString());
     }
 
-    /** The sequence of the last step recorded on this turn so far: where the next plan step's calls begin. */
-    private long lastRecorded() {
-        return session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
-                .map(turn -> turn.steps().stream().mapToLong(Step::sequence).max().orElse(0L)).orElse(0L);
-    }
-
-    /**
-     * For each plan step carried out, the tools it called that change something — anything but a read — and reported
-     * an error. A step whose agent finished but whose grant, request or message failed did not do what it was for,
-     * and is not called done; a lookup that found nothing is not a failure of the step.
-     */
-    private List<List<String>> failedChanges(int carriedOut, List<Long> startedAfter) {
-        Map<String, String> effects = new java.util.HashMap<>();
-        agent.toolInfo().forEach(tool -> effects.put(tool.name(), tool.effect()));
-        List<Step> recorded = session.store().turn(session.tenantId(), session.conversationId(), session.turnId())
-                .map(dev.agentkit.chat.Turn::steps).orElse(List.of());
-        List<List<String>> failed = new java.util.ArrayList<>();
-        for (int i = 0; i < carriedOut; i++) {
-            long from = i < startedAfter.size() ? startedAfter.get(i) : Long.MAX_VALUE;
-            long to = i + 1 < startedAfter.size() ? startedAfter.get(i + 1) : Long.MAX_VALUE;
-            failed.add(recorded.stream()
-                    .filter(step -> step.kind() == Step.Kind.TOOL_CALL && step.failed()
-                            && step.sequence() > from && step.sequence() <= to
-                            && !"read".equals(effects.get(step.name())))
-                    .map(Step::name).distinct().toList());
-        }
-        return failed;
-    }
-
     /** Every step and what came of it; where the plan stopped, if it did. */
-    private static String answer(PlanExecution execution, List<List<String>> failed) {
-        List<String> steps = execution.plan().steps();
-        List<AgentResult> results = execution.stepResults();
-        if (steps.isEmpty()) {
-            return execution.overall().output();
-        }
+    private static String answer(List<String> steps, Carried carried) {
         StringBuilder answer = new StringBuilder();
         for (int i = 0; i < steps.size(); i++) {
             answer.append(i + 1).append(". ").append(OneLine.of(steps.get(i)));
-            if (i < results.size()) {
-                AgentResult result = results.get(i);
+            AgentResult result = carried.results().get(i);
+            if (result != null) {
                 Reported reported = Reported.of(result.output());
                 String output = Cut.to(OneLine.of(reported.said()), MAX_STEP_OUTPUT_CHARS);
                 // A nested item, so the answer reads as a list of steps each with its outcome under it.
-                List<String> failedTools = i < failed.size() ? failed.get(i) : List.of();
+                List<String> failedTools = carried.failed().get(i).stream().distinct().toList();
                 answer.append(result.stopReason() != StopReason.COMPLETED ? "\n   - Stopped ("
                                 + result.stopReason().name().toLowerCase(java.util.Locale.ROOT).replace('_', ' ') + "): "
                                 : !failedTools.isEmpty() ? "\n   - Failed (" + String.join(", ", failedTools) + "): "
