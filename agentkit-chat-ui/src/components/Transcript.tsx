@@ -4,6 +4,7 @@ import { Activity } from './Activity'
 import { ApprovalCard } from './ApprovalCard'
 import { TurnAttachments } from './Attachments'
 import { Markdown, copy } from './Markdown'
+import { PlanAnswer, isPlanTurn, planSteps } from './PlanAnswer'
 import { Trace } from './Trace'
 import { Views } from '../views/registry'
 import { useFollowing } from './useFollowing'
@@ -206,7 +207,11 @@ function TurnAnswer({ turn }: { turn: Turn }) {
       <Views views={turn.views} />
       {turn.answer ? (
         <div className="reading group relative" data-testid="answer">
-          <Markdown text={turn.answer} />
+          {(() => {
+            // A carried-out plan's answer is a list of steps, each folded under how it ended.
+            const steps = !streaming && isPlanTurn(turn) ? planSteps(turn.answer) : null
+            return steps ? <PlanAnswer steps={steps} /> : <Markdown text={turn.answer} />
+          })()}
           {streaming ? <span className="ml-0.5 animate-pulse text-muted">▍</span> : null}
           {!streaming ? <CopyAnswer text={turn.answer} /> : null}
         </div>
