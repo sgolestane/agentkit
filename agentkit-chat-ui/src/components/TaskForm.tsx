@@ -16,16 +16,19 @@ export function TaskForm({
   startOpen,
   disabled,
   onSubmit,
+  initial,
 }: {
   schema: InputSchema
   agentName: string
   startOpen: boolean
   disabled: boolean
   onSubmit: (input: Record<string, unknown>) => void
+  /** Values to start from, such as a form pasted into the composer; empty by default. */
+  initial?: Record<string, string | boolean>
 }) {
   const fields = Object.entries(schema.properties)
   const required = new Set(schema.required ?? [])
-  const [values, setValues] = useState<Record<string, string | boolean>>({})
+  const [values, setValues] = useState<Record<string, string | boolean>>(initial ?? {})
 
   const set = (name: string, value: string | boolean) => setValues((current) => ({ ...current, [name]: value }))
 

@@ -17,6 +17,17 @@ const HIRE: InputSchema = {
 }
 
 describe('A task form', () => {
+  it('starts from the values it is given, to look over before sending', async () => {
+    const onSubmit = vi.fn()
+    render(<TaskForm schema={HIRE} agentName="Onboarding" startOpen disabled={false} onSubmit={onSubmit}
+      initial={{ name: 'Jo Park', start_date: '2026-10-01', employment: 'contractor', remote: true }} />)
+
+    expect(screen.getByLabelText(/Full name/)).toHaveValue('Jo Park')
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+    expect(onSubmit).toHaveBeenCalledWith({ name: 'Jo Park', start_date: '2026-10-01', employment: 'contractor',
+      remote: true })
+  })
+
   it('is built from the schema and sends what was filled in, typed as the schema says', async () => {
     const onSubmit = vi.fn()
     render(<TaskForm schema={HIRE} agentName="Onboarding" startOpen disabled={false} onSubmit={onSubmit} />)

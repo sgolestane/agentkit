@@ -9,6 +9,7 @@ import { money } from './Trace'
 import type { Overview } from '../lib/types'
 import { Composer } from './Composer'
 import { TaskForm } from './TaskForm'
+import { readForm } from '../lib/formText'
 import { Transcript } from './Transcript'
 
 /**
@@ -87,8 +88,14 @@ export function Console() {
   const routed = Boolean(overview?.routing) && !pinnedAgentId && Boolean(threads.current)
   const latest = conversation.transcript.turns[conversation.transcript.turns.length - 1]
   const offeredForm = routed ? latest?.views.find((view) => view.kind === 'form')?.data.agent : undefined
-  const openAgentId = pinnedAgentId ?? (typeof offeredForm === 'string' ? offeredForm : undefined)
+  // A form pasted into the composer and taken into its agent's form, to look over before it is sent.
+  const [filled, setFilled] = useState<{ agent: string; values: Record<string, string | boolean>; key: number } | null>(
+    null,
+  )
+  const openAgentId = filled?.agent ?? pinnedAgentId ?? (typeof offeredForm === 'string' ? offeredForm : undefined)
   const openAgent = overview?.agents?.find((agent) => agent.id === openAgentId)
+  // Only the conversation's own agent's form, when it is with one; any agent's, when each message finds its own.
+  const formAgents = (overview?.agents ?? []).filter((agent) => agent.input && (routed || agent.id === pinnedAgentId))
 
   const problems = overview?.problems ?? []
   // Disabled with a reason rather than disabled: a person whose console will not accept a
@@ -163,12 +170,16 @@ export function Console() {
 
         {openAgent?.input && threads.current ? (
           <TaskForm
-            key={threads.current}
+            key={`${threads.current}-${filled?.key ?? 0}`}
             schema={openAgent.input}
             agentName={openAgent.name}
-            startOpen={routed || conversation.transcript.turns.length === 0}
+            startOpen={Boolean(filled) || routed || conversation.transcript.turns.length === 0}
             disabled={Boolean(unusable) || conversation.working}
-            onSubmit={(input) => void conversation.say('', [], input, routed ? openAgent.id : undefined)}
+            initial={filled?.values}
+            onSubmit={(input) => {
+              setFilled(null)
+              void conversation.say('', [], input, routed ? openAgent.id : undefined)
+            }}
           />
         ) : null}
 
@@ -181,6 +192,17 @@ export function Console() {
           onAttach={(files) => void uploads.add(files)}
           onRemoveUpload={uploads.remove}
           placeholder={routed ? 'Ask anything — AgentKit picks the agent' : undefined}
+          suggest={(text) => {
+            // One copy only: several go as they are, one task each.
+            const read = readForm(text, formAgents)
+            return read && read.records === 1
+              ? {
+                  says: `This looks like the ${read.agent.name} form.`,
+                  label: 'Fill the form with this',
+                  take: () => setFilled({ agent: read.agent.id, values: read.values, key: Date.now() }),
+                }
+              : null
+          }}
         />
       </main>
     </div>

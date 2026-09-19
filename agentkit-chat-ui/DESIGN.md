@@ -70,6 +70,10 @@ with 10px of horizontal padding.
   (`border border-line rounded-full`). A destructive button is outlined in `bad`.
 - **The composer.** A `bg-panel` pill with the attach button on the left and Send on the right; the
   text field is borderless.
+- **An offer above the composer.** When what is typed is an agent's form written out, a line
+  above the composer says so ("This looks like the Onboarding form.") with an outline pill,
+  "Fill the form with this". The pill opens that agent's form with the values in, for review, and
+  clears the box. A message with several copies of a form is sent as it is, one task per copy.
 - **Messages.** The person's in `bg-bubble`, right-aligned, at most 70% wide. The agent's answer is
   plain `.reading` text, full width, with its trace and actions underneath.
 - **Cards** (a confirmation, the task form) are `bg-panel` with `--radius-card`; a confirmation's

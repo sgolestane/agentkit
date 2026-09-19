@@ -17,6 +17,7 @@ export function Composer({
   onAttach,
   onRemoveUpload,
   placeholder,
+  suggest,
 }: {
   onSend: (text: string) => void
   disabled?: boolean
@@ -27,6 +28,11 @@ export function Composer({
   onRemoveUpload?: (key: string) => void
   /** What the empty box says; "Say something…" by default. */
   placeholder?: string
+  /**
+   * Something better to do with what is typed, offered above the box: its sentence, the button's label, and what the
+   * button does with the text, which then leaves the box. Null for nothing.
+   */
+  suggest?: (text: string) => { says: string; label: string; take: (text: string) => void } | null
 }) {
   const [text, setText] = useState(initialText)
   const [over, setOver] = useState(false)
@@ -94,6 +100,27 @@ export function Composer({
       }}
       data-testid="composer"
     >
+      {(() => {
+        const offer = suggest && text.trim() ? suggest(text) : null
+        return offer ? (
+          <div
+            className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 px-2 text-sm text-muted"
+            data-testid="composer-offer"
+          >
+            <span>{offer.says}</span>
+            <button
+              type="button"
+              onClick={() => {
+                offer.take(text)
+                setText('')
+              }}
+              className="rounded-full border border-line px-3 py-1 text-ink hover:bg-hover"
+            >
+              {offer.label}
+            </button>
+          </div>
+        ) : null
+      })()}
       <div
         className={`mx-auto flex w-full max-w-3xl flex-col gap-2 rounded-[var(--radius-pill)] bg-panel px-2.5 py-2 shadow-[var(--shadow-composer)] ${
           over ? 'outline outline-2 outline-accent' : ''
