@@ -1,3 +1,4 @@
+import { Admin } from './admin/Admin'
 import { Console } from './components/Console'
 
 /**
@@ -9,5 +10,9 @@ import { Console } from './components/Console'
  * did not have the answer the first one already had.
  */
 export function App() {
+  // The organization's admin view is its own page, at /admin; everything else is the console.
+  if (globalThis.location?.pathname.startsWith('/admin')) {
+    return <Admin />
+  }
   return <Console />
 }

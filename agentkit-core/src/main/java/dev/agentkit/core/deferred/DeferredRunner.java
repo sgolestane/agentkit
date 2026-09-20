@@ -22,7 +22,7 @@ import java.util.function.Supplier;
  * with the restricted tools and the subject gate from {@link DeferredActions}. The gate is also checked inside each tool
  * ({@link DeferredActions#guard}), so an {@link ActionAgent} that does not install it still cannot act beyond the
  * subject. The store records how each ended; it runs an action at least once, not exactly once (see
- * {@link DeferredActionStore}). A sweep can be triggered directly ({@link #runDue()}), which is how tests and the demo clock drive
+ * {@link DeferredActionStore}). A sweep can be triggered directly ({@link #runDue()}), which is how tests drive
  * it, or on a timer ({@link #start(Duration)}).
  */
 public final class DeferredRunner implements AutoCloseable {

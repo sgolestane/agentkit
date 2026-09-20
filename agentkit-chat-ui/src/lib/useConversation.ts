@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from './api'
-import { applied, asTurn, emptyTranscript, isWorking, loaded, type Transcript } from './transcript'
+import { applied, asTurn, emptyTranscript, isWorking, loaded, withLeftOut, type Transcript } from './transcript'
 import type { Attachment, ChatEvent, PendingDecision } from './types'
 
 /**
@@ -36,8 +36,11 @@ export interface Conversation {
   spent: { tokens: number; costUsd?: number }
   /** The server's own title, which it sets from the first thing said. */
   title: string
-  say: (text: string, attachments?: string[]) => Promise<void>
+  /** Says something; with `input`, the agent's form filled in, which the server makes into the request. */
+  say: (text: string, attachments?: string[], input?: Record<string, unknown>, agent?: string) => Promise<void>
   stop: () => Promise<void>
+  /** Leaves a finished turn out of what the agents read next, or puts it back. */
+  leaveOut: (turnId: string, left: boolean) => Promise<void>
   decide: (
     id: string,
     verdict: 'approve' | 'reject' | 'edit' | 'answer',
@@ -204,9 +207,10 @@ export function useConversation(conversationId: string | null): Conversation {
   }, [conversationId])
 
   const say = useCallback(
-    async (text: string, attachments: string[] = []) => {
-      // A message carrying files and no words is a real message — "here, look at this".
-      if (!conversationId || (!text.trim() && attachments.length === 0)) {
+    async (text: string, attachments: string[] = [], input?: Record<string, unknown>, agent?: string) => {
+      // A message carrying files and no words is a real message — "here, look at this". So is a
+      // filled-in form.
+      if (!conversationId || (!text.trim() && attachments.length === 0 && !input)) {
         return
       }
       setProblem(null)
@@ -218,7 +222,7 @@ export function useConversation(conversationId: string | null): Conversation {
         //
         // Safe against the duplicate this invites: the reducer's TURN_STARTED arm returns the
         // transcript unchanged when a turn of that id is already there.
-        const started = await api.say(conversationId, text, attachments)
+        const started = await api.say(conversationId, text, attachments, input, agent)
         setTranscript((current) =>
           current.turns.some((turn) => turn.id === started.id)
             ? current
@@ -258,6 +262,23 @@ export function useConversation(conversationId: string | null): Conversation {
     [],
   )
 
+  const leaveOut = useCallback(
+    async (turnId: string, left: boolean) => {
+      if (!conversationId) {
+        return
+      }
+      // Shown at once, and taken back if the server did not keep it.
+      setTranscript((current) => withLeftOut(current, turnId, left))
+      try {
+        await api.leaveOut(conversationId, turnId, left)
+      } catch (error: unknown) {
+        setTranscript((current) => withLeftOut(current, turnId, !left))
+        setProblem(error instanceof ApiError && error.isStated ? error.message : 'That could not be changed.')
+      }
+    },
+    [conversationId],
+  )
+
   const stop = useCallback(async () => {
     if (!conversationId) {
       return
@@ -291,6 +312,7 @@ export function useConversation(conversationId: string | null): Conversation {
     },
     say,
     stop,
+    leaveOut,
     decide,
   }
 }

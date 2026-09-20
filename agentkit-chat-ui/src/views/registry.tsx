@@ -40,6 +40,8 @@ export const RENDERERS: Record<string, ComponentType<{ view: View }>> = {
   // A deployment without the MCP module never sees one, and the wire-types test — which pairs
   // VIEW_KINDS with View's own factories — would be wrong to demand a factory for it.
   'mcp-app': McpAppView,
+  // The router offering an agent's form, which the console shows as the form itself, below the conversation.
+  form: () => null,
 }
 
 export function renderable(kind: string): boolean {

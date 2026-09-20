@@ -1,0 +1,19 @@
+type: object
+required: [employee_id, name, work_email, department, employment_type, work_location, start_date]
+properties:
+  employee_id: {type: string, title: Employee id, description: "As in the HRIS, such as W-1001"}
+  name: {type: string, title: Full name}
+  work_email: {type: string, format: email, title: Work email}
+  title: {type: string, title: Job title}
+  department: {type: string, enum: [Engineering, Sales], title: Department}
+  employment_type: {type: string, enum: [full-time, contractor], title: Employment}
+  rehire: {type: boolean, title: Rehire, description: They worked here before and their old Okta account is deactivated}
+  work_location: {type: string, enum: [remote, on-site], title: Works}
+  office: {type: string, title: Office, description: For an on-site hire}
+  home_address: {type: string, title: Home address, description: For a remote hire; where the laptop ships}
+  github_username: {type: string, title: GitHub username, description: Leave empty if not on file}
+  github_team: {type: string, title: GitHub team, description: For an engineer}
+  production_aws_access_requested: {type: boolean, title: Production AWS access requested}
+  start_date: {type: string, format: date, title: Start date}
+  termination_date: {type: string, format: date, title: End date, description: Only for a fixed-term hire; empty means none}
+  termination_reason: {type: string, title: Why it ends}

@@ -77,8 +77,9 @@ public final class ChatServer implements AutoCloseable {
     private final ChatRuntime runtime;
     private final ChatStore store;
     private final ChatEvents events;
-    private final String tenantId;
-    private final Overview overview;
+    private final Tenants tenants;
+    private final TenantOverview overview;
+    private final AgentCatalog catalog;
     private final String buildStamp;
     private final ExecutorService workers;
     private final dev.agentkit.core.reliability.ModelPricing pricing;
@@ -93,6 +94,94 @@ public final class ChatServer implements AutoCloseable {
     @FunctionalInterface
     public interface Overview {
         Map<String, Object> describe();
+    }
+
+    /** {@link Overview}, for a console that serves more than one tenant: what it says to this one. */
+    @FunctionalInterface
+    public interface TenantOverview {
+        Map<String, Object> describe(String tenantId);
+    }
+
+    /**
+     * Who a request is from: the tenant whose conversations it may read and act on, or empty for a request nobody
+     * has vouched for, which is answered 401.
+     *
+     * <p>Supplied, because this module authenticates nobody. A console per person on its own port is
+     * {@link #fixed}; a console many people share asks its sign-in.
+     */
+    @FunctionalInterface
+    public interface Tenants {
+        java.util.Optional<String> of(HttpExchange exchange);
+
+        /** Where someone signs in, if somewhere: the page is sent there when the console answers 401. */
+        default java.util.Optional<String> signIn() {
+            return java.util.Optional.empty();
+        }
+
+        /** Every request is {@code tenantId}'s: one console, one person, as the examples run. */
+        static Tenants fixed(String tenantId) {
+            Objects.requireNonNull(tenantId, "tenantId");
+            java.util.Optional<String> only = java.util.Optional.of(tenantId);
+            return exchange -> only;
+        }
+    }
+
+    /**
+     * The agents a tenant may start a conversation with, when a deployment has more than one.
+     *
+     * <p>{@link #available} is what the page offers — each an {@code id}, a {@code name} and a {@code description} —
+     * and {@link #pin} is what a new conversation is fixed to: the agent, at the version it has now. A deployment
+     * with one agent has {@link #NONE}, and its conversations are pinned to nothing.
+     */
+    public interface AgentCatalog {
+        List<Map<String, Object>> available(String tenantId);
+
+        /**
+         * The pin for a new conversation of {@code tenantId}'s with {@code agentId}, or with the one agent they may
+         * use when {@code agentId} is null.
+         *
+         * @throws ChatUnavailable with a sentence for the person, for an agent they may not use or a choice not made
+         */
+        Conversation.Pin pin(String tenantId, String agentId);
+
+        /**
+         * A message filled in as a form rather than written: the request {@code input} makes for {@code conversation}'s
+         * agent, which the runtime is then told as if the person had said it.
+         *
+         * @throws ChatUnavailable with a sentence for the person — the agent takes no form, or the input is not valid
+         */
+        default String message(String tenantId, Conversation conversation, Map<String, Object> input) {
+            throw new ChatUnavailable("This conversation's agent takes no form; say what you need instead.");
+        }
+
+        /**
+         * A form for {@code agentId} in a conversation pinned to no agent, where each message goes to its own: the
+         * request it makes, as {@link #message(String, Conversation, Map)} does for a pinned conversation.
+         */
+        default String message(String tenantId, Conversation conversation, String agentId, Map<String, Object> input) {
+            return message(tenantId, conversation, input);
+        }
+
+        /**
+         * The agent, at its version now, one message goes to when the person chose it in a conversation pinned to no
+         * agent. As {@link #pin}, it refuses an agent they may not use.
+         */
+        default Conversation.Pin forMessage(String tenantId, Conversation conversation, String agentId) {
+            return pin(tenantId, agentId);
+        }
+
+        /** One agent, and conversations pinned to nothing. */
+        AgentCatalog NONE = new AgentCatalog() {
+            @Override
+            public List<Map<String, Object>> available(String tenantId) {
+                return List.of();
+            }
+
+            @Override
+            public Conversation.Pin pin(String tenantId, String agentId) {
+                return null;
+            }
+        };
     }
 
     public ChatServer(int port, ChatRuntime runtime, String tenantId, Overview overview)
@@ -110,12 +199,33 @@ public final class ChatServer implements AutoCloseable {
      */
     public ChatServer(int port, ChatRuntime runtime, String tenantId, Overview overview,
             dev.agentkit.core.reliability.ModelPricing pricing) throws IOException {
+        this(port, runtime, Tenants.fixed(tenantId),
+                overview == null ? tenant -> Map.of() : tenant -> overview.describe(), AgentCatalog.NONE, pricing);
+    }
+
+    /**
+     * A console shared by many tenants, each seeing only their own conversations, each conversation with the agent
+     * it was started with.
+     */
+    public ChatServer(int port, ChatRuntime runtime, Tenants tenants, TenantOverview overview,
+            AgentCatalog catalog, dev.agentkit.core.reliability.ModelPricing pricing) throws IOException {
+        this(new InetSocketAddress(port), runtime, tenants, overview, catalog, pricing);
+    }
+
+    /**
+     * {@link #ChatServer(int, ChatRuntime, Tenants, TenantOverview, AgentCatalog,
+     * dev.agentkit.core.reliability.ModelPricing)}, listening on {@code address}: on {@code 127.0.0.1}, reachable from
+     * this machine only.
+     */
+    public ChatServer(InetSocketAddress address, ChatRuntime runtime, Tenants tenants, TenantOverview overview,
+            AgentCatalog catalog, dev.agentkit.core.reliability.ModelPricing pricing) throws IOException {
         this.pricing = pricing;
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.store = runtime.store();
         this.events = runtime.events();
-        this.tenantId = Objects.requireNonNull(tenantId, "tenantId");
-        this.overview = overview == null ? Map::of : overview;
+        this.tenants = Objects.requireNonNull(tenants, "tenants");
+        this.overview = overview == null ? tenant -> Map.of() : overview;
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
         // Distinct per process. A tab that reconnects and finds a different stamp reloads.
         //
         // Random, not System.nanoTime(). nanoTime's origin is arbitrary and chosen per JVM —
@@ -124,7 +234,7 @@ public final class ChatServer implements AutoCloseable {
         // hand a tab a stamp that tab had already seen, and the reload this exists to trigger
         // would not happen. That is the one case the feature is for.
         this.buildStamp = Long.toHexString(new java.security.SecureRandom().nextLong());
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this.server = HttpServer.create(address, 0);
         // Cached rather than fixed: every open event stream holds a thread for as long as the
         // browser tab is open, so a fixed pool of eight would stop answering anything at all
         // once eight tabs were watching. The work these threads do is blocking-and-waiting,
@@ -137,6 +247,17 @@ public final class ChatServer implements AutoCloseable {
         server.setExecutor(workers);
         server.createContext("/", this::serveUi);
         server.createContext("/api/", this::route);
+    }
+
+    /**
+     * Serves {@code handler} at {@code path} beside the console, on the same port: an application's own endpoints,
+     * such as its sign-in or an MCP endpoint. Before {@link #start}; {@code /} and {@code /api/} are the console's.
+     */
+    public void mount(String path, com.sun.net.httpserver.HttpHandler handler) {
+        if (path.equals("/") || path.startsWith("/api/") || path.equals("/api")) {
+            throw new IllegalArgumentException(path + " is the console's own");
+        }
+        server.createContext(path, handler);
     }
 
     public void start() {
@@ -198,20 +319,30 @@ public final class ChatServer implements AutoCloseable {
             List<String> parts = new ArrayList<>(List.of(path.split("/")));
             parts.removeIf(String::isEmpty);
 
+            java.util.Optional<String> who = tenants.of(exchange);
+            if (who.isEmpty()) {
+                Map<String, Object> refusal = new LinkedHashMap<>();
+                refusal.put("error", "Sign in to use this console.");
+                tenants.signIn().ifPresent(url -> refusal.put("signIn", url));
+                send(exchange, 401, refusal);
+                return;
+            }
+            String tenant = who.get();
+
             // The stream is not JSON and never returns, so it is decided before the switch.
             if (parts.size() == 3 && parts.get(0).equals("conversations")
                     && parts.get(2).equals("events") && method.equals("GET")) {
-                streamEvents(exchange, decode(parts.get(1)));
+                streamEvents(exchange, tenant, decode(parts.get(1)));
                 return;
             }
 
             Object body = switch (method + ' ' + path) {
-                case "GET /overview" -> overviewJson();
-                case "GET /conversations" -> store.conversations(tenantId).stream()
+                case "GET /overview" -> overviewJson(tenant);
+                case "GET /agents" -> catalog.available(tenant);
+                case "GET /conversations" -> store.conversations(tenant).stream()
                         .map(ChatServer::conversationJson).toList();
-                case "POST /conversations" -> conversationJson(store.create(tenantId,
-                        String.valueOf(readJson(exchange).getOrDefault("title", ""))));
-                default -> dynamic(method, parts, exchange);
+                case "POST /conversations" -> createConversation(tenant, readJson(exchange));
+                default -> dynamic(tenant, method, parts, exchange);
             };
             if (body == null) {
                 send(exchange, 404, Map.of("error", "No such endpoint: " + method + ' ' + path));
@@ -231,7 +362,7 @@ public final class ChatServer implements AutoCloseable {
         }
     }
 
-    private Object dynamic(String method, List<String> parts, HttpExchange exchange)
+    private Object dynamic(String tenantId, String method, List<String> parts, HttpExchange exchange)
             throws IOException {
         if (parts.isEmpty()) {
             return null;
@@ -241,7 +372,7 @@ public final class ChatServer implements AutoCloseable {
                 String id = decode(parts.get(1));
                 return switch (method) {
                     case "GET" -> store.conversation(tenantId, id)
-                            .map(this::conversationDetailJson).orElse(null);
+                            .map(found -> conversationDetailJson(tenantId, found)).orElse(null);
                     case "DELETE" -> Map.of("deleted", store.delete(tenantId, id));
                     case "PATCH" -> store.rename(tenantId, id,
                                     String.valueOf(readJson(exchange).getOrDefault("title", "")))
@@ -252,11 +383,23 @@ public final class ChatServer implements AutoCloseable {
             if (parts.size() == 3 && method.equals("POST")) {
                 String id = decode(parts.get(1));
                 return switch (parts.get(2)) {
-                    case "messages" -> messagesJson(id, exchange);
+                    case "messages" -> messagesJson(tenantId, id, exchange);
                     case "cancel" -> Map.of("stopped", runtime.cancel(tenantId, id));
-                    case "attachments" -> attachmentJson(attach(id, exchange));
+                    case "attachments" -> attachmentJson(attach(tenantId, id, exchange));
                     default -> null;
                 };
+            }
+            if (parts.size() == 4 && parts.get(2).equals("turns") && method.equals("PATCH")) {
+                // Leaving a finished answer out of what the agents read next, or putting it back.
+                String id = decode(parts.get(1));
+                String turnId = decode(parts.get(3));
+                Object left = readJson(exchange).get("leftOut");
+                if (!(left instanceof Boolean leftOut)) {
+                    throw new IllegalArgumentException("Say leftOut: true or false.");
+                }
+                return store.turn(tenantId, id, turnId).filter(turn -> turn.state().isTerminal())
+                        .flatMap(turn -> store.leaveOut(tenantId, id, turnId, leftOut))
+                        .map(ChatServer::turnJson).orElse(null);
             }
             if (parts.size() == 3 && parts.get(2).equals("attachments")
                     && method.equals("GET")) {
@@ -265,7 +408,7 @@ public final class ChatServer implements AutoCloseable {
             }
         }
         if (parts.get(0).equals("attachments") && parts.size() == 2 && method.equals("GET")) {
-            serveAttachment(exchange, decode(parts.get(1)));
+            serveAttachment(exchange, tenantId, decode(parts.get(1)));
             return "";
         }
         if (parts.get(0).equals("approvals")) {
@@ -274,7 +417,7 @@ public final class ChatServer implements AutoCloseable {
                         .map(ChatServer::pendingJson).toList();
             }
             if (parts.size() == 3 && method.equals("POST")) {
-                return decide(decode(parts.get(1)), parts.get(2), exchange);
+                return decide(tenantId, decode(parts.get(1)), parts.get(2), exchange);
             }
         }
         return null;
@@ -282,15 +425,25 @@ public final class ChatServer implements AutoCloseable {
 
     // --- handlers -------------------------------------------------------------------
 
-    private Map<String, Object> overviewJson() {
-        Map<String, Object> json = new LinkedHashMap<>(overview.describe());
+    private Map<String, Object> createConversation(String tenantId, Map<String, Object> request) {
+        Object agent = request.get("agent");
+        Conversation.Pin pin = catalog.pin(tenantId, agent == null ? null : String.valueOf(agent));
+        return conversationJson(store.create(tenantId, String.valueOf(request.getOrDefault("title", "")), pin));
+    }
+
+    private Map<String, Object> overviewJson(String tenantId) {
+        Map<String, Object> json = new LinkedHashMap<>(overview.describe(tenantId));
         json.put("build", buildStamp);
         json.put("tenant", tenantId);
+        List<Map<String, Object>> agents = catalog.available(tenantId);
+        if (!agents.isEmpty()) {
+            json.put("agents", agents);
+        }
         json.put("maxUploadBytes", MAX_UPLOAD_BYTES);
         return json;
     }
 
-    private Map<String, Object> messagesJson(String conversationId, HttpExchange exchange)
+    private Map<String, Object> messagesJson(String tenantId, String conversationId, HttpExchange exchange)
             throws IOException {
         Map<String, Object> request = readJson(exchange);
         Object rawAttachments = request.get("attachments");
@@ -298,12 +451,32 @@ public final class ChatServer implements AutoCloseable {
         if (rawAttachments instanceof List<?> list) {
             list.forEach(id -> attachmentIds.add(String.valueOf(id)));
         }
-        Turn turn = runtime.say(tenantId, conversationId,
-                String.valueOf(request.getOrDefault("text", "")), attachmentIds);
+        String text = String.valueOf(request.getOrDefault("text", ""));
+        // In a conversation pinned to no agent, the person may send one message to an agent of their choosing.
+        String agentId = request.get("agent") instanceof String named && !named.isBlank() ? named.strip() : null;
+        Conversation.Pin agent = null;
+        if (agentId != null || request.get("input") instanceof Map<?, ?>) {
+            Conversation conversation = store.conversation(tenantId, conversationId)
+                    .orElseThrow(() -> new ChatUnavailable("There is no such conversation."));
+            if (agentId != null) {
+                if (conversation.agent() != null) {
+                    throw new ChatUnavailable("This conversation is with " + conversation.agent().id()
+                            + "; start a new one to talk to another agent.");
+                }
+                agent = catalog.forMessage(tenantId, conversation, agentId);
+            }
+            if (request.get("input") instanceof Map<?, ?> input) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> fields = (Map<String, Object>) input;
+                text = agentId == null ? catalog.message(tenantId, conversation, fields)
+                        : catalog.message(tenantId, conversation, agentId, fields);
+            }
+        }
+        Turn turn = runtime.say(tenantId, conversationId, text, attachmentIds, agent);
         return turnJsonWithCost(turn);
     }
 
-    private Attachment attach(String conversationId, HttpExchange exchange) throws IOException {
+    private Attachment attach(String tenantId, String conversationId, HttpExchange exchange) throws IOException {
         // Percent-decoded: an HTTP header may only carry Latin-1 and a filename may carry
         // anything, so the console encodes it. A name that is not valid encoding is taken as
         // literal rather than refused — it is a label, and losing the upload over it would be
@@ -314,7 +487,7 @@ public final class ChatServer implements AutoCloseable {
         return store.attach(tenantId, conversationId, name, mediaType, content);
     }
 
-    private Map<String, Object> decide(String approvalId, String verdict, HttpExchange exchange)
+    private Map<String, Object> decide(String tenantId, String approvalId, String verdict, HttpExchange exchange)
             throws IOException {
         Map<String, Object> request = readJson(exchange);
         String by = String.valueOf(request.getOrDefault("by", "operator"));
@@ -358,7 +531,7 @@ public final class ChatServer implements AutoCloseable {
      * for falling behind is told so on the stream, which is the difference between "you missed
      * some, reconnect" and a silently truncated conversation.
      */
-    private void streamEvents(HttpExchange exchange, String conversationId) throws IOException {
+    private void streamEvents(HttpExchange exchange, String tenantId, String conversationId) throws IOException {
         if (store.conversation(tenantId, conversationId).isEmpty()) {
             send(exchange, 404, Map.of("error", "No such conversation."));
             return;
@@ -414,10 +587,13 @@ public final class ChatServer implements AutoCloseable {
         json.put("title", conversation.title());
         json.put("createdAt", conversation.createdAt().toString());
         json.put("updatedAt", conversation.updatedAt().toString());
+        if (conversation.agent() != null) {
+            json.put("agent", Map.of("id", conversation.agent().id(), "version", conversation.agent().version()));
+        }
         return json;
     }
 
-    private Map<String, Object> conversationDetailJson(Conversation conversation) {
+    private Map<String, Object> conversationDetailJson(String tenantId, Conversation conversation) {
         Map<String, Object> json = new LinkedHashMap<>(conversationJson(conversation));
         java.util.List<Turn> turns = store.turns(tenantId, conversation.id());
         json.put("turns", turns.stream().map(this::turnJsonWithCost).toList());
@@ -468,6 +644,10 @@ public final class ChatServer implements AutoCloseable {
         json.put("outputTokens", turn.usage().outputTokens());
         json.put("startedAt", turn.startedAt().toString());
         json.put("endedAt", turn.endedAt() == null ? null : turn.endedAt().toString());
+        if (turn.agent() != null) {
+            json.put("agent", Map.of("id", turn.agent().id(), "version", turn.agent().version()));
+        }
+        json.put("leftOut", turn.leftOut());
         return json;
     }
 
@@ -599,7 +779,7 @@ public final class ChatServer implements AutoCloseable {
         }
     }
 
-    private void serveAttachment(HttpExchange exchange, String id) throws IOException {
+    private void serveAttachment(HttpExchange exchange, String tenantId, String id) throws IOException {
         var attachment = store.attachment(tenantId, id);
         var content = store.content(tenantId, id);
         if (attachment.isEmpty() || content.isEmpty()) {

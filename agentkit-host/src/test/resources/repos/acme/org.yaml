@@ -1,0 +1,9 @@
+# Acme's agents. Every change here is a pull request; the host runs the merged commit.
+org: acme
+model: anthropic/claude-sonnet-5
+
+# Who someone is: the helpdesk connector's directory, looked up by work email.
+directory:
+  connector: helpdesk
+  tool: directory_lookup
+  argument: email

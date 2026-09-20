@@ -49,3 +49,7 @@ target/
 !/.editorconfig
 !/.github/
 !/.mvn/
+
+# Generated: TypeScript build info, and the example connectors' runtime data.
+*.tsbuildinfo
+agentkit-examples-acme/data/

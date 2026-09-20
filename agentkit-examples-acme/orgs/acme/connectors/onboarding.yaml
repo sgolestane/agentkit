@@ -1,0 +1,6 @@
+# The systems an IT onboarding touches: the HRIS, Okta, GitHub, AWS, Salesforce, Slack, Workday and the
+# IT desk. Its grants and removals are done only for the worker's manager, which the host binds.
+url: ${secret:ONBOARDING_URL}
+headers:
+  Authorization: Bearer ${secret:ONBOARDING_TOKEN}
+trustAnnotations: true

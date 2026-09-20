@@ -1,0 +1,30 @@
+name: IT Helpdesk
+description: Opens IT tickets and resets MFA for the person asking.
+pattern: chat
+audience: [everyone]
+
+prompt:
+  system: prompts/system.md
+  policy: policy.md
+
+# Everything the helpdesk connector offers except what takes something away.
+tools:
+  - connector: helpdesk
+    effects: [read, request, notify, grant]
+
+# Stops for the person to confirm before it runs.
+confirm:
+  - helpdesk/reset_mfa
+
+# Filled by the host from the person asking, and never shown to the model.
+bind:
+  helpdesk/open_ticket: {requester: principal.email}
+  helpdesk/reset_mfa: {email: principal.email}
+
+# Offered to MCP callers directly, beside ask_helpdesk.
+mcp:
+  direct: [helpdesk/directory_lookup]
+
+limits:
+  maxSteps: 12
+  maxTokens: 1024

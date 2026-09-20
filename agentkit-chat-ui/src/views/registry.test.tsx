@@ -23,7 +23,8 @@ describe('the view registry', () => {
     // symmetric. It is produced through `View.of` by agentkit-mcp — the open door the
     // registry's note describes — so it has no factory on View and demanding one would be
     // demanding that the framework know about an integration.
-    const throughTheOpenDoor = ['mcp-app']
+    // `form` likewise: agentkit-host's router offers an agent's form through `View.of`.
+    const throughTheOpenDoor = ['mcp-app', 'form']
     for (const kind of Object.keys(RENDERERS)) {
       if (throughTheOpenDoor.includes(kind)) {
         continue

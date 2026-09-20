@@ -16,6 +16,8 @@ export function Composer({
   uploads = [],
   onAttach,
   onRemoveUpload,
+  placeholder,
+  suggest,
 }: {
   onSend: (text: string) => void
   disabled?: boolean
@@ -24,6 +26,13 @@ export function Composer({
   uploads?: Upload[]
   onAttach?: (files: File[]) => void
   onRemoveUpload?: (key: string) => void
+  /** What the empty box says; "Say something…" by default. */
+  placeholder?: string
+  /**
+   * Something better to do with what is typed, offered above the box: its sentence, the button's label, and what the
+   * button does with the text, which then leaves the box. Null for nothing.
+   */
+  suggest?: (text: string) => { says: string; label: string; take: (text: string) => void } | null
 }) {
   const [text, setText] = useState(initialText)
   const [over, setOver] = useState(false)
@@ -69,9 +78,7 @@ export function Composer({
 
   return (
     <form
-      className={`flex flex-col gap-2 border-t border-line bg-panel p-3 ${
-        over ? 'outline outline-2 -outline-offset-2 outline-accent' : ''
-      }`}
+      className="bg-canvas px-4 pb-4 pt-2"
       onSubmit={(event) => {
         event.preventDefault()
         send()
@@ -93,8 +100,34 @@ export function Composer({
       }}
       data-testid="composer"
     >
+      {(() => {
+        const offer = suggest && text.trim() ? suggest(text) : null
+        return offer ? (
+          <div
+            className="mx-auto mb-2 flex w-full max-w-3xl items-center gap-2 px-2 text-sm text-muted"
+            data-testid="composer-offer"
+          >
+            <span>{offer.says}</span>
+            <button
+              type="button"
+              onClick={() => {
+                offer.take(text)
+                setText('')
+              }}
+              className="rounded-full border border-line px-3 py-1 text-ink hover:bg-hover"
+            >
+              {offer.label}
+            </button>
+          </div>
+        ) : null
+      })()}
+      <div
+        className={`mx-auto flex w-full max-w-3xl flex-col gap-2 rounded-[var(--radius-pill)] bg-panel px-2.5 py-2 shadow-[var(--shadow-composer)] ${
+          over ? 'outline outline-2 outline-accent' : ''
+        }`}
+      >
       {uploads.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 px-1.5 pt-1">
           {uploads.map((upload) => (
             <UploadChip
               key={upload.key}
@@ -105,16 +138,16 @@ export function Composer({
         </div>
       ) : null}
 
-      <div className="flex items-end gap-2">
+      <div className="flex items-end gap-1.5">
       <textarea
         ref={box}
         rows={1}
         value={text}
         disabled={disabled}
         aria-label="Message"
-        placeholder={disabled ? (disabledReason ?? 'Not available') : 'Say something…'}
+        placeholder={disabled ? (disabledReason ?? 'Not available') : (placeholder ?? 'Say something…')}
         title={disabled ? disabledReason : undefined}
-        className="flex-1 resize-none rounded-lg border border-line bg-canvas px-3 py-2 text-ink outline-none placeholder:text-muted focus:border-accent disabled:opacity-60"
+        className="reading order-2 max-h-52 min-h-9 flex-1 resize-none bg-transparent px-1.5 py-[5px] text-ink outline-none placeholder:text-faint disabled:opacity-60"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey) {
@@ -151,7 +184,7 @@ export function Composer({
             aria-label="Attach a file"
             title="Attach a file"
             onClick={() => picker.current?.click()}
-            className="rounded-lg border border-line px-3 py-2 text-muted hover:text-ink disabled:opacity-40"
+            className="order-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xl text-muted hover:bg-hover hover:text-ink disabled:opacity-40"
           >
             +
           </button>
@@ -160,10 +193,11 @@ export function Composer({
       <button
         type="submit"
         disabled={disabled || (!text.trim() && uploads.length === 0)}
-        className="rounded-lg bg-accent px-4 py-2 font-medium text-white disabled:opacity-40"
+        className="order-3 h-9 shrink-0 rounded-full bg-primary px-4 text-sm font-medium text-on-primary hover:opacity-80 disabled:opacity-30"
       >
         Send
       </button>
+      </div>
       </div>
     </form>
   )

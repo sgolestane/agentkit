@@ -11,6 +11,24 @@ import { Composer } from './Composer'
  * turn, and a disabled input that does not say why it is disabled.
  */
 describe('Composer', () => {
+  it('offers something better to do with what is typed, and hands the text over', async () => {
+    const take = vi.fn()
+    const onSend = vi.fn()
+    render(<Composer onSend={onSend} suggest={(text) => (text.includes('employee_id:')
+      ? { says: 'This looks like the Onboarding form.', label: 'Fill the form with this', take }
+      : null)} />)
+
+    await userEvent.type(screen.getByLabelText('Message'), 'Onboard')
+    expect(screen.queryByTestId('composer-offer')).toBeNull()
+    await userEvent.type(screen.getByLabelText('Message'), '{Shift>}{Enter}{/Shift}employee_id: W-1001')
+    expect(screen.getByTestId('composer-offer')).toHaveTextContent('This looks like the Onboarding form.')
+    await userEvent.click(screen.getByRole('button', { name: 'Fill the form with this' }))
+
+    expect(take).toHaveBeenCalledWith('Onboard\nemployee_id: W-1001')
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('sends on Enter and clears itself', async () => {
     const onSend = vi.fn()
     render(<Composer onSend={onSend} />)

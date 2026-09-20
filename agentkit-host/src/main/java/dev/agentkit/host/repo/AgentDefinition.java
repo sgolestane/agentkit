@@ -1,0 +1,190 @@
+package dev.agentkit.host.repo;
+
+import dev.agentkit.core.tool.ToolEffect;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+/**
+ * One agent an organization offers, as its {@code agents/<id>/agent.yaml} and the prompt files it names say.
+ *
+ * <p>Everything here is text an operator writes. What must hold whatever the model concludes is not here: it is in
+ * the connectors, which enforce their own rules, and in what the host enforces for every agent — tools chosen by
+ * what they declare, confirmations, and arguments bound to the person asking.
+ *
+ * @param id           the directory name under {@code agents/}; stable, and what conversations and callers name
+ * @param name         what a person sees
+ * @param description  one sentence on what it is for
+ * @param pattern      how a turn runs
+ * @param model        the model id, or null for the organization's default
+ * @param audience     who may use it: group names, or {@value #EVERYONE}
+ * @param systemPrompt the system prompt's text; for {@link Pattern#PLAN_EXECUTE}, the one each step runs with
+ * @param policy       the policy's text, appended to the system prompt; empty when there is none
+ * @param tools        which connector tools it is given
+ * @param confirm      tools that stop for the person's confirmation before they run
+ * @param bind         arguments filled from the person asking, hidden from the model, by tool
+ * @param maxSteps     how many steps one turn may take
+ * @param maxTokens    the most a model call may produce
+ * @param deferred     how the agent schedules work for later, or null when it does not
+ * @param mcpDirect    the agent's read tools also offered directly to MCP callers, beside asking the agent
+ * @param plannerPrompt for {@link Pattern#PLAN_EXECUTE}, the prompt the plan is made with; null otherwise
+ * @param input        the fields a person fills in to start it, and how they become its request; null when it takes
+ *                     only what is said to it
+ * @param evals        the cases a pull request rehearses, from {@code evals.yaml}; empty when there is none
+ * @param planReuse    for a {@link Pattern#PLAN_EXECUTE} agent started from its form, when a settled plan is reused
+ *                     rather than made again; null when every plan is made by the model
+ * @param before       for a {@link Pattern#PLAN_EXECUTE} agent, what is checked before a plan is made; empty for nothing
+ */
+public record AgentDefinition(String id, String name, String description, Pattern pattern, String model,
+                              List<String> audience, String systemPrompt, String policy, List<ToolSelector> tools,
+                              List<ToolRef> confirm, Map<ToolRef, Map<String, String>> bind, int maxSteps,
+                              int maxTokens, Deferred deferred, List<ToolRef> mcpDirect, String plannerPrompt,
+                              TaskInput input, List<EvalCase> evals, PlanReuse planReuse, List<Check> before) {
+
+    /** The audience that admits anyone in the organization. */
+    public static final String EVERYONE = "everyone";
+
+    /**
+     * When a plan-execute agent started from its form reuses a plan instead of asking the model for one: once the last
+     * {@code after} plans made for the same kind of task agreed, word for word once the task's own values are taken
+     * out. One run in {@code recheckEvery} is planned by the model all the same, so a plan that stopped being right is
+     * found out.
+     *
+     * @param after        plans in a row that must agree, from 2
+     * @param recheckEvery one run in this many is planned afresh; 1 plans every run (and only records)
+     * @param sameWhen     free-text fields of the form that decide the plan, beside its choices and yes/no fields,
+     *                     which always do
+     */
+    public record PlanReuse(int after, int recheckEvery, List<String> sameWhen) {
+        public PlanReuse {
+            sameWhen = List.copyOf(sameWhen);
+        }
+    }
+
+    /**
+     * A check made before a plan is made, for each task a request holds: a tool that reads, called as the person with
+     * {@code with} — each of its arguments from a field of the task, {@code input.<field>}. An error from it is a no:
+     * nothing is planned or done for that task, and the person is told why. Anything else it answers — who the task
+     * is about, what is already in place — is given to the planner.
+     */
+    public record Check(ToolRef tool, Map<String, String> with) {
+        public Check {
+            Objects.requireNonNull(tool, "tool");
+            with = Map.copyOf(with);
+        }
+    }
+
+    /** How a turn runs. */
+    public enum Pattern {
+        /** One agent loop per turn, with the conversation so far. */
+        CHAT,
+        /**
+         * A plan made once from the person's request, with the policy and who they are, then carried out step by step,
+         * each step by a fresh agent with the agent's tools: for work with many steps, where the policy's conditions
+         * are best settled before anything is done.
+         */
+        PLAN_EXECUTE
+    }
+
+    public AgentDefinition {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(name, "name");
+        description = description == null ? "" : description;
+        Objects.requireNonNull(pattern, "pattern");
+        audience = List.copyOf(audience);
+        Objects.requireNonNull(systemPrompt, "systemPrompt");
+        policy = policy == null ? "" : policy;
+        tools = List.copyOf(tools);
+        confirm = List.copyOf(confirm);
+        bind = Map.copyOf(bind);
+        mcpDirect = mcpDirect == null ? List.of() : List.copyOf(mcpDirect);
+        evals = evals == null ? List.of() : List.copyOf(evals);
+        before = before == null ? List.of() : List.copyOf(before);
+        if (pattern == Pattern.PLAN_EXECUTE) {
+            Objects.requireNonNull(plannerPrompt, "plannerPrompt");
+        }
+    }
+
+    /**
+     * Work the agent schedules to be carried out later — a reminder before access expires, the revocation when it
+     * does. The agent gets {@code schedule_deferred_action}; when an action comes due the host runs it with the
+     * framework's bounds (read, revoke, notify and request only, about that one subject), as {@code actor}.
+     *
+     * @param prompt   the system prompt a deferred action runs with
+     * @param actor    who a deferred action acts as: the value its bindings get for {@code principal.email}, which a
+     *                 connector must recognise as the agent itself rather than a person
+     * @param subjects each kind of subject the agent may schedule work about, and how to look one up
+     */
+    public record Deferred(String prompt, String actor, Map<String, Subject> subjects) {
+        public Deferred {
+            Objects.requireNonNull(prompt, "prompt");
+            Objects.requireNonNull(actor, "actor");
+            subjects = Map.copyOf(subjects);
+        }
+    }
+
+    /**
+     * How to look up one kind of subject: a connector tool, called with the subject's id in {@code argument}, that
+     * answers with the subject's record — {@code identifiers}, {@code contacts}, {@code facts} and optionally
+     * {@code holdings} — as {@code docs/MCP-CONNECTORS.md} describes.
+     */
+    public record Subject(ToolRef tool, String argument) {
+        public Subject {
+            Objects.requireNonNull(tool, "tool");
+            Objects.requireNonNull(argument, "argument");
+        }
+    }
+
+    /**
+     * Which of a connector's tools an agent is given: all of them, or those with one of {@code effects}, or those named
+     * in {@code tools} — or, with both, those named that also have one of the effects.
+     */
+    public record ToolSelector(String connector, Set<ToolEffect> effects, Set<String> tools) {
+        public ToolSelector {
+            Objects.requireNonNull(connector, "connector");
+            effects = Set.copyOf(effects);
+            tools = Set.copyOf(tools);
+        }
+
+        public boolean selects(String connectorName, String toolName, ToolEffect effect) {
+            return connector.equals(connectorName) && (effects.isEmpty() || effects.contains(effect))
+                    && (tools.isEmpty() || tools.contains(toolName));
+        }
+    }
+
+    /** A connector's tool, written {@code connector/tool}; {@code connector/*} means every tool of it. */
+    public record ToolRef(String connector, String tool) {
+        public static final String ANY = "*";
+
+        public ToolRef {
+            Objects.requireNonNull(connector, "connector");
+            Objects.requireNonNull(tool, "tool");
+        }
+
+        /** Parses {@code connector/tool}; empty on anything else. */
+        public static java.util.Optional<ToolRef> parse(String text) {
+            if (text == null) {
+                return java.util.Optional.empty();
+            }
+            String[] parts = text.strip().split("/", -1);
+            if (parts.length != 2 || parts[0].isBlank() || parts[1].isBlank()) {
+                return java.util.Optional.empty();
+            }
+            return java.util.Optional.of(new ToolRef(parts[0].strip(), parts[1].strip()));
+        }
+
+        public boolean isWildcard() {
+            return ANY.equals(tool);
+        }
+
+        public boolean matches(String connectorName, String toolName) {
+            return connector.equals(connectorName) && (isWildcard() || tool.equals(toolName));
+        }
+
+        @Override
+        public String toString() {
+            return connector + "/" + tool;
+        }
+    }
+}

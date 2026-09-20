@@ -31,7 +31,7 @@ export function Activity({
 
   return (
     <div
-      className="my-1 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line px-3 py-1.5 text-xs text-muted"
+      className="my-1 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[var(--radius-item)] bg-hover px-3 py-2 text-sm text-muted"
       role="status"
       data-testid="activity"
     >
@@ -65,7 +65,7 @@ export function Activity({
       <button
         type="button"
         onClick={onStop}
-        className="ml-auto rounded border border-line px-2 py-0.5 hover:border-bad hover:text-bad"
+        className="ml-auto rounded-full border border-line px-3 py-0.5 text-sm hover:border-bad hover:text-bad"
       >
         Stop
       </button>

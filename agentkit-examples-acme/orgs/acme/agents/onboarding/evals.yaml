@@ -1,0 +1,115 @@
+# What a pull request rehearses for Onboarding: each case is a manager starting their hire's
+# onboarding from the form, with every tool that would change something refused and recorded, so
+# the checks are on the plan and the calls it would have made.
+cases:
+  - name: contractor
+    as: lena.ortiz@acme.example
+    input:
+      employee_id: W-1002
+      name: Marcus Bell
+      work_email: marcus.bell@acme.example
+      title: Account Executive
+      department: Sales
+      employment_type: contractor
+      rehire: false
+      work_location: on-site
+      office: New York
+      production_aws_access_requested: false
+      start_date: "2026-10-01"
+      termination_date: "2026-12-31"
+      termination_reason: end of contract
+    expect:
+      - calls: okta_create_user
+        with: {email: marcus.bell@acme.example, groups: [sales, contractors]}
+      - calls: slack_create_account
+        with: {account_type: guest, channels: ["#sales"]}
+      - calls: salesforce_assign_seat
+      - calls: it_create_ticket
+        with: {category: laptop_pickup}
+      - calls: schedule_deferred_action
+      - never: okta_create_user
+        with: {groups: [all-staff]}
+      - never: aws_grant_access
+      - never: workday_enroll_benefits
+      - never: ship_laptop
+
+  - name: remote-engineer
+    as: dana.kim@acme.example
+    input:
+      employee_id: W-1001
+      name: Ravi Menon
+      work_email: ravi.menon@acme.example
+      title: Senior Backend Engineer
+      department: Engineering
+      employment_type: full-time
+      rehire: false
+      work_location: remote
+      home_address: Rua Augusta 100, 1100-053 Lisbon, Portugal
+      github_username: rmenon-dev
+      github_team: backend
+      production_aws_access_requested: false
+      start_date: "2026-10-01"
+    expect:
+      - calls: okta_create_user
+        with: {groups: [engineering, all-staff]}
+      - calls: ship_laptop
+      - calls: workday_enroll_benefits
+        with: {employee_id: W-1001}
+      - calls: aws_grant_access
+        with: {environment: staging}
+      - calls: github_add_member
+        with: {team: backend}
+      - never: aws_grant_access
+        with: {environment: production}
+      - never: salesforce_assign_seat
+      - never: schedule_deferred_action
+
+  - name: rehire-asking-for-production
+    as: sam.okafor@acme.example
+    input:
+      employee_id: W-1003
+      name: Maria Chen
+      work_email: maria.chen@acme.example
+      title: Site Reliability Engineer
+      department: Engineering
+      employment_type: full-time
+      rehire: true
+      work_location: on-site
+      office: San Francisco
+      github_username: mchen-sre
+      github_team: sre
+      production_aws_access_requested: true
+      start_date: "2026-10-01"
+    expect:
+      - calls: okta_reactivate_user
+        with: {email: maria.chen@acme.example}
+      - calls: it_create_ticket
+        with: {category: access_request}
+      - never: okta_create_user
+      - never: aws_grant_access
+        with: {environment: production}
+      # She has no end date, so nothing is scheduled for one.
+      - never: schedule_deferred_action
+
+  # Refused before anything is planned: only a hire's own manager may onboard them.
+  - name: not-their-hire
+    as: sam.okafor@acme.example
+    input:
+      employee_id: W-1001
+      name: Ravi Menon
+      work_email: ravi.menon@acme.example
+      title: Senior Backend Engineer
+      department: Engineering
+      employment_type: full-time
+      rehire: false
+      work_location: remote
+      home_address: Rua Augusta 100, 1100-053 Lisbon, Portugal
+      github_username: rmenon-dev
+      github_team: backend
+      production_aws_access_requested: false
+      start_date: "2026-10-01"
+    expect:
+      - answer_contains: "Nothing was done"
+      - never: okta_create_user
+      - never: ship_laptop
+      - never: slack_send_message

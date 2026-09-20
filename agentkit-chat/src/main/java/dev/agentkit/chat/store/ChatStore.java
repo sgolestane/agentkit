@@ -37,6 +37,17 @@ public interface ChatStore {
     /** A new, empty conversation. */
     Conversation create(String tenantId, String title);
 
+    /**
+     * A conversation with {@code agent}, pinned for its whole life. A store that cannot keep a pin refuses one rather
+     * than drop it: a conversation that forgot its agent would be answered by whichever agent is asked.
+     */
+    default Conversation create(String tenantId, String title, Conversation.Pin agent) {
+        if (agent == null) {
+            return create(tenantId, title);
+        }
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot pin a conversation to an agent");
+    }
+
     /** One conversation, if it exists and belongs to {@code tenantId}. */
     Optional<Conversation> conversation(String tenantId, String id);
 
@@ -63,6 +74,33 @@ public interface ChatStore {
      */
     Turn begin(String tenantId, String conversationId, String userText,
             List<String> attachmentIds);
+
+    /**
+     * Starts a turn the person sent to {@code agent} — in a conversation not pinned to one agent, where each turn goes
+     * to its own. Null leaves it to be routed.
+     */
+    default Turn begin(String tenantId, String conversationId, String userText, List<String> attachmentIds,
+                       Conversation.Pin agent) {
+        Turn begun = begin(tenantId, conversationId, userText, attachmentIds);
+        return agent == null ? begun : route(tenantId, conversationId, begun.id(), agent).orElse(begun);
+    }
+
+    /**
+     * Records the agent, at its version, a turn goes to, in a conversation not pinned to one agent. A store that cannot
+     * keep it refuses, rather than forget which agent answered.
+     */
+    default Optional<Turn> route(String tenantId, String conversationId, String turnId, Conversation.Pin agent) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot record a turn's agent");
+    }
+
+    /**
+     * Leaves a finished turn out of the conversation, or puts it back: a turn left out stays in the transcript, and no
+     * agent reads it again as something said. A store that cannot keep it refuses, rather than let a wrong answer
+     * back in.
+     */
+    default Optional<Turn> leaveOut(String tenantId, String conversationId, String turnId, boolean left) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " cannot leave a turn out");
+    }
 
     /** One turn, if it exists in a conversation belonging to {@code tenantId}. */
     Optional<Turn> turn(String tenantId, String conversationId, String turnId);

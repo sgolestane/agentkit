@@ -95,6 +95,26 @@ public final class ChatRuntime implements AutoCloseable {
     @FunctionalInterface
     public interface Agents {
         Agent agentFor(Session session);
+
+        /**
+         * How the turn is carried out. By default it is the agent's own loop; an application whose turn is more than
+         * one loop — a plan made once and carried out step by step, each step its own agent built through the
+         * session — returns its own, and everything it builds through {@link Session#agent} records into the turn.
+         * Throwing {@link ChatUnavailable} here is answered the same way as from {@link #agentFor}.
+         */
+        default Runner runnerFor(Session session) {
+            Agent agent = agentFor(session);
+            return agent::run;
+        }
+    }
+
+    /**
+     * One turn's work: the person's message as the goal, and what else the model is shown with it — the conversation
+     * so far and anything attached. Its result is the turn's answer.
+     */
+    @FunctionalInterface
+    public interface Runner {
+        AgentResult run(Goal goal, List<dev.agentkit.core.message.ContentBlock> alsoSent);
     }
 
     /**
@@ -299,7 +319,16 @@ public final class ChatRuntime implements AutoCloseable {
      */
     public Turn say(String tenantId, String conversationId, String userText,
             List<String> attachmentIds) {
-        Turn turn = store.begin(tenantId, conversationId, userText, attachmentIds);
+        return say(tenantId, conversationId, userText, attachmentIds, null);
+    }
+
+    /**
+     * As {@link #say(String, String, String, List)}, sent to {@code agent} — in a conversation not pinned to one
+     * agent, where the person chose which agent this message is for. Null leaves it to be routed.
+     */
+    public Turn say(String tenantId, String conversationId, String userText,
+            List<String> attachmentIds, Conversation.Pin agent) {
+        Turn turn = store.begin(tenantId, conversationId, userText, attachmentIds, agent);
         nameItAfterTheFirstThing(tenantId, conversationId, turn, userText);
         events.publish(conversationId, turn.id(), ChatEvent.Type.TURN_STARTED, "", "",
                 Map.of("userText", userText == null ? "" : userText,
@@ -366,11 +395,11 @@ public final class ChatRuntime implements AutoCloseable {
             Session session = new Session(tenantId, conversationId, turn.id(), turn.userText(),
                     attachmentIds == null ? List.of() : attachmentIds, store, events,
                     approverFor(tenantId, conversationId, turn.id()));
-            Agent agent = agents.agentFor(session);
+            Runner runner = agents.runnerFor(session);
             List<dev.agentkit.core.message.ContentBlock> alsoSent = new java.util.ArrayList<>();
             earlierTurns(tenantId, conversationId, turn).ifPresent(alsoSent::add);
             alsoSent.addAll(seeable(tenantId, attachmentIds == null ? List.of() : attachmentIds));
-            AgentResult result = agent.run(Goal.of(turn.userText()), alsoSent);
+            AgentResult result = runner.run(Goal.of(turn.userText()), alsoSent);
             usage = result.usage();
             answer = result.output();
             if (result.isSuccess()) {
@@ -453,13 +482,21 @@ public final class ChatRuntime implements AutoCloseable {
             return Optional.empty();
         }
         List<Turn> finished = store.turns(tenantId, conversationId).stream()
-                .filter(earlier -> earlier.ordinal() < turn.ordinal() && earlier.state().isTerminal())
+                .filter(earlier -> earlier.ordinal() < turn.ordinal() && earlier.state().isTerminal()
+                        && !earlier.leftOut())
                 .toList();
         if (finished.isEmpty()) {
             return Optional.empty();
         }
-        StringBuilder text = new StringBuilder(
-                "Earlier in this conversation, oldest first, for context. The message above is the one to answer now.");
+        // A conversation where each message goes to its own agent: every earlier answer says who gave it, so an agent
+        // reads another's exchange as that, and not as something said to it.
+        boolean routed = store.conversation(tenantId, conversationId).map(c -> c.agent() == null).orElse(false)
+                && (turn.agent() != null || finished.stream().anyMatch(earlier -> earlier.agent() != null));
+        StringBuilder text = new StringBuilder(routed
+                ? "Earlier in this conversation, oldest first, for context. Each message went to the agent named with "
+                        + "its answer (which may be you), or to AgentKit, which routes messages. The message above is "
+                        + "the one to answer now; the others are context, and are not requests to you."
+                : "Earlier in this conversation, oldest first, for context. The message above is the one to answer now.");
         for (Turn earlier : finished.subList(Math.max(0, finished.size() - history.turns()),
                 finished.size())) {
             String answer = earlier.answer() == null || earlier.answer().isBlank()
@@ -468,7 +505,8 @@ public final class ChatRuntime implements AutoCloseable {
             text.append("\n\nPerson:\n")
                     .append(Spotlight.wrap(Spotlight.Kind.ADVISORY, Source.of("conversation", "person"),
                             Cut.to(earlier.userText(), history.maxCharsPerMessage())))
-                    .append("\nAssistant:\n")
+                    .append(routed ? "\n" + (earlier.agent() != null ? "Agent " + earlier.agent().id() : "AgentKit")
+                            + " answered:\n" : "\nAssistant:\n")
                     .append(Spotlight.wrap(Spotlight.Kind.EVIDENCE, Source.of("conversation", "assistant"),
                             answer));
         }
@@ -530,8 +568,10 @@ public final class ChatRuntime implements AutoCloseable {
 
     private void endTurn(String tenantId, String conversationId, String turnId,
             Turn.State state, String answer, String detail, TokenUsage usage) {
+        Conversation.Pin agent = null;
         try {
-            store.end(tenantId, conversationId, turnId, state, answer, detail, usage);
+            agent = store.end(tenantId, conversationId, turnId, state, answer, detail, usage)
+                    .map(Turn::agent).orElse(null);
         } catch (IllegalStateException alreadyEnded) {
             // Only reachable if something else ended it first, which is a bug worth a line
             // rather than an exception on a worker whose caller is gone.
@@ -544,6 +584,10 @@ public final class ChatRuntime implements AutoCloseable {
         data.put("detail", detail);
         data.put("inputTokens", usage.inputTokens());
         data.put("outputTokens", usage.outputTokens());
+        if (agent != null) {
+            // Which agent answered, in a conversation where each message finds its own.
+            data.put("agent", Map.of("id", agent.id(), "version", agent.version()));
+        }
         events.publish(conversationId, turnId, ChatEvent.Type.TURN_FINISHED, "", "", data);
         if (state == Turn.State.FAILED && !detail.isEmpty()) {
             events.publish(conversationId, turnId, ChatEvent.Type.ERROR, "", "",
@@ -648,6 +692,13 @@ public final class ChatRuntime implements AutoCloseable {
                 .filter(decision -> decision.tenantId().equals(tenantId))
                 .sorted(java.util.Comparator.comparing(PendingDecision::askedAt)
                         .thenComparing(PendingDecision::id))
+                .toList();
+    }
+
+    /** Every question anyone owes an answer to in this process, oldest first: for telling each person theirs. */
+    public List<PendingDecision> pendingAll() {
+        return pending.values().stream()
+                .sorted(java.util.Comparator.comparing(PendingDecision::askedAt).thenComparing(PendingDecision::id))
                 .toList();
     }
 

@@ -1,0 +1,59 @@
+name: Onboarding
+description: Sets up a new hire's accounts, access and equipment under the onboarding policy, and schedules their offboarding when they have an end date.
+pattern: plan-execute
+audience: [managers]
+
+prompt:
+  planner: planner.md
+  executor: executor.md
+  policy: policy.md
+
+tools:
+  - connector: onboarding
+    effects: [read, grant, revoke, notify, request]
+
+# Everything that gives the hire something waits for their manager's word.
+confirm:
+  - onboarding/okta_create_user
+  - onboarding/okta_reactivate_user
+  - onboarding/slack_create_account
+  - onboarding/github_add_member
+  - onboarding/aws_grant_access
+  - onboarding/salesforce_assign_seat
+  - onboarding/ship_laptop
+  - onboarding/workday_enroll_benefits
+
+# Grants and removals are asked for by the person onboarding, whatever the model writes; the
+# systems do them only for the hire's own manager.
+bind:
+  onboarding/*: {requested_by: principal.email}
+
+# Before anything is planned: only the hire's manager may onboard them, and what is already in
+# place for the hire is not done again.
+before:
+  - tool: onboarding/onboarding_check
+    with: {employee_id: input.employee_id}
+
+# The manager starts it from the hire's record.
+input:
+  schema: input.yaml
+  goal: goal.md
+
+# The reminder before a fixed-term hire leaves, and the removal of their access when they do.
+deferred:
+  prompt: deferred-prompt.md
+  actor: onboarding
+  subjects:
+    worker: {tool: onboarding/hris_get_worker, argument: employee_id}
+
+# Once the last three plans for hires alike — same department, employment, rehire, where they
+# work, AWS request and office, and the same fields on file — agree, the next such hire is
+# carried out on that plan, with its own name, email, dates and address, without asking the model
+# to plan. Every step still runs, and every grant still waits for the manager. One in ten is
+# planned afresh.
+plans:
+  reuse: {after: 3, recheckEvery: 10, sameWhen: [office]}
+
+limits:
+  maxSteps: 12
+  maxTokens: 4096

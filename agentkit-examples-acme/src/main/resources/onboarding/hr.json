@@ -1,0 +1,62 @@
+{
+  "workers": [
+    {"employee_id": "W-1001", "name": "Ravi Menon", "work_email": "ravi.menon@acme.example",
+     "title": "Senior Backend Engineer", "department": "Engineering", "employment_type": "full-time", "rehire": "no",
+     "manager": "dana.kim@acme.example", "work_location": "remote",
+     "home_address": "Rua Augusta 100, 1100-053 Lisbon, Portugal", "github_username": "rmenon-dev",
+     "github_team": "backend", "production_aws_access_requested": "no", "start_date": "2026-10-01",
+     "termination_date": "none"},
+    {"employee_id": "W-1002", "name": "Marcus Bell", "work_email": "marcus.bell@acme.example",
+     "title": "Account Executive", "department": "Sales", "employment_type": "contractor", "rehire": "no",
+     "manager": "lena.ortiz@acme.example", "work_location": "on-site", "office": "New York",
+     "github_username": "none", "production_aws_access_requested": "no", "start_date": "2026-10-01",
+     "termination_date": "2026-12-31", "termination_reason": "end of contract"},
+    {"employee_id": "W-1003", "name": "Maria Chen", "work_email": "maria.chen@acme.example",
+     "title": "Site Reliability Engineer", "department": "Engineering", "employment_type": "full-time",
+     "rehire": "yes (previous Okta account is deactivated)", "manager": "sam.okafor@acme.example",
+     "work_location": "on-site", "office": "San Francisco", "github_username": "mchen-sre", "github_team": "sre",
+     "production_aws_access_requested": "yes", "start_date": "2026-10-01", "termination_date": "none"},
+    {"employee_id": "W-1004", "name": "Noah Fischer", "work_email": "noah.fischer@acme.example",
+     "title": "Software Engineer", "department": "Engineering", "employment_type": "full-time", "rehire": "no",
+     "manager": "dana.kim@acme.example", "work_location": "on-site", "office": "Austin",
+     "github_username": "not on file", "github_team": "platform", "production_aws_access_requested": "no",
+     "start_date": "2026-10-01", "termination_date": "none"},
+    {"employee_id": "W-1005", "name": "Aisha Rahman", "work_email": "aisha.rahman@acme.example",
+     "title": "Software Engineer", "department": "Engineering", "employment_type": "full-time", "rehire": "no",
+     "manager": "dana.kim@acme.example", "work_location": "on-site", "office": "Austin",
+     "github_username": "not on file", "github_team": "data", "production_aws_access_requested": "no",
+     "start_date": "2026-10-01", "termination_date": "none"},
+    {"employee_id": "W-1006", "name": "Jordan Lee", "work_email": "jordan.lee@acme.example",
+     "title": "Software Engineer", "department": "Engineering", "employment_type": "full-time", "rehire": "no",
+     "manager": "dana.kim@acme.example", "work_location": "on-site", "office": "Austin",
+     "github_username": "not on file", "github_team": "frontend", "production_aws_access_requested": "no",
+     "start_date": "2026-10-01", "termination_date": "none"},
+    {"employee_id": "W-1007", "name": "Alex Rivera", "work_email": "alex.rivera@acme.example",
+     "title": "Software Engineer", "department": "Engineering", "employment_type": "full-time", "rehire": "no",
+     "manager": "dana.kim@acme.example", "work_location": "on-site", "office": "Austin",
+     "github_username": "not on file", "github_team": "infra", "production_aws_access_requested": "no",
+     "start_date": "2026-10-01", "termination_date": "none"}
+  ],
+  "okta_deactivated": [
+    {"email": "maria.chen@acme.example", "first_name": "Maria", "last_name": "Chen"}
+  ],
+  "github_users": [
+    {"login": "rmenon-dev", "name": "Ravi M."},
+    {"login": "mchen-sre", "name": "Maria Chen"},
+    {"login": "nfischer-code", "name": "Noah Fischer"},
+    {"login": "ar-codes", "name": ""},
+    {"login": "jlee", "name": "Jordan Lee"},
+    {"login": "jl-builds", "name": ""}
+  ],
+  "slack_preboarding": [
+    {"email": "noah.fischer@acme.example", "profile": {"title": "New hire", "timezone": "America/Chicago", "github": "nfischer-code"}},
+    {"email": "aisha.rahman@acme.example", "profile": {"title": "New hire", "timezone": "America/Chicago"}},
+    {"email": "jordan.lee@acme.example", "profile": {"title": "New hire", "timezone": "America/Chicago"}},
+    {"email": "alex.rivera@acme.example", "profile": {"title": "New hire", "timezone": "America/Chicago"}}
+  ],
+  "github_username_replies": {
+    "noah.fischer@acme.example": "nfischer-code",
+    "aisha.rahman@acme.example": "ar-codes",
+    "jordan.lee@acme.example": "jl-builds"
+  }
+}

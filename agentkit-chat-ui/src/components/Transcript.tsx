@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import type { Attachment, PendingDecision, Turn } from '../lib/types'
+import type { AgentInfo, Attachment, PendingDecision, Turn } from '../lib/types'
 import { Activity } from './Activity'
 import { ApprovalCard } from './ApprovalCard'
 import { TurnAttachments } from './Attachments'
 import { Markdown, copy } from './Markdown'
+import { PlanAnswer, isPlanTurn, planAnswer, taskSections, type TaskSection } from './PlanAnswer'
 import { Trace } from './Trace'
 import { Views } from '../views/registry'
 import { useFollowing } from './useFollowing'
@@ -34,7 +35,11 @@ export function Transcript({
   onStop,
   onDecide,
   onRegenerate,
+  onLeaveOut,
   onEdit,
+  routed = false,
+  agents = [],
+  onSendTo,
 }: {
   turns: Turn[]
   working: boolean
@@ -48,7 +53,15 @@ export function Transcript({
     body?: Record<string, unknown>,
   ) => void
   onRegenerate: () => void
+  /** Leaves a finished turn out of what the agents read next, or puts it back. */
+  onLeaveOut?: (turnId: string, left: boolean) => void
   onEdit: (text: string) => void
+  /** Whether each message finds its own agent: then each answer says which agent gave it, and it can be asked of another. */
+  routed?: boolean
+  /** The agents on offer, for naming the one that answered and choosing another. */
+  agents?: AgentInfo[]
+  /** Sends a message to the agent named, in a conversation where each message otherwise finds its own. */
+  onSendTo?: (text: string, agent: string) => void
 }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = showAll ? 0 : Math.max(0, turns.length - WINDOW)
@@ -63,7 +76,7 @@ export function Transcript({
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
-        className="h-full overflow-y-auto px-4 py-4"
+        className="h-full overflow-y-auto px-4 pb-8 pt-6"
         onScroll={onScroll}
         data-testid="transcript"
       >
@@ -71,17 +84,17 @@ export function Transcript({
           <button
             type="button"
             onClick={() => setShowAll(true)}
-            className="mx-auto mb-4 block rounded-full border border-line px-3 py-1 text-xs text-muted"
+            className="mx-auto mb-6 block rounded-full bg-hover px-3 py-1.5 text-sm text-muted hover:text-ink"
           >
             {hidden} earlier {hidden === 1 ? 'turn' : 'turns'} — show them
           </button>
         ) : null}
 
-        <ol className="mx-auto flex max-w-3xl flex-col gap-5">
+        <ol className="mx-auto flex max-w-3xl flex-col gap-8">
           {shown.map((turn) => (
-            <li key={turn.id} className="flex flex-col gap-2">
+            <li key={turn.id} className="flex flex-col gap-3">
               {turn.userText ? (
-                <div className="self-end max-w-[85%] whitespace-pre-wrap rounded-2xl bg-accent px-4 py-2 text-white">
+                <div className="reading self-end max-w-[70%] whitespace-pre-wrap rounded-[var(--radius-bubble)] bg-bubble px-4 py-2.5 text-ink">
                   {turn.userText}
                 </div>
               ) : null}
@@ -94,7 +107,12 @@ export function Transcript({
                   )}
                 />
               ) : null}
-              {!turn.state.match(/QUEUED|RUNNING/) ? <TurnAnswer turn={turn} /> : null}
+              {routed && !turn.state.match(/QUEUED|RUNNING/) ? (
+                <AnsweredBy turn={turn} agents={agents} onSendTo={onSendTo} />
+              ) : null}
+              {!turn.state.match(/QUEUED|RUNNING/) ? (
+                <TurnAnswer turn={turn} onLeaveOut={onLeaveOut ? (left) => onLeaveOut(turn.id, left) : undefined} />
+              ) : null}
               {turn.state === 'QUEUED' || turn.state === 'RUNNING' ? (
                 <>
                   {turn.answer ? <TurnAnswer turn={turn} /> : null}
@@ -129,18 +147,18 @@ export function Transcript({
         </ol>
 
         {!working && last && last.state === 'COMPLETED' ? (
-          <div className="mx-auto mt-4 flex max-w-3xl gap-2">
+          <div className="mx-auto mt-2 flex max-w-3xl gap-1">
             <button
               type="button"
               onClick={onRegenerate}
-              className="rounded-lg border border-line px-3 py-1 text-xs text-muted hover:text-ink"
+              className="rounded-[var(--radius-item)] px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-ink"
             >
               Regenerate
             </button>
             <button
               type="button"
               onClick={() => onEdit(last.userText)}
-              className="rounded-lg border border-line px-3 py-1 text-xs text-muted hover:text-ink"
+              className="rounded-[var(--radius-item)] px-2.5 py-1.5 text-sm text-muted hover:bg-hover hover:text-ink"
             >
               Edit and resend
             </button>
@@ -154,7 +172,7 @@ export function Transcript({
         <button
           type="button"
           onClick={jumpToEnd}
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-line bg-panel px-3 py-1 text-xs shadow"
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-panel px-3 py-1.5 text-sm text-ink shadow-[var(--shadow-menu)]"
         >
           Jump to the end
         </button>
@@ -177,6 +195,90 @@ export function Transcript({
  * The source, not the rendered text: somebody copying an answer with a table in it wants the
  * table, and `textContent` off the DOM would hand them the cells run together on one line.
  */
+/**
+ * Who answered a message, in a conversation where each message finds its own agent: the agent's name, or AgentKit
+ * when the router answered itself. "Ask another agent" sends the same message to the one chosen.
+ */
+function AnsweredBy({
+  turn,
+  agents,
+  onSendTo,
+}: {
+  turn: Turn
+  agents: AgentInfo[]
+  onSendTo?: (text: string, agent: string) => void
+}) {
+  const [choosing, setChoosing] = useState(false)
+  const name = turn.agent ? agents.find((one) => one.id === turn.agent?.id)?.name ?? turn.agent.id : 'AgentKit'
+  const others = agents.filter((one) => one.id !== turn.agent?.id)
+  return (
+    <div className="relative flex items-center gap-1 text-xs text-faint" data-testid="answered-by">
+      <span className="rounded-full bg-hover px-2.5 py-0.5 text-muted">{name}</span>
+      {onSendTo && turn.userText && others.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setChoosing((open) => !open)}
+          aria-expanded={choosing}
+          aria-haspopup="menu"
+          className="rounded-[var(--radius-item)] px-2 py-0.5 hover:bg-hover hover:text-ink"
+        >
+          Ask another agent
+        </button>
+      ) : null}
+      {choosing ? (
+        <ul
+          role="menu"
+          aria-label="Ask another agent"
+          className="absolute left-0 top-full z-10 mt-1 w-64 rounded-[var(--radius-card)] bg-panel p-1.5 shadow-[var(--shadow-menu)]"
+        >
+          {others.map((agent) => (
+            <li key={agent.id} role="none">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setChoosing(false)
+                  onSendTo?.(turn.userText, agent.id)
+                }}
+                className="w-full rounded-[var(--radius-item)] px-2.5 py-2 text-left hover:bg-hover"
+              >
+                <span className="block text-sm text-ink">{agent.name}</span>
+                {agent.unavailable ?? agent.description ? (
+                  <span className="block text-xs text-muted">{agent.unavailable ?? agent.description}</span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+/** A carried-out plan's steps, folded, and what the host says after them. */
+function FoldedPlan({ plan }: { plan: NonNullable<ReturnType<typeof planAnswer>> }) {
+  return (
+    <>
+      <PlanAnswer steps={plan.steps} />
+      {plan.after ? (
+        <div className="mt-4" data-testid="plan-after">
+          <Markdown text={plan.after} />
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+/** One task of several a message held, under its label. */
+function TaskAnswer({ section }: { section: TaskSection }) {
+  return (
+    <section className="mt-5 first:mt-0" data-testid="task-section">
+      <h3 className="mb-2 text-lg font-semibold text-ink">{section.title}</h3>
+      {section.plan ? <FoldedPlan plan={section.plan} /> : <Markdown text={section.text} />}
+    </section>
+  )
+}
+
 function CopyAnswer({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -189,37 +291,77 @@ function CopyAnswer({ text }: { text: string }) {
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="absolute right-2 top-2 rounded border border-line bg-canvas px-2 py-0.5 text-[11px] text-muted opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+      className="mt-1 rounded-[var(--radius-item)] px-2 py-1 text-xs text-faint opacity-0 transition hover:bg-hover hover:text-ink group-hover:opacity-100 focus:opacity-100"
     >
       {copied ? 'Copied' : 'Copy'}
     </button>
   )
 }
 
-function TurnAnswer({ turn }: { turn: Turn }) {
+/**
+ * Leaves a finished answer out of the conversation, or puts it back. Left out, it stays on the page, faded, and no
+ * agent reads it again as something said: for an answer that was wrong, which would otherwise be repeated.
+ */
+function LeaveOut({ turn, onLeaveOut }: { turn: Turn; onLeaveOut: (left: boolean) => void }) {
+  return turn.leftOut ? (
+    <p className="mt-2 flex items-center gap-2 text-xs text-faint" data-testid="left-out">
+      Left out of the conversation: no agent reads it again.
+      <button
+        type="button"
+        onClick={() => onLeaveOut(false)}
+        className="rounded-[var(--radius-item)] px-2 py-0.5 text-muted hover:bg-hover hover:text-ink"
+      >
+        Put back
+      </button>
+    </p>
+  ) : (
+    <button
+      type="button"
+      onClick={() => onLeaveOut(true)}
+      title="Leave this answer out of what the agents read next"
+      className="mt-1 rounded-[var(--radius-item)] px-2 py-1 text-xs text-faint opacity-0 transition hover:bg-hover hover:text-ink group-hover:opacity-100 focus:opacity-100"
+    >
+      Leave out
+    </button>
+  )
+}
+
+function TurnAnswer({ turn, onLeaveOut }: { turn: Turn; onLeaveOut?: (left: boolean) => void }) {
   const streaming = turn.state === 'RUNNING' && turn.answer.length > 0
   return (
-    <div className="w-full max-w-[92%] self-start">
+    <div className={`w-full self-start ${turn.leftOut ? 'opacity-60' : ''}`}>
       {/* Above the answer, not below it. A tool's table is what the sentence underneath is
           about, and a reader who has to scroll past the prose to find the numbers reads the
           prose without them. */}
       <Views views={turn.views} />
       {turn.answer ? (
-        <div className="group relative rounded-2xl bg-panel px-4 py-2" data-testid="answer">
-          <Markdown text={turn.answer} />
+        <div className="reading group relative" data-testid="answer">
+          {(() => {
+            // A carried-out plan's answer is a list of steps, each folded under how it ended, and
+            // then anything the host says after them, such as what was already in place.
+            // A message that held several tasks has a section for each.
+            const sections = !streaming && isPlanTurn(turn) ? taskSections(turn.answer) : null
+            if (sections) {
+              return sections.map((section, index) => <TaskAnswer key={index} section={section} />)
+            }
+            const plan = !streaming && isPlanTurn(turn) ? planAnswer(turn.answer) : null
+            return plan ? <FoldedPlan plan={plan} /> : <Markdown text={turn.answer} />
+          })()}
           {streaming ? <span className="ml-0.5 animate-pulse text-muted">▍</span> : null}
           {!streaming ? <CopyAnswer text={turn.answer} /> : null}
+          {!streaming && onLeaveOut && !turn.leftOut ? <LeaveOut turn={turn} onLeaveOut={onLeaveOut} /> : null}
         </div>
       ) : null}
+      {onLeaveOut && turn.leftOut ? <LeaveOut turn={turn} onLeaveOut={onLeaveOut} /> : null}
 
       {turn.state === 'CANCELLED' ? (
-        <p className="mt-1 text-xs text-muted">{turn.detail || 'You stopped this.'}</p>
+        <p className="mt-1 text-sm text-muted">{turn.detail || 'You stopped this.'}</p>
       ) : null}
       {turn.state === 'FAILED' ? (
-        <p className="mt-1 text-xs text-bad">{turn.detail || 'That did not work.'}</p>
+        <p className="mt-1 text-sm text-bad">{turn.detail || 'That did not work.'}</p>
       ) : null}
       {turn.state === 'WAITING_FOR_HUMAN' ? (
-        <p className="mt-1 text-xs text-warn">{turn.detail || 'This needs a decision.'}</p>
+        <p className="mt-1 text-sm text-warn">{turn.detail || 'This needs a decision.'}</p>
       ) : null}
       <Trace turn={turn} />
     </div>

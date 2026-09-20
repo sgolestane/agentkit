@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { Options as SanitizeSchema } from 'rehype-sanitize'
 import { rehypeHighlightSubset } from '../lib/highlight'
+import { remarkLineBreaks } from '../lib/lineBreaks'
 import { remarkRawHtmlAsText } from '../lib/rawHtml'
 import { plain } from '../lib/text'
 import '../lib/highlight.css'
@@ -115,7 +116,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         // rehype one: it has to turn a block into text before that block becomes a `raw` node,
         // because the thing that drops it is the sanitizer and loosening the sanitizer is the
         // one move #356's boundary rests on not making.
-        remarkPlugins={[remarkRawHtmlAsText, remarkGfm]}
+        remarkPlugins={[remarkRawHtmlAsText, remarkGfm, remarkLineBreaks]}
         // Highlight, then sanitize. The forward reason is plain: sanitizing first would strip
         // the classes the highlighter is about to add, and the block would come out plain.
         //
@@ -138,25 +139,25 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
             // The table scrolls inside itself. A wide one that widened the transcript would
             // make the whole conversation scroll sideways, which is the single most common way
             // a chat UI becomes unusable on a laptop.
-            <div className="my-2 overflow-x-auto rounded-lg border border-line">
-              <table className="w-full border-collapse text-[13px]">{children}</table>
+            <div className="my-4 overflow-x-auto rounded-[var(--radius-item)] border border-line">
+              <table className="w-full border-collapse text-sm">{children}</table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border-b border-line px-2 py-1 text-left text-[11px] uppercase tracking-wide text-muted">
+            <th className="border-b border-line px-3 py-2 text-left text-xs font-medium text-muted">
               {children}
             </th>
           ),
-          td: ({ children }) => <td className="border-b border-line px-2 py-1 align-top">{children}</td>,
-          ul: ({ children }) => <ul className="my-1 list-disc pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="my-1 list-decimal pl-5">{children}</ol>,
+          td: ({ children }) => <td className="border-b border-line-soft px-3 py-2 align-top">{children}</td>,
+          ul: ({ children }) => <ul className="my-2 list-disc pl-6">{children}</ul>,
+          ol: ({ children }) => <ol className="my-2 list-decimal pl-6">{children}</ol>,
           blockquote: ({ children }) => (
-            <blockquote className="my-2 border-l-2 border-line pl-3 text-muted">{children}</blockquote>
+            <blockquote className="my-3 border-l-4 border-line pl-5 leading-6">{children}</blockquote>
           ),
-          h1: ({ children }) => <p className="mt-3 mb-1 font-semibold">{children}</p>,
-          h2: ({ children }) => <p className="mt-3 mb-1 font-semibold">{children}</p>,
-          h3: ({ children }) => <p className="mt-2 mb-1 font-semibold">{children}</p>,
-          hr: () => <hr className="my-3 border-line" />,
+          h1: ({ children }) => <p className="mt-6 mb-2 text-2xl leading-8 font-semibold">{children}</p>,
+          h2: ({ children }) => <p className="mt-6 mb-2 text-xl leading-7 font-semibold">{children}</p>,
+          h3: ({ children }) => <p className="mt-4 mb-1 text-lg leading-7 font-semibold">{children}</p>,
+          hr: () => <hr className="my-7 border-line" />,
         }}
       >
         {safe}
@@ -174,7 +175,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
     <div className="group relative my-2">
       <pre
         ref={setBlock}
-        className="overflow-x-auto rounded-lg border border-line bg-canvas p-3 text-[12.5px] leading-relaxed"
+        className="overflow-x-auto rounded-[var(--radius-card)] bg-raised p-4 font-mono text-[13px] leading-5"
       >
         {children}
       </pre>
@@ -187,7 +188,7 @@ function CodeBlock({ children }: { children?: React.ReactNode }) {
             setTimeout(() => setCopied(false), 1500)
           })
         }}
-        className="absolute right-2 top-2 rounded border border-line bg-panel px-2 py-0.5 text-[11px] text-muted opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+        className="absolute right-2 top-2 rounded-[var(--radius-item)] bg-panel px-2 py-1 text-xs text-muted opacity-0 transition hover:text-ink group-hover:opacity-100 focus:opacity-100"
       >
         {copied ? 'Copied' : 'Copy'}
       </button>

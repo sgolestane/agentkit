@@ -52,6 +52,16 @@ export function asTurn(raw: Partial<Turn> & { id: string }): Turn {
     outputTokens: raw.outputTokens ?? 0,
     startedAt: raw.startedAt ?? '',
     endedAt: raw.endedAt ?? null,
+    ...(raw.agent ? { agent: raw.agent } : {}),
+    ...(raw.leftOut ? { leftOut: true } : {}),
+  }
+}
+
+/** The transcript with one turn left out of the conversation, or put back. */
+export function withLeftOut(transcript: Transcript, turnId: string, left: boolean): Transcript {
+  return {
+    ...transcript,
+    turns: transcript.turns.map((turn) => (turn.id === turnId ? { ...turn, leftOut: left } : turn)),
   }
 }
 
@@ -123,6 +133,12 @@ function change(turn: Turn, event: ChatEvent): Turn {
     return turn
   }
   switch (event.type) {
+    case 'TURN_RUNNING':
+      // A turn shown from the send's own answer arrives QUEUED; this is the stream saying its work
+      // has begun. Without it the turn read "Waiting to start" until it ended, which a long turn —
+      // a plan carried out step by step — made plain.
+      return turn.state === 'QUEUED' ? { ...turn, state: 'RUNNING' } : turn
+
     case 'TEXT_DELTA':
       return { ...turn, answer: turn.answer + String(event.data.text ?? '') }
 
@@ -154,6 +170,7 @@ function change(turn: Turn, event: ChatEvent): Turn {
         inputTokens: Number(event.data.inputTokens ?? 0),
         outputTokens: Number(event.data.outputTokens ?? 0),
         endedAt: event.at,
+        ...(isAgent(event.data.agent) ? { agent: event.data.agent } : {}),
       }
 
     case 'ERROR':
@@ -162,6 +179,10 @@ function change(turn: Turn, event: ChatEvent): Turn {
     default:
       return turn
   }
+}
+
+function isAgent(value: unknown): value is { id: string; version: string } {
+  return typeof value === 'object' && value !== null && typeof (value as { id?: unknown }).id === 'string'
 }
 
 function viewData(event: ChatEvent): Record<string, unknown> {

@@ -8,7 +8,7 @@
  */
 .md .hljs-comment,
 .md .hljs-quote {
-  color: var(--color-muted);
+  color: var(--muted);
   font-style: italic;
 }
 .md .hljs-keyword,
@@ -19,7 +19,7 @@
 .md .hljs-type,
 .md .hljs-name,
 .md .hljs-strong {
-  color: var(--color-accent);
+  color: var(--accent);
 }
 .md .hljs-string,
 .md .hljs-title,
@@ -28,18 +28,18 @@
 .md .hljs-symbol,
 .md .hljs-bullet,
 .md .hljs-addition {
-  color: var(--color-good);
+  color: var(--good);
 }
 .md .hljs-number,
 .md .hljs-variable,
 .md .hljs-template-variable,
 .md .hljs-built_in,
 .md .hljs-params {
-  color: var(--color-warn);
+  color: var(--warn);
 }
 .md .hljs-deletion,
 .md .hljs-meta {
-  color: var(--color-bad);
+  color: var(--bad);
 }
 .md .hljs-emphasis {
   font-style: italic;
